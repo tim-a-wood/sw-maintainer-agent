@@ -6,8 +6,9 @@ import fnmatch
 import os
 import subprocess
 import tempfile
+import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .errors import PolicyError, RecoveryError
 
@@ -154,6 +155,64 @@ class WorkspaceManager:
         if reverse.returncode == 0:
             return False
         raise PolicyError(f"The patch does not apply to the current workspace: {checked.stderr.strip()}")
+
+    @staticmethod
+    def apply_output_zip(worktree: Path, archive: Path, allowed: list[str],
+                         max_file_bytes: int, max_total_bytes: int) -> tuple[str, ...]:
+        """Safely apply complete repository files from an assistant ZIP."""
+        worktree = worktree.resolve()
+        allowed_paths = set(allowed)
+        members: list[tuple[zipfile.ZipInfo, str]] = []
+        total = 0
+        try:
+            with zipfile.ZipFile(archive) as bundle:
+                for item in bundle.infolist():
+                    if item.is_dir():
+                        continue
+                    if item.flag_bits & 0x1:
+                        raise PolicyError("The implementation ZIP contains an encrypted file.")
+                    if "\\" in item.filename:
+                        raise PolicyError("The implementation ZIP contains a non-portable path.")
+                    relative = PurePosixPath(item.filename)
+                    if (relative.is_absolute() or not relative.parts or
+                            any(part in {"", ".", ".."} for part in relative.parts)):
+                        raise PolicyError("The implementation ZIP contains an unsafe path.")
+                    path = relative.as_posix()
+                    if path not in allowed_paths:
+                        raise PolicyError(
+                            f"The implementation ZIP contains a file outside the task: {path}")
+                    mode = (item.external_attr >> 16) & 0o170000
+                    if mode == 0o120000:
+                        raise PolicyError(
+                            f"The implementation ZIP contains a symbolic link: {path}")
+                    if item.file_size > max_file_bytes:
+                        raise PolicyError(
+                            f"The implementation ZIP file exceeds the size limit: {path}")
+                    total += item.file_size
+                    if total > max_total_bytes:
+                        raise PolicyError("The implementation ZIP exceeds the size limit.")
+                    if any(existing == path for _, existing in members):
+                        raise PolicyError(
+                            f"The implementation ZIP contains a duplicate file: {path}")
+                    members.append((item, path))
+                if not members:
+                    raise PolicyError("The implementation ZIP contains no repository files.")
+                for item, path in members:
+                    destination = worktree / Path(path)
+                    current = worktree
+                    for part in Path(path).parts[:-1]:
+                        current /= part
+                        if current.is_symlink():
+                            raise PolicyError(
+                                f"The implementation ZIP targets a symbolic-link directory: {path}")
+                    if destination.is_symlink():
+                        raise PolicyError(
+                            f"The implementation ZIP targets a symbolic link: {path}")
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(bundle.read(item))
+        except zipfile.BadZipFile as exc:
+            raise PolicyError("The implementation output is not a valid ZIP file.") from exc
+        return tuple(path for _, path in members)
 
     def commit(self, worktree: Path, message: str, expected_tree: str) -> str:
         current_head = git(worktree, "rev-parse", "HEAD")

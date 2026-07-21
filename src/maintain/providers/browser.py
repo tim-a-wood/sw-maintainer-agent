@@ -5,13 +5,16 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import time
+import zipfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from maintain.errors import ProviderError
+from maintain.exchange_package import build_exchange_package
 from maintain.models import ProviderCapabilities, ProviderRequest
 from maintain.locking import FileLock
 from maintain.security import assert_no_secrets
@@ -168,16 +171,25 @@ class BrowserProvider(Provider):
                 digest = hashlib.sha256(serialized.encode()).hexdigest()
                 attachment_selector = selectors.get("attachment_selector")
                 transport = "text"
+                attachment_names: list[str] = []
+                package_bytes = len(serialized.encode())
                 if attachment_selector:
-                    package = self.evidence_dir / f"{request.task_id}-{request.role}-package.json"
-                    package.write_text(serialized, encoding="utf-8")
-                    page.locator(attachment_selector).set_input_files(str(package))
+                    package = build_exchange_package(request, self.evidence_dir / "packages")
+                    page.locator(attachment_selector).set_input_files(
+                        [str(path) for path in package.paths]
+                    )
                     upload_complete = selectors.get("upload_complete_selector")
                     if upload_complete:
                         page.locator(upload_complete).wait_for(
                             state="visible", timeout=int(self.config.get("timeout_ms", 300_000)))
-                    message = (f"{request.instructions}\nAttached package SHA-256: {digest}. "
-                               "Return the required envelope.")
+                    digest = package.sha256
+                    package_bytes = package.bytes
+                    attachment_names = [path.name for path in package.paths]
+                    message = (
+                        f"Read all {len(package.paths)} attached package files. Start with TASK.md, "
+                        f"then use the indexed CODEBASE.md and MANIFEST.json. Package SHA-256: "
+                        f"{digest}. Follow the output instructions exactly."
+                    )
                     transport = "attachment"
                 else:
                     chunks = make_chunks(serialized, int(self.config.get("max_chunk_chars", 12000)))
@@ -228,11 +240,17 @@ class BrowserProvider(Provider):
                     response = page.locator(response_selector).last
                     raw = response.text_content() or ""
                     parsed = parse_response(_extract_json(raw), request, self.name)
+                if request.role == "implement":
+                    output_zip = self._download_output_zip(page, selectors, request)
+                    parsed.content["_maintain_output_zip"] = output_zip.name
                 page.screenshot(path=str(self.evidence_dir / f"{request.role}.png"), full_page=True)
                 (self.evidence_dir / f"{request.role}.txt").write_text(raw, encoding="utf-8")
                 (self.evidence_dir / f"{request.role}-transport.json").write_text(
                     json.dumps({"transport": transport, "sha256": digest,
-                                "bytes": len(serialized.encode()), "schema_repair": repaired}),
+                                "bytes": package_bytes, "attachments": attachment_names,
+                                "schema_repair": repaired,
+                                "output_zip": (output_zip.name if request.role == "implement"
+                                               else None)}),
                     encoding="utf-8")
                 return parsed
             except Exception as exc:
@@ -250,6 +268,26 @@ class BrowserProvider(Provider):
                 raise ProviderError(f"Browser provider stopped safely: {exc}") from exc
             finally:
                 context.close()
+
+    def _download_output_zip(self, page, selectors: dict[str, Any],
+                             request: ProviderRequest) -> Path:
+        selector = selectors.get("output_download_selector")
+        if not selector:
+            raise ProviderError(
+                "Configure selectors.output_download_selector for implementation ZIP files.")
+        target = page.locator(selector).last
+        timeout = int(self.config.get("timeout_ms", 300_000))
+        target.wait_for(state="visible", timeout=timeout)
+        with page.expect_download(timeout=timeout) as pending:
+            target.click()
+        download = pending.value
+        safe_task = re.sub(r"[^A-Za-z0-9._-]+", "-", request.task_id).strip("-.") or "task"
+        destination = self.evidence_dir / f"{safe_task}-{request.role}-output.zip"
+        download.save_as(str(destination))
+        if not zipfile.is_zipfile(destination):
+            destination.unlink(missing_ok=True)
+            raise ProviderError("The implementation output is not a valid ZIP file.")
+        return destination
 
 
 def _extract_json(text: str) -> str:
@@ -291,11 +329,17 @@ PAGE_OBJECTS = {
         "attachment_selector": 'input[type="file"]',
         "response_selector": '[data-message-author-role="assistant"]',
         "generation_active_selector": '[data-testid="stop-button"]',
+        "output_download_selector": (
+            'a[download][href], a[href^="sandbox:"], a[href*="/files/"]'
+        ),
     },
     "m365_copilot_browser": {
         "new_chat_name": "New chat", "prompt_role": "textbox",
         "attachment_selector": 'input[type="file"]',
         "response_selector": '[data-testid="copilot-response"]',
         "generation_active_selector": '[aria-label="Stop generating"]',
+        "output_download_selector": (
+            'a[download][href], a[href*="download"], button[aria-label*="Download"]'
+        ),
     },
 }

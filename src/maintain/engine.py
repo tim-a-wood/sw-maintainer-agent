@@ -475,6 +475,23 @@ class WorkflowEngine:
                 conversation_suffix=f"{task['id']}-attempt-{record.attempt}",
                 implementation_worktree=Path(record.worktree))
             workspace_edited = bool(content.pop("_maintain_workspace_edited", False))
+            output_zip_name = content.pop("_maintain_output_zip", "")
+            if output_zip_name:
+                if Path(str(output_zip_name)).name != str(output_zip_name):
+                    raise ProviderError("The implementation ZIP has an invalid artifact name.")
+                output_zip = store.artifacts / "browser" / str(output_zip_name)
+                if not output_zip.is_file():
+                    raise ProviderError("The implementation ZIP is missing from the audit package.")
+                archive_paths = self.workspaces.apply_output_zip(
+                    Path(record.worktree), output_zip, paths,
+                    self.config.max_file_bytes, self.config.max_prompt_bytes,
+                )
+                declared_paths = content.get("changed_files")
+                if (not isinstance(declared_paths, list) or
+                        set(map(str, declared_paths)) != set(archive_paths)):
+                    raise ProviderError(
+                        "The implementation ZIP does not match its declared changed files.")
+                workspace_edited = True
             patch = (self.workspaces.diff(Path(record.worktree)).text if workspace_edited
                      else content.get("patch"))
             if not isinstance(patch, str) or not patch.strip():
@@ -514,11 +531,16 @@ class WorkflowEngine:
             self._move(record, store, RunState.REVIEWING)
         diff = self.workspaces.diff(Path(record.worktree))
         task = record.tasks[record.task_index]
+        review_files = {
+            path: (Path(record.worktree) / path).read_text(encoding="utf-8")
+            for path in task["allowed_files"] if (Path(record.worktree) / path).is_file()
+        }
         content = self._exchange(record, store, "review", task["id"],
             "Independently review the actual diff. Return content.decision as approve or "
             "changes_requested and content.findings as structured evidence.",
             {"request": record.request, "tasks": record.tasks[:record.task_index + 1], "diff": diff.text,
-             "tree_hash": diff.tree_hash, "root_cause": record.evidence.get("root_cause")},
+             "files": review_files, "tree_hash": diff.tree_hash,
+             "root_cause": record.evidence.get("root_cause")},
             conversation_suffix=f"{task['id']}-review-{record.attempt}")
         decision = content.get("decision")
         if decision not in {"approve", "changes_requested"}:

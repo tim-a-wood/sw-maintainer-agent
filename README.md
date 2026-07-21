@@ -13,7 +13,9 @@ The installed command is `maintain`.
 ## What it does
 
 - Selects only the code needed for the requested change.
-- Creates explicit, self-contained task packages for the assistant.
+- Creates explicit, self-contained task packages using no more than three files.
+- Combines focused source files into one indexed `CODEBASE.md` document.
+- Receives implementation files in a checked, repository-ready ZIP.
 - Uses an isolated Git worktree and branch for every run.
 - Implements, independently reviews, and locally verifies each task.
 - Requires human acceptance before it creates a commit.
@@ -153,6 +155,12 @@ maintain --repo /path/to/project issue "Describe the observed problem"
 Maintain will prepare the isolated workspace, select focused context, create a
 change plan, implement it, review it in a separate conversation, and run the
 configured checks. When all gates pass, it pauses for acceptance.
+
+For each browser exchange, Maintain uploads `TASK.md`, `CODEBASE.md`, and
+`MANIFEST.json`. The codebase document contains only the selected context, with
+an index and exact repository paths. Implementation returns a ZIP containing
+complete changed files at those paths. Maintain validates and applies the ZIP in
+the isolated worktree before review and local verification.
 
 ```sh
 maintain --repo /path/to/project diff RUN_ID
