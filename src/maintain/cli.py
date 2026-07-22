@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 import tempfile
 from datetime import datetime
@@ -13,7 +14,7 @@ from . import __version__
 from .audit import AuditStore, atomic_write, cleanup_runs
 from .config import CONFIG_NAME, ProjectConfig, default_config, find_config
 from .engine import WorkflowEngine
-from .errors import ConfigurationError, MaintainError
+from .errors import ConfigurationError, DeliveryError, MaintainError
 from .presenter import Presenter
 from .presenter import QuietPresenter
 
@@ -57,7 +58,7 @@ def parser() -> argparse.ArgumentParser:
     audit.add_argument("action", choices=["verify", "export", "cleanup"])
     audit.add_argument("run_id", nargs="?")
     audit.add_argument("--output", metavar="ZIP", help="Archive path for export")
-    audit.add_argument("--older-than-days", type=int, default=365)
+    audit.add_argument("--older-than-days", type=int)
     diff = commands.add_parser("diff", help="Show the actual worktree diff")
     diff.add_argument("run_id")
     evidence = commands.add_parser("evidence", help="Show review, test, and delivery evidence")
@@ -109,15 +110,18 @@ def main(argv: list[str] | None = None) -> int:
                 ProjectConfig.load(temporary_path)
             finally:
                 temporary_path.unlink(missing_ok=True)
-            print("Proposed configuration:")
-            print(rendered, end="")
             if not args.yes:
+                print("Proposed configuration:")
+                print(rendered, end="")
                 if not sys.stdin.isatty():
                     raise ConfigurationError("Run init again with --yes to write this configuration.")
                 if input("Write this configuration? [y/N]: ").strip().casefold() not in {"y", "yes"}:
                     raise ConfigurationError("Configuration was not written.")
             atomic_write(path, rendered.encode())
-            print(f"Created {path}")
+            if args.json_output:
+                print(json.dumps({"created": str(path), "provider": args.provider}, sort_keys=True))
+            else:
+                print(f"Created {path}")
             return 0
         if args.command == "config" and args.action in {"upgrade", "migrate"}:
             from .migration import migrate_v1
@@ -125,87 +129,125 @@ def main(argv: list[str] | None = None) -> int:
             if path is None:
                 raise ConfigurationError(f"No {CONFIG_NAME} was found.")
             backup, report = migrate_v1(path, args.provider)
-            print(f"Configuration migrated. Backup: {backup}")
-            print(f"Legacy run report: {report}")
+            if args.json_output:
+                print(json.dumps({"backup": str(backup), "report": str(report)}, sort_keys=True))
+            else:
+                print(f"Configuration migrated. Backup: {backup}")
+                print(f"Legacy run report: {report}")
             return 0
         config = _config(args)
-        presenter = (QuietPresenter() if args.json_output else
-                     Presenter(animate=not args.no_animation, no_color=args.no_color))
+        presenter = QuietPresenter() if args.json_output else _presenter_for(args, config)
         engine = WorkflowEngine(config, presenter)
         if args.command in {"feature", "issue"}:
             request = " ".join(args.request)
             presenter.run_header(args.command, request, config.name, _provider_label(config))
             record = engine.start(args.command, request)
-            _summary(record, args.json_output, presenter)
+            _summary(record, args.json_output, presenter, command_prefix=_command_prefix(config))
         elif args.command == "resume":
             record = engine.resume(args.run_id)
-            _summary(record, args.json_output, presenter)
+            _summary(record, args.json_output, presenter, command_prefix=_command_prefix(config))
         elif args.command == "accept":
             record = engine.accept(args.run_id)
-            _summary(record, args.json_output, presenter)
+            _summary(record, args.json_output, presenter, command_prefix=_command_prefix(config))
         elif args.command == "deliver":
-            record = engine.deliver(args.run_id)
+            existing = _load(config, args.run_id)
+            record = (existing if existing.state in {"delivered", "needs_human_delivery"}
+                      else engine.deliver(args.run_id))
             if args.current_branch:
                 record = engine.integrate(args.run_id, args.current_branch,
                                           confirmed=args.confirm_current_branch)
-            _summary(record, args.json_output, presenter)
+            _summary(record, args.json_output, presenter, command_prefix=_command_prefix(config))
         elif args.command == "feedback":
             record = engine.feedback(args.run_id, " ".join(args.message))
-            _summary(record, args.json_output, presenter)
+            _summary(record, args.json_output, presenter, command_prefix=_command_prefix(config))
         elif args.command == "cancel":
-            _summary(engine.cancel(args.run_id), args.json_output, presenter)
+            _summary(engine.cancel(args.run_id), args.json_output, presenter,
+                     command_prefix=_command_prefix(config))
         elif args.command == "status":
             record = _load(config, args.run_id)
             gates = engine.gate_status(record)
             if args.json_output:
                 print(json.dumps({**record.to_dict(), "gates": gates}, sort_keys=True))
             else:
-                _summary(record, presenter=presenter)
+                _summary(record, presenter=presenter, command_prefix=_command_prefix(config))
                 presenter.gates(gates)
         elif args.command == "audit":
             if args.action == "cleanup":
-                removed = cleanup_runs(config.runtime_root, args.older_than_days)
-                print(f"Removed {len(removed)} expired unaccepted run(s).")
+                removed = cleanup_runs(
+                    config.runtime_root, args.older_than_days or config.retain_days,
+                    repository=config.repository,
+                )
+                if args.json_output:
+                    print(json.dumps({"removed": removed}, sort_keys=True))
+                else:
+                    print(f"Removed {len(removed)} expired unaccepted run(s).")
                 return 0
             if not args.run_id:
                 raise ConfigurationError("A run ID is required.")
+            _load(config, args.run_id)
             audit_store = AuditStore(config.runtime_root, args.run_id)
             result = audit_store.verify()
             if args.action == "verify":
-                presenter.outcome("Verified", "The audit record is complete and unchanged.",
-                                  facts=[("Run", args.run_id),
-                                         ("Events", str(result["events"]))], tone="success")
+                if args.json_output:
+                    print(json.dumps({"run_id": args.run_id, "verified": True, **result},
+                                     sort_keys=True))
+                else:
+                    presenter.outcome("Verified", "The audit record is complete and unchanged.",
+                                      facts=[("Run", args.run_id),
+                                             ("Events", str(result["events"]))], tone="success")
             else:
                 output = Path(args.output) if args.output else Path(f"{args.run_id}-audit.zip")
                 exported = audit_store.export(output)
-                presenter.outcome("Exported", "The verified audit package is ready.",
-                                  facts=[("Run", args.run_id), ("File", str(exported))],
-                                  tone="success")
+                if args.json_output:
+                    print(json.dumps({"run_id": args.run_id, "file": str(exported)}, sort_keys=True))
+                else:
+                    presenter.outcome("Exported", "The verified audit package is ready.",
+                                      facts=[("Run", args.run_id), ("File", str(exported))],
+                                      tone="success")
         elif args.command == "diff":
             record = _load(config, args.run_id)
             from .workspace import git
             if record.state == "delivered":
-                print(git(Path(record.worktree), "diff", "--binary", record.base_commit, "HEAD"))
+                commit = str(record.evidence.get("delivery", {}).get("commit", ""))
+                if not commit:
+                    raise ConfigurationError("The delivered commit is missing.")
+                shown_diff = git(config.repository, "diff", "--binary", record.base_commit, commit)
             else:
-                print(engine.workspaces.diff(Path(record.worktree)).text)
+                shown_diff = engine.workspaces.diff(Path(record.worktree)).text
+            print(json.dumps({"run_id": record.run_id, "diff": shown_diff}, sort_keys=True)
+                  if args.json_output else shown_diff)
         elif args.command == "evidence":
-            presenter.console.print_json(
-                json.dumps(_load(config, args.run_id).evidence, indent=2))
+            shown = _load(config, args.run_id).evidence
+            if args.json_output:
+                print(json.dumps(shown, sort_keys=True))
+            else:
+                presenter.console.print_json(json.dumps(shown, indent=2))
         elif args.command == "config":
             if args.action == "show":
-                presenter.console.print_json(
-                    json.dumps(json.loads(config.path.read_text()), indent=2))
+                shown = json.loads(config.path.read_text())
+                if args.json_output:
+                    print(json.dumps(shown, sort_keys=True))
+                else:
+                    presenter.console.print_json(json.dumps(shown, indent=2))
             else:
-                presenter.outcome("Valid", "The project configuration is valid.",
-                                  facts=[("Project", config.name)], tone="success")
+                if args.json_output:
+                    print(json.dumps({"valid": True, "project": config.name}, sort_keys=True))
+                else:
+                    presenter.outcome("Valid", "The project configuration is valid.",
+                                      facts=[("Project", config.name)], tone="success")
         elif args.command == "provider":
             if args.action == "list":
                 rows = [(role, profile,
                          str(config.providers.get(profile, {}).get("type", "missing")))
                         for role, profile in sorted(config.roles.items())]
-                presenter.provider_assignments(rows)
+                if args.json_output:
+                    print(json.dumps([{"role": role, "profile": profile, "provider": kind}
+                                      for role, profile, kind in rows], sort_keys=True))
+                else:
+                    presenter.provider_assignments(rows)
             else:
                 names = [args.profile] if args.profile else sorted(set(config.roles.values()))
+                readiness = []
                 for name in names:
                     if name not in config.providers:
                         raise ConfigurationError(f"Provider profile does not exist: {name}")
@@ -216,39 +258,55 @@ def main(argv: list[str] | None = None) -> int:
                     if args.action == "login":
                         provider.login()
                     provider.preflight()
-                    presenter.outcome("Ready", f"The {name} provider is ready.",
-                                      tone="success")
+                    readiness.append({"profile": name, "ready": True})
+                    if not args.json_output:
+                        presenter.outcome("Ready", f"The {name} provider is ready.",
+                                          tone="success")
+                if args.json_output:
+                    print(json.dumps(readiness, sort_keys=True))
         elif args.command == "workspace":
-            if args.action == "list" and config.runtime_root.exists():
-                for path in sorted(config.runtime_root.glob("*/run.json"), reverse=True):
-                    value = json.loads(path.read_text())
-                    print(f"{value['run_id']}  {value['state']}  {value['worktree']}")
+            if args.action == "list":
+                values = _run_values(config)
+                if args.json_output:
+                    print(json.dumps([{"run_id": value["run_id"], "state": value["state"],
+                                       "worktree": value["worktree"]} for value in values],
+                                     sort_keys=True))
+                else:
+                    for value in values:
+                        print(f"{value['run_id']}  {value['state']}  {value['worktree']}")
             elif args.action in {"open", "cleanup"}:
                 if not args.run_id:
                     raise ConfigurationError("A run ID is required.")
                 record = _load(config, args.run_id)
                 if args.action == "open":
-                    print(record.worktree)
+                    if not Path(record.worktree).is_dir():
+                        raise ConfigurationError("This run no longer has a local workspace.")
+                    print(json.dumps({"worktree": record.worktree}, sort_keys=True)
+                          if args.json_output else record.worktree)
                 else:
-                    from .workspace import git
-                    git(config.repository, "worktree", "remove", record.worktree)
-                    print(f"Removed workspace: {args.run_id}")
+                    engine.cleanup_workspace(record.run_id)
+                    if args.json_output:
+                        print(json.dumps({"removed": args.run_id}, sort_keys=True))
+                    else:
+                        print(f"Removed workspace: {args.run_id}")
         elif args.command == "runs":
-            rows = []
-            if config.runtime_root.exists():
-                for path in sorted(config.runtime_root.glob("*/run.json"), reverse=True):
-                    value = json.loads(path.read_text())
-                    if args.state and value["state"] != args.state:
-                        continue
-                    rows.append({key: str(value.get(key, ""))
-                                 for key in ("run_id", "state", "mode", "request")})
-            presenter.saved_runs(rows)
+            rows = [{key: str(value.get(key, ""))
+                     for key in ("run_id", "state", "mode", "request")}
+                    for value in _run_values(config)
+                    if not args.state or value["state"] == args.state]
+            if args.json_output:
+                print(json.dumps(rows, sort_keys=True))
+            else:
+                presenter.saved_runs(rows)
         elif args.command == "doctor":
             checks = engine.doctor()
-            presenter.outcome(
-                "Ready", "Maintain can start verified work.",
-                facts=[(name.replace("_", " "), result.title())
-                       for name, result in checks.items()], tone="success")
+            if args.json_output:
+                print(json.dumps(checks, sort_keys=True))
+            else:
+                presenter.outcome(
+                    "Ready", "Maintain can start verified work.",
+                    facts=[(name.replace("_", " "), result.title())
+                           for name, result in checks.items()], tone="success")
         return 0
     except MaintainError as exc:
         _show_error(args, str(exc), presenter)
@@ -267,10 +325,47 @@ def _load(config: ProjectConfig, run_id: str):
     path = AuditStore(config.runtime_root, run_id).run_dir / "run.json"
     if not path.is_file():
         raise ConfigurationError(f"Run does not exist: {run_id}")
-    return RunRecord.from_dict(json.loads(path.read_text()))
+    record = RunRecord.from_dict(json.loads(path.read_text()))
+    if Path(record.repository).resolve() != config.repository.resolve():
+        raise ConfigurationError("The run belongs to a different project.")
+    return record
 
 
-def _summary(record, json_output: bool = False, presenter: Presenter | None = None) -> None:
+def _run_values(config: ProjectConfig) -> list[dict]:
+    values: list[dict] = []
+    if not config.runtime_root.exists():
+        return values
+    for path in sorted(config.runtime_root.glob("*/run.json"), reverse=True):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if Path(str(value.get("repository", ""))).resolve() == config.repository.resolve():
+                values.append(value)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    return values
+
+
+def _continuable_values(config: ProjectConfig) -> list[dict]:
+    terminal = {"delivered", "failed", "cancelled"}
+    return [value for value in _run_values(config) if value.get("state") not in terminal]
+
+
+def _presenter_for(args: argparse.Namespace, config: ProjectConfig | None = None) -> Presenter:
+    animation = not args.no_animation and (config.ui_animation if config else True)
+    no_color = args.no_color or bool(config and config.ui_color == "never")
+    max_width = config.ui_max_width if config else 96
+    force_color = bool(config and config.ui_color == "always" and not args.no_color)
+    return Presenter(animate=animation, no_color=no_color, max_width=max_width,
+                     force_color=force_color)
+
+
+def _command_prefix(config: ProjectConfig) -> str:
+    return (f"maintain --repo {shlex.quote(str(config.repository))} "
+            f"--config {shlex.quote(str(config.path))}")
+
+
+def _summary(record, json_output: bool = False, presenter: Presenter | None = None,
+             interactive: bool = False, command_prefix: str = "maintain") -> None:
     if json_output:
         print(json.dumps(record.to_dict(), sort_keys=True))
         return
@@ -305,32 +400,45 @@ def _summary(record, json_output: bool = False, presenter: Presenter | None = No
         presenter.outcome(
             "Review ready", "The change is implemented, reviewed, and tested.",
             facts=facts,
-            actions=[f"Review the change: maintain diff {record.run_id}",
-                     f"Accept it: maintain accept {record.run_id}"],
+            actions=[] if interactive else [
+                f"Review the change: {command_prefix} diff {record.run_id}",
+                f"Accept it: {command_prefix} accept {record.run_id}",
+            ],
             tone="accent",
         )
     elif state == "accepted":
         presenter.outcome(
             "Accepted", "The verified change is approved.", facts=facts,
-            actions=[f"Create the commit: maintain deliver {record.run_id}"], tone="success")
+            actions=[] if interactive else [
+                f"Create the commit: {command_prefix} deliver {record.run_id}"
+            ],
+            tone="success")
     elif state == "delivered":
         commit = record.evidence.get("delivery", {}).get("commit", "")
-        presenter.outcome("Delivered", "The verified commit is ready.",
-                          facts=[*facts, ("Commit", commit)], tone="success")
+        integrated = record.evidence.get("delivery", {}).get("integrated_branch", "")
+        presenter.outcome(
+            "Delivered",
+            (f"The verified change is now on {integrated}." if integrated
+             else "The verified commit is ready on its maintenance branch."),
+            facts=[*facts, ("Commit", commit), ("Updated", integrated)], tone="success",
+        )
     elif state == "cancelled":
         presenter.outcome("Cancelled", "The run stopped and its evidence was saved.",
                           facts=facts, tone="muted")
     elif state in {"needs_human", "needs_human_delivery"}:
+        actions = (["Return to the menu and choose Continue saved work after you fix this item."]
+                   if interactive else
+                   [f"Fix the item above, then continue: {command_prefix} resume {record.run_id}",
+                    f"View the saved evidence: {command_prefix} status {record.run_id}"])
         presenter.outcome(
             "Action needed", "This run is paused.", record.error, facts,
-            [f"Fix the item above, then continue: maintain resume {record.run_id}",
-             f"View the saved evidence: maintain status {record.run_id}"],
+            actions,
             tone="warning",
         )
     elif state == "failed":
         presenter.outcome("Stopped", "Maintain could not complete this run.",
                           record.error, facts,
-                          [f"View the saved evidence: maintain status {record.run_id}"],
+                          [f"View the saved evidence: {command_prefix} status {record.run_id}"],
                           tone="danger")
     else:
         presenter.outcome("Saved", f"The run is {state.replace('_', ' ')}.",
@@ -341,43 +449,250 @@ def _home(args: argparse.Namespace) -> int:
     if not sys.stdin.isatty():
         print("Choose feature, issue, resume, runs, or doctor.", file=sys.stderr)
         return 2
-    presenter = Presenter(animate=not args.no_animation, no_color=args.no_color)
-    project, provider = _home_context(args)
-    presenter.home(project, provider)
-    choice = presenter.ask("Select an option", "1")
-    global_args = ["--repo", args.repo]
-    if args.config:
-        global_args += ["--config", args.config]
+    while True:
+        config_error = ""
+        try:
+            config = _config(args)
+        except (MaintainError, OSError, ValueError) as exc:
+            config = None
+            if find_config(Path(args.repo)) is not None:
+                config_error = str(exc)
+        presenter = _presenter_for(args, config)
+        values = _continuable_values(config) if config else []
+        presenter.home(
+            config.name if config else "",
+            _provider_label(config) if config else "Setup required",
+            len(values), configured=config is not None, setup_issue=config_error,
+        )
+        choice = presenter.ask("Choose", "1").casefold()
+        if choice == "q":
+            return 0
+        if choice == "s":
+            if config is not None:
+                presenter.error("This project is already set up.")
+                _pause(presenter)
+                continue
+            if _interactive_setup(args, presenter) == 0:
+                continue
+            _pause(presenter)
+            continue
+        if choice not in {"1", "2", "3", "4"}:
+            presenter.error("Choose 1, 2, 3, 4, S, or Q.")
+            continue
+        if config is None:
+            presenter.error("Set up this project before starting work.",
+                            "Choose S from the menu.")
+            _pause(presenter)
+            continue
+        engine = WorkflowEngine(config, presenter)
+        if choice in {"1", "2"}:
+            mode = "feature" if choice == "1" else "issue"
+            presenter.console.print()
+            request = presenter.ask("What should change?" if mode == "feature" else "What is wrong?")
+            if not request:
+                presenter.error("Describe the required outcome before starting.")
+                _pause(presenter)
+                continue
+            presenter.run_header(mode, request, config.name, _provider_label(config))
+            record = engine.start(mode, request)
+            _summary(record, presenter=presenter, interactive=True)
+            _interactive_run(engine, record, presenter)
+            continue
+        if choice == "3":
+            selected = _choose_run(config, presenter)
+            if selected is None:
+                continue
+            record = _load(config, selected)
+            if record.state in {"awaiting_acceptance", "accepted"}:
+                _summary(record, presenter=presenter, interactive=True)
+                _interactive_run(engine, record, presenter)
+            elif record.state == "needs_human_delivery":
+                _summary(record, presenter=presenter, interactive=True)
+                _interactive_delivery(engine, record, presenter)
+            elif record.state in {"delivered", "failed", "cancelled"}:
+                _summary(record, presenter=presenter, interactive=True)
+                _pause(presenter)
+            else:
+                record = engine.resume(record.run_id)
+                _summary(record, presenter=presenter, interactive=True)
+                _interactive_run(engine, record, presenter)
+            continue
+        rows = [{key: str(value.get(key, ""))
+                 for key in ("run_id", "state", "mode", "request")}
+                for value in _run_values(config)]
+        presenter.saved_runs(rows, selectable=False)
+        _pause(presenter)
+
+
+def _interactive_setup(args: argparse.Namespace, presenter: Presenter) -> int:
+    presenter.section("SETUP", "Choose the assistant")
+    presenter.console.print()
+    presenter.menu_line("1", "Microsoft 365 Copilot", "Browser automation")
+    presenter.menu_line("2", "ChatGPT", "Browser automation")
+    presenter.menu_line("3", "Codex", "Local CLI")
+    presenter.menu_line("b", "Back", "", quiet=True)
+    choice = presenter.ask("Choose", "1").casefold()
+    if choice == "b":
+        return 1
+    provider = {"1": "m365-browser", "2": "chatgpt-browser", "3": "codex"}.get(choice)
+    if provider is None:
+        presenter.error("Choose 1, 2, 3, or B.")
+        return 1
+    repository = Path(args.repo).expanduser().resolve()
+    while not (repository / ".git").exists() and repository != repository.parent:
+        repository = repository.parent
+    existing = find_config(repository)
+    if existing is not None:
+        try:
+            version = json.loads(existing.read_text(encoding="utf-8")).get("schema_version")
+        except (OSError, json.JSONDecodeError) as exc:
+            presenter.error("The existing project configuration cannot be read.", str(exc))
+            return 1
+        if version == 1:
+            return main(["--repo", str(repository), "config", "upgrade",
+                         "--provider", provider])
+        presenter.error(
+            "The existing project configuration is invalid.",
+            f"Correct or remove {existing}, then choose setup again.",
+        )
+        return 1
+    init_args = ["init", str(repository), "--provider", provider, "--yes"]
+    created = main(init_args)
+    if created or provider not in {"m365-browser", "chatgpt-browser"}:
+        return created
+    profile = "m365" if provider == "m365-browser" else "chatgpt"
+    login_args = ["--repo", str(repository)]
     if args.no_animation:
-        global_args.append("--no-animation")
+        login_args.append("--no-animation")
     if args.no_color:
-        global_args.append("--no-color")
-    if choice == "1":
-        presenter.console.print()
-        request = presenter.ask("What should change?")
-        return main([*global_args, "feature", request])
-    if choice == "2":
-        presenter.console.print()
-        request = presenter.ask("What is wrong?")
-        return main([*global_args, "issue", request])
-    if choice == "3":
-        presenter.console.print()
-        run_id = presenter.ask("Run ID")
-        return main([*global_args, "resume", run_id])
-    if choice == "4":
-        return main([*global_args, "runs"])
-    if choice.lower() == "q":
-        return 0
-    presenter.error("Choose 1, 2, 3, 4, or q.")
-    return 2
+        login_args.append("--no-color")
+    login_args.extend(["provider", "login", profile])
+    return main(login_args)
 
 
-def _home_context(args: argparse.Namespace) -> tuple[str, str]:
+def _choose_run(config: ProjectConfig, presenter: Presenter) -> str | None:
+    values = _continuable_values(config)
+    if not values:
+        presenter.outcome("Saved work", "There are no runs to continue.", tone="muted")
+        _pause(presenter)
+        return None
+    rows = [{**{key: str(value.get(key, ""))
+                for key in ("run_id", "state", "mode", "request")},
+             "index": str(index)} for index, value in enumerate(values, 1)]
+    presenter.saved_runs(rows, selectable=True)
+    while True:
+        choice = presenter.ask("Choose a run", "1").casefold()
+        if choice in {"b", "q"}:
+            return None
+        try:
+            return rows[int(choice) - 1]["run_id"]
+        except (ValueError, IndexError):
+            presenter.console.print("Choose a listed run number or B to go back.",
+                                    style="warning")
+
+
+def _interactive_run(engine: WorkflowEngine, record, presenter: Presenter) -> None:
+    while record.state in {"awaiting_acceptance", "accepted"}:
+        presenter.console.print()
+        if record.state == "awaiting_acceptance":
+            presenter.console.print("FINISH THIS RUN", style="brand")
+            presenter.console.print()
+            presenter.menu_line("1", "Accept and update this branch", "Default")
+            presenter.menu_line("2", "Review the diff", "Optional")
+            presenter.menu_line("3", "Request another change", "Send feedback")
+            presenter.menu_line("4", "Keep a verified branch only", "Do not update this branch")
+            presenter.menu_line("b", "Keep it saved", "Return to the menu", quiet=True)
+            choice = presenter.ask("Choose", "1").casefold()
+            if choice == "2":
+                presenter.console.print()
+                presenter.console.print(engine.workspaces.diff(Path(record.worktree)).text,
+                                        markup=False)
+                _pause(presenter)
+                continue
+            if choice == "3":
+                message = presenter.ask("What should be different?")
+                if not message:
+                    presenter.error("Feedback cannot be empty.")
+                    continue
+                record = engine.feedback(record.run_id, message)
+                _summary(record, presenter=presenter, interactive=True)
+                continue
+            if choice == "b":
+                return
+            if choice not in {"1", "4"}:
+                presenter.error("Choose 1, 2, 3, 4, or B.")
+                continue
+            update_source = choice == "1"
+            try:
+                record = engine.accept(record.run_id)
+            except MaintainError as exc:
+                presenter.error(str(exc))
+                _pause(presenter)
+                return
+        else:
+            presenter.console.print("FINISH THIS ACCEPTED RUN", style="brand")
+            presenter.console.print()
+            presenter.menu_line("1", "Create commit and update this branch", "Default")
+            presenter.menu_line("4", "Keep a verified branch only", "Do not update this branch")
+            presenter.menu_line("b", "Keep it saved", "Return to the menu", quiet=True)
+            choice = presenter.ask("Choose", "1").casefold()
+            if choice == "b":
+                return
+            if choice not in {"1", "4"}:
+                presenter.error("Choose 1, 4, or B.")
+                continue
+            update_source = choice == "1"
+        presenter.complete("ACCEPT", "Verified change accepted")
+        try:
+            record = engine.deliver(record.run_id)
+            source_branch = str(record.evidence.get("source_branch", ""))
+            if update_source and source_branch:
+                record = engine.integrate(record.run_id, source_branch, confirmed=True)
+                presenter.complete("UPDATE", f"Updated {source_branch}")
+            elif update_source:
+                presenter.failed("UPDATE", "Source checkout has no branch; kept the verified branch")
+        except MaintainError as exc:
+            presenter.error(str(exc))
+            _pause(presenter)
+            return
+        _summary(record, presenter=presenter, interactive=True)
+        _pause(presenter)
+        return
+
+
+def _interactive_delivery(engine: WorkflowEngine, record, presenter: Presenter) -> None:
+    presenter.console.print()
+    presenter.console.print("FINISH THE BRANCH UPDATE", style="brand")
+    presenter.console.print()
+    presenter.menu_line("1", "Try the branch update again", "Default")
+    presenter.menu_line("2", "Keep the verified branch only", "Finish without updating")
+    presenter.menu_line("b", "Keep it saved", "Return to the menu", quiet=True)
+    choice = presenter.ask("Choose", "1").casefold()
+    if choice == "b":
+        return
     try:
-        config = _config(args)
-    except (MaintainError, OSError, ValueError):
-        return "", "Setup required"
-    return config.name, _provider_label(config)
+        if choice == "1":
+            source_branch = str(record.evidence.get("source_branch", ""))
+            if not source_branch:
+                raise DeliveryError("The source checkout has no recorded branch.")
+            record = engine.integrate(record.run_id, source_branch, confirmed=True)
+            presenter.complete("UPDATE", f"Updated {source_branch}")
+        elif choice == "2":
+            record = engine.keep_delivered_branch(record.run_id)
+            presenter.complete("DELIVER", "Kept the verified maintenance branch")
+        else:
+            presenter.error("Choose 1, 2, or B.")
+            _pause(presenter)
+            return
+    except MaintainError as exc:
+        presenter.error(str(exc))
+    _summary(record, presenter=presenter, interactive=True)
+    _pause(presenter)
+
+
+def _pause(presenter: Presenter) -> None:
+    presenter.console.print()
+    presenter.ask("Press Enter to return")
 
 
 def _provider_label(config: ProjectConfig) -> str:

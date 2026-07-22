@@ -6,6 +6,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -16,6 +17,9 @@ from typing import Any
 from .errors import RecoveryError
 from .locking import FileLock
 from .models import utc_now
+
+
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def canonical(value: object) -> bytes:
@@ -49,18 +53,25 @@ def media_type(path: Path) -> str:
 
 class AuditStore:
     def __init__(self, runtime_root: Path, run_id: str) -> None:
+        if not RUN_ID_PATTERN.fullmatch(run_id):
+            raise RecoveryError("Run ID contains invalid characters.")
         self.run_id = run_id
-        self.run_dir = runtime_root / run_id
+        self.run_dir = runtime_root.expanduser().resolve() / run_id
         self.artifacts = self.run_dir / "artifacts"
         self.ledger = self.run_dir / "audit.jsonl"
+
+    def _ensure(self) -> None:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
     def write_artifact(self, name: str, value: object) -> dict[str, Any]:
+        self._ensure()
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError("Artifact path must be relative.")
         data = value if isinstance(value, bytes) else canonical(value)
         path = self.artifacts / relative
+        if path.exists() and path.read_bytes() != data:
+            raise RecoveryError(f"Audit artifact would be overwritten: {relative.as_posix()}")
         atomic_write(path, data)
         artifact = {"path": f"artifacts/{relative.as_posix()}", "bytes": len(data),
                     "sha256": sha256(data), "media_type": media_type(relative)}
@@ -80,6 +91,7 @@ class AuditStore:
         return artifact
 
     def append(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure()
         with FileLock(self.run_dir / "audit.lock", f"audit append {self.run_id}"):
             previous = "0" * 64
             sequence = 1
@@ -100,6 +112,7 @@ class AuditStore:
             return event
 
     def save_record(self, record: object) -> None:
+        self._ensure()
         value = record.to_dict() if hasattr(record, "to_dict") else record
         atomic_write(self.run_dir / "run.json", canonical(value))
 
@@ -137,6 +150,12 @@ class AuditStore:
         manifest = {path.relative_to(self.run_dir).as_posix(): sha256(path.read_bytes())
                     for path in sorted(files)}
         destination = destination.expanduser().resolve()
+        try:
+            destination.relative_to(self.run_dir.resolve())
+        except ValueError:
+            pass
+        else:
+            raise RecoveryError("Export the audit package outside its run directory.")
         destination.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for path in sorted(files):
@@ -153,7 +172,7 @@ class AuditStore:
 
 
 def cleanup_runs(runtime_root: Path, older_than_days: int,
-                 now: datetime | None = None) -> list[str]:
+                 now: datetime | None = None, repository: Path | None = None) -> list[str]:
     """Remove only old, terminal, unaccepted runs after audit verification."""
     if older_than_days < 1:
         raise ValueError("Retention must be at least one day.")
@@ -174,7 +193,16 @@ def cleanup_runs(runtime_root: Path, older_than_days: int,
             raise RecoveryError(f"Cannot evaluate retention for {run_dir.name}: {exc}") from exc
         if record.get("state") not in {"failed", "cancelled"} or updated >= cutoff:
             continue
+        if repository is not None:
+            try:
+                if Path(str(record.get("repository", ""))).resolve() != repository.resolve():
+                    continue
+            except OSError:
+                continue
         if record.get("accepted_tree_hash") or record.get("state") in {"accepted", "delivered"}:
+            continue
+        worktree = Path(str(record.get("worktree", ""))).expanduser()
+        if str(record.get("worktree", "")) and worktree.exists():
             continue
         AuditStore(root, run_dir.name).verify()
         shutil.rmtree(run_dir)

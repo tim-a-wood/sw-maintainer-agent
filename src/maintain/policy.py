@@ -11,7 +11,8 @@ TRANSITIONS = {
     RunState.WORKSPACE_READY: {RunState.SCOPING, RunState.CANCELLED},
     RunState.SCOPING: {RunState.CONTEXT_EXPANDING, RunState.NEEDS_HUMAN, RunState.FAILED},
     RunState.CONTEXT_EXPANDING: {RunState.TASKS_READY, RunState.NEEDS_HUMAN, RunState.FAILED},
-    RunState.TASKS_READY: {RunState.IMPLEMENTING, RunState.CANCELLED},
+    RunState.TASKS_READY: {RunState.IMPLEMENTING, RunState.NEEDS_HUMAN,
+                           RunState.FAILED, RunState.CANCELLED},
     RunState.IMPLEMENTING: {RunState.IMPLEMENTED, RunState.NEEDS_HUMAN, RunState.FAILED},
     RunState.IMPLEMENTED: {RunState.REVIEWING},
     RunState.REVIEWING: {RunState.TESTING, RunState.CHANGES_REQUESTED, RunState.NEEDS_HUMAN},
@@ -27,10 +28,11 @@ TRANSITIONS = {
     RunState.DELIVERED: {RunState.NEEDS_HUMAN_DELIVERY},
     RunState.NEEDS_HUMAN: {
         RunState.PREFLIGHT, RunState.SCOPING, RunState.CONTEXT_EXPANDING,
-        RunState.IMPLEMENTING, RunState.REVIEWING, RunState.CHANGES_REQUESTED,
+        RunState.TASKS_READY, RunState.IMPLEMENTING, RunState.REVIEWING, RunState.CHANGES_REQUESTED,
         RunState.TESTING, RunState.TEST_FAILED, RunState.REPAIRING, RunState.DELIVERING,
         RunState.CANCELLED,
     },
+    RunState.NEEDS_HUMAN_DELIVERY: {RunState.DELIVERED},
 }
 
 for _active_state in tuple(TRANSITIONS):

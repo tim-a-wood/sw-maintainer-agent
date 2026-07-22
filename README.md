@@ -3,6 +3,14 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-38BDF8)](https://www.python.org/)
 [![CLI](https://img.shields.io/badge/interface-terminal-34D399)](#start-a-workflow)
 
+```text
+ ▄▄▄▄▄▄     MAINTAIN  SOFTWARE CARE, ON RAILS
+▟█ ▄  █▙    PLAN  ·  BUILD  ·  REVIEW  ·  VERIFY
+██  ▀ ██
+▀█▄▄▄▄█▀
+  ▀  ▀
+```
+
 Software Maintainer Agent is a focused command-line workflow for changing an
 existing software project with an AI assistant. It can add or change a feature,
 fix an issue, review the implementation, run local checks, and retain an audit
@@ -18,7 +26,7 @@ The installed command is `maintain`.
 - Receives implementation files in a checked, repository-ready ZIP.
 - Uses an isolated Git worktree and branch for every run.
 - Implements, independently reviews, and locally verifies each task.
-- Requires human acceptance before it creates a commit.
+- Requires human acceptance before it creates a commit or updates the project branch.
 - Saves requests, responses, diffs, checks, decisions, and delivery evidence.
 - Resumes saved work after an interruption or required human action.
 
@@ -30,7 +38,7 @@ browser profile.
 
 - Python 3.11 or later
 - Git
-- A clean Git repository for the project you want to maintain
+- A Git repository for the project you want to maintain
 - Chromium when using a browser provider
 - The selected assistant account or local assistant CLI
 
@@ -64,13 +72,24 @@ On Windows, activate the environment with:
 
 ## Set up an existing project
 
-The tool keeps its own source separate from the project that it maintains. Run
-the following commands from this repository's activated virtual environment.
+The tool keeps its source and audit data separate from the project that it
+maintains. The simplest setup is interactive:
+
+```sh
+maintain --repo /path/to/project
+```
+
+Choose `S`, select Microsoft 365 Copilot, ChatGPT, or Codex, and follow the
+on-screen sign-in step. The setup creates `.maintain.json` in the target project.
+It does not add that file to Git, and the file can remain untracked.
+
+Use the steps below when you want to inspect or customize setup before the first
+run.
 
 ### 1. Prepare the project
 
-The target must be a Git repository with a clean working tree. Commit or stash
-existing work first.
+The target must have at least one Git commit. Commit or stash existing source
+changes first. Maintain permits its own `.maintain.json` to remain untracked.
 
 ```sh
 git -C /path/to/project status
@@ -94,24 +113,24 @@ maintain init /path/to/project --provider codex
 maintain init /path/to/project --provider file-exchange
 ```
 
-This creates `.maintain.json` inside the target project. The generated file is a
-starting point. Review it before the first run.
+This shows the proposed `.maintain.json` and asks before writing it. Add `--yes`
+for non-interactive setup after you have inspected the proposal.
 
 ### 3. Review the detected project settings
 
 Confirm these items in `.maintain.json`:
 
 - `project.name` and `project.default_branch`
-- `repository.source_roots` and `repository.test_roots`
-- excluded, generated, and protected paths
+- `repository.source_roots`, `repository.test_roots`, and excluded paths
+- generated and protected paths
 - the provider assigned to each workflow role
-- local verification commands and time limits
-- a reproduction command for the issue workflow
+- local verification commands and time limits; add a focused pre-fix reproduction command when one exists
 - change limits, deletion rules, and dependency-change policy
 
-For a browser provider, replace the generated setup markers with the exact
-signed-in workspace or tenant and identity that the tool must verify. Do not put
-passwords, tokens, cookies, or API keys in the configuration.
+Browser workspace, tenant, and identity checks are optional. Configure them only
+when your organization needs an explicit visible-page check and you have stable
+selectors for those labels. Do not put passwords, tokens, cookies, or API keys
+in the configuration.
 
 ### 4. Validate the setup
 
@@ -152,9 +171,11 @@ maintain --repo /path/to/project feature "Add the requested behavior"
 maintain --repo /path/to/project issue "Describe the observed problem"
 ```
 
-Maintain will prepare the isolated workspace, select focused context, create a
-change plan, implement it, review it in a separate conversation, and run the
-configured checks. When all gates pass, it pauses for acceptance.
+Maintain prepares an isolated workspace, selects focused context, creates a
+change plan, implements it, reviews it in a separate conversation, and runs the
+configured checks. When all gates pass, it asks whether to inspect, revise, save,
+or accept the change. The guided default creates the verified commit and
+fast-forwards the source branch if the source checkout is still unchanged.
 
 For each browser exchange, Maintain uploads `TASK.md`, `CODEBASE.md`, and
 `MANIFEST.json`. The codebase document contains only the selected context, with
@@ -169,7 +190,9 @@ maintain --repo /path/to/project deliver RUN_ID
 ```
 
 Acceptance approves the verified tree. Delivery creates the commit only after
-that approval.
+that approval. Direct commands keep the commit on the maintenance branch unless
+you explicitly add `--current-branch BRANCH --confirm-current-branch` to
+`maintain deliver`.
 
 ## Resume and inspect work
 
@@ -187,7 +210,7 @@ default.
 
 ## Operating boundaries
 
-- The primary project tree is not edited during a workflow.
+- The primary project tree is not edited before review, local verification, and acceptance.
 - The assistant receives focused code packages, not unrestricted repository access.
 - Implementation and review use separate conversations.
 - Local verification results are authoritative.

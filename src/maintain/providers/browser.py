@@ -8,7 +8,7 @@ import os
 import re
 import time
 import zipfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -53,21 +53,17 @@ class BrowserProvider(Provider):
             if missing:
                 raise ProviderError(
                     f"The ChatGPT account lacks a required capability: {missing[0]}.")
-        expected_context = str(self.config.get("expected_tenant") or
-                               self.config.get("expected_workspace") or "")
-        expected_identity = str(self.config.get("expected_identity") or "")
-        if not expected_context or expected_context.startswith("SET_"):
-            raise ProviderError("Set the expected tenant or workspace before browser use.")
-        if not expected_identity or expected_identity.startswith("SET_"):
-            raise ProviderError("Set the expected signed-in identity before browser use.")
+        expected_context = _configured_value(
+            self.config.get("expected_tenant") or self.config.get("expected_workspace"))
+        expected_identity = _configured_value(self.config.get("expected_identity"))
         selectors = {**PAGE_OBJECTS.get(self.name, {}), **self.config.get("selectors", {})}
         identity_selector = selectors.get("identity_selector")
-        if not identity_selector:
+        if expected_identity and not identity_selector:
             raise ProviderError("Configure an identity selector for the signed-in user.")
         context_selector_name = ("tenant_selector" if self.name == "m365_copilot_browser"
                                  else "workspace_selector")
         context_selector = selectors.get(context_selector_name)
-        if not context_selector:
+        if expected_context and not context_selector:
             raise ProviderError("Configure a selector for the expected tenant or workspace.")
         try:
             import playwright.sync_api  # noqa: F401
@@ -78,8 +74,7 @@ class BrowserProvider(Provider):
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         lock_path = self.profile_dir.parent / f".{self.profile_dir.name}.maintain.lock"
         with FileLock(lock_path, f"browser profile {self.name}"), sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                str(self.profile_dir), headless=not bool(self.config.get("visible", True)))
+            context = self._launch_context(playwright)
             page = context.pages[0] if context.pages else context.new_page()
             try:
                 page.goto(str(self.config["url"]), wait_until="domcontentloaded")
@@ -87,14 +82,16 @@ class BrowserProvider(Provider):
                 if sign_in_selector and page.locator(sign_in_selector).is_visible():
                     raise ProviderError(
                         "Interactive sign-in or MFA is required. Run maintain provider login first.")
-                context_label = page.locator(context_selector).inner_text(timeout=30_000).strip()
-                if expected_context.casefold() not in context_label.casefold():
-                    raise ProviderError(
-                        f"The browser context does not match {expected_context!r}.")
-                identity_label = page.locator(identity_selector).inner_text(timeout=30_000).strip()
-                if expected_identity.casefold() not in identity_label.casefold():
-                    raise ProviderError(
-                        f"The signed-in identity does not match {expected_identity!r}.")
+                if expected_context:
+                    context_label = page.locator(context_selector).inner_text(timeout=30_000).strip()
+                    if expected_context.casefold() not in context_label.casefold():
+                        raise ProviderError(
+                            f"The browser context does not match {expected_context!r}.")
+                if expected_identity:
+                    identity_label = page.locator(identity_selector).inner_text(timeout=30_000).strip()
+                    if expected_identity.casefold() not in identity_label.casefold():
+                        raise ProviderError(
+                            f"The signed-in identity does not match {expected_identity!r}.")
                 page.screenshot(path=str(self.evidence_dir /
                                 f"{self.name}-preflight-{time.time_ns()}.png"),
                                 full_page=True)
@@ -107,20 +104,28 @@ class BrowserProvider(Provider):
 
     def login(self) -> None:
         """Open the dedicated visible profile for interactive sign-in."""
-        from playwright.sync_api import sync_playwright
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise ProviderError("Install Maintain with the browser extra and install Chromium.") from exc
 
         if not bool(self.config.get("visible", True)):
             raise ProviderError("Interactive login requires visible browser mode.")
         lock_path = self.profile_dir.parent / f".{self.profile_dir.name}.maintain.lock"
         self.profile_dir.mkdir(parents=True, exist_ok=True)
-        with FileLock(lock_path, f"browser profile {self.name}"), sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(str(self.profile_dir), headless=False)
-            page = context.pages[0] if context.pages else context.new_page()
-            page.goto(str(self.config["url"]), wait_until="domcontentloaded")
-            try:
-                input("Complete sign-in in the browser. Press Enter here when sign-in is complete: ")
-            finally:
-                context.close()
+        try:
+            with FileLock(lock_path, f"browser profile {self.name}"), sync_playwright() as playwright:
+                context = self._launch_context(playwright, visible=True)
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(str(self.config["url"]), wait_until="domcontentloaded")
+                try:
+                    input("Complete sign-in in the browser. Press Enter here when sign-in is complete: ")
+                finally:
+                    context.close()
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise ProviderError(f"Browser login failed: {exc}") from exc
 
     def exchange(self, request: ProviderRequest):
         from playwright.sync_api import sync_playwright
@@ -134,8 +139,7 @@ class BrowserProvider(Provider):
             raise ProviderError("Configure selectors.response_selector for the approved web UI.")
         lock_path = self.profile_dir.parent / f".{self.profile_dir.name}.maintain.lock"
         with FileLock(lock_path, f"browser profile {self.name}"), sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                str(self.profile_dir), headless=not bool(self.config.get("visible", True)))
+            context = self._launch_context(playwright)
             page = context.pages[0] if context.pages else context.new_page()
             try:
                 page.goto(str(self.config["url"]), wait_until="domcontentloaded")
@@ -143,38 +147,42 @@ class BrowserProvider(Provider):
                 if sign_in_selector and page.locator(sign_in_selector).is_visible():
                     raise ProviderError("Interactive sign-in or MFA is required in the visible browser.")
                 identity_selector = selectors.get("identity_selector")
-                expected_context = str(self.config.get("expected_tenant") or
-                                       self.config.get("expected_workspace") or "")
-                expected_identity = str(self.config.get("expected_identity") or "")
+                expected_context = _configured_value(
+                    self.config.get("expected_tenant") or self.config.get("expected_workspace"))
+                expected_identity = _configured_value(self.config.get("expected_identity"))
                 if expected_context or expected_identity:
                     context_selector_name = (
                         "tenant_selector" if self.name == "m365_copilot_browser"
                         else "workspace_selector")
                     context_selector = selectors.get(context_selector_name)
-                    if not context_selector or not identity_selector:
-                        raise ProviderError(
-                            "Configure context and identity selectors for browser verification.")
-                    context_label = page.locator(context_selector).inner_text(
-                        timeout=30_000).strip()
-                    identity_label = page.locator(identity_selector).inner_text(
-                        timeout=30_000).strip()
-                    if expected_context.casefold() not in context_label.casefold():
-                        raise ProviderError(
-                            f"The browser context does not match {expected_context!r}.")
-                    if expected_identity.casefold() not in identity_label.casefold():
-                        raise ProviderError(
-                            f"The signed-in identity does not match {expected_identity!r}.")
+                    if expected_context:
+                        if not context_selector:
+                            raise ProviderError("Configure a context selector for browser verification.")
+                        context_label = page.locator(context_selector).inner_text(
+                            timeout=30_000).strip()
+                        if expected_context.casefold() not in context_label.casefold():
+                            raise ProviderError(
+                                f"The browser context does not match {expected_context!r}.")
+                    if expected_identity:
+                        if not identity_selector:
+                            raise ProviderError("Configure an identity selector for browser verification.")
+                        identity_label = page.locator(identity_selector).inner_text(
+                            timeout=30_000).strip()
+                        if expected_identity.casefold() not in identity_label.casefold():
+                            raise ProviderError(
+                                f"The signed-in identity does not match {expected_identity!r}.")
                 page.get_by_role("link", name=new_chat_name).or_(
                     page.get_by_role("button", name=new_chat_name)).first.click(timeout=30_000)
                 prompt = page.get_by_role(prompt_role).last
                 serialized = json.dumps(asdict(request), ensure_ascii=False, separators=(",", ":"))
                 digest = hashlib.sha256(serialized.encode()).hexdigest()
+                exchange_dir = self._new_exchange_dir(digest)
                 attachment_selector = selectors.get("attachment_selector")
                 transport = "text"
                 attachment_names: list[str] = []
                 package_bytes = len(serialized.encode())
                 if attachment_selector:
-                    package = build_exchange_package(request, self.evidence_dir / "packages")
+                    package = build_exchange_package(request, exchange_dir / "packages")
                     page.locator(attachment_selector).set_input_files(
                         [str(path) for path in package.paths]
                     )
@@ -222,6 +230,8 @@ class BrowserProvider(Provider):
                         state="hidden", timeout=int(self.config.get("timeout_ms", 300_000)))
                 # text_content preserves patch indentation. inner_text collapses spaces.
                 raw = response.text_content() or ""
+                assert_no_secrets(raw, "browser response")
+                (exchange_dir / f"{request.role}-initial.txt").write_text(raw, encoding="utf-8")
                 repaired = False
                 try:
                     parsed = parse_response(_extract_json(raw), request, self.name)
@@ -238,39 +248,60 @@ class BrowserProvider(Provider):
                         arg=[response_selector, previous],
                         timeout=int(self.config.get("timeout_ms", 300_000)))
                     response = page.locator(response_selector).last
+                    response.wait_for(
+                        state="visible", timeout=int(self.config.get("timeout_ms", 300_000)))
+                    if generation_selector:
+                        page.locator(generation_selector).wait_for(
+                            state="hidden", timeout=int(self.config.get("timeout_ms", 300_000)))
                     raw = response.text_content() or ""
+                    assert_no_secrets(raw, "browser repair response")
+                    (exchange_dir / f"{request.role}-repair.txt").write_text(
+                        raw, encoding="utf-8")
                     parsed = parse_response(_extract_json(raw), request, self.name)
+                parsed = replace(
+                    parsed,
+                    conversation_id=f"{self.name}-{exchange_dir.name}",
+                )
                 if request.role == "implement":
-                    output_zip = self._download_output_zip(page, selectors, request)
+                    output_zip = self._download_output_zip(
+                        page, selectors, request, exchange_dir.name)
                     parsed.content["_maintain_output_zip"] = output_zip.name
-                page.screenshot(path=str(self.evidence_dir / f"{request.role}.png"), full_page=True)
-                (self.evidence_dir / f"{request.role}.txt").write_text(raw, encoding="utf-8")
-                (self.evidence_dir / f"{request.role}-transport.json").write_text(
+                page.screenshot(path=str(exchange_dir / f"{request.role}.png"), full_page=True)
+                (exchange_dir / f"{request.role}.txt").write_text(raw, encoding="utf-8")
+                (exchange_dir / f"{request.role}-transport.json").write_text(
                     json.dumps({"transport": transport, "sha256": digest,
                                 "bytes": package_bytes, "attachments": attachment_names,
+                                "conversation_id": parsed.conversation_id,
                                 "schema_repair": repaired,
                                 "output_zip": (output_zip.name if request.role == "implement"
                                                else None)}),
                     encoding="utf-8")
                 return parsed
             except Exception as exc:
-                page.screenshot(path=str(self.evidence_dir / f"{request.role}-failure.png"), full_page=True)
-                diagnostic = {"url": page.url, "error": str(exc)}
+                exchange_dir = locals().get("exchange_dir") or self._new_exchange_dir(
+                    hashlib.sha256(f"{request.task_id}-{request.role}-{time.time_ns()}".encode()).hexdigest())
+                diagnostic = {"error": str(exc)}
                 try:
+                    page.screenshot(path=str(exchange_dir / f"{request.role}-failure.png"),
+                                    full_page=True)
+                except Exception as screenshot_error:
+                    diagnostic["screenshot_error"] = str(screenshot_error)
+                try:
+                    diagnostic["url"] = page.url
                     diagnostic["title"] = page.title()
                     excerpt = page.locator("body").inner_text(timeout=2_000)[:20_000]
                     assert_no_secrets(excerpt, "browser diagnostic")
                     diagnostic["visible_text"] = excerpt
                 except Exception:
                     diagnostic["visible_text"] = "[omitted by safety check]"
-                (self.evidence_dir / f"{request.role}-failure.json").write_text(
+                (exchange_dir / f"{request.role}-failure.json").write_text(
                     json.dumps(diagnostic), encoding="utf-8")
                 raise ProviderError(f"Browser provider stopped safely: {exc}") from exc
             finally:
                 context.close()
 
     def _download_output_zip(self, page, selectors: dict[str, Any],
-                             request: ProviderRequest) -> Path:
+                             request: ProviderRequest, exchange_id: str) -> Path:
         selector = selectors.get("output_download_selector")
         if not selector:
             raise ProviderError(
@@ -282,12 +313,35 @@ class BrowserProvider(Provider):
             target.click()
         download = pending.value
         safe_task = re.sub(r"[^A-Za-z0-9._-]+", "-", request.task_id).strip("-.") or "task"
-        destination = self.evidence_dir / f"{safe_task}-{request.role}-output.zip"
+        destination = self.evidence_dir / f"{exchange_id}-{safe_task}-{request.role}-output.zip"
         download.save_as(str(destination))
         if not zipfile.is_zipfile(destination):
             destination.unlink(missing_ok=True)
             raise ProviderError("The implementation output is not a valid ZIP file.")
         return destination
+
+    def _launch_context(self, playwright, *, visible: bool | None = None):
+        browser = str(self.config.get("browser") or "chromium").casefold()
+        if browser not in {"chromium", "chrome", "msedge"}:
+            raise ProviderError("Browser must be chromium, chrome, or msedge.")
+        options: dict[str, Any] = {
+            "headless": not (bool(self.config.get("visible", True)) if visible is None else visible)
+        }
+        if browser != "chromium":
+            options["channel"] = browser
+        return playwright.chromium.launch_persistent_context(str(self.profile_dir), **options)
+
+    def _new_exchange_dir(self, digest: str) -> Path:
+        root = self.evidence_dir / "exchanges"
+        root.mkdir(parents=True, exist_ok=True)
+        stem = digest[:12]
+        candidate = root / stem
+        suffix = 2
+        while candidate.exists():
+            candidate = root / f"{stem}-{suffix}"
+            suffix += 1
+        candidate.mkdir()
+        return candidate
 
 
 def _extract_json(text: str) -> str:
@@ -302,6 +356,11 @@ def _extract_json(text: str) -> str:
             except json.JSONDecodeError:
                 continue
     return stripped
+
+
+def _configured_value(value: object) -> str:
+    shown = str(value or "").strip()
+    return "" if shown.startswith("SET_") else shown
 
 
 def make_chunks(serialized: str, maximum: int) -> list[str]:

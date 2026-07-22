@@ -86,7 +86,9 @@ class CommandRunner:
             stderr = stderr.encode()[:allowance].decode(errors="replace")
             stderr += "\nCommand output exceeded the configured limit."
             code = 125
-        fingerprint = hashlib.sha256("\n".join(sorted(env)).encode()).hexdigest()
+        fingerprint = hashlib.sha256(
+            "\n".join(f"{key}={env[key]}" for key in sorted(env)).encode()
+        ).hexdigest()
         output_hash = hashlib.sha256((stdout + "\0" + stderr).encode()).hexdigest()
         return CommandResult(spec.name, argv, code, stdout, stderr,
                              round(time.monotonic() - started, 3), spec.matlab,

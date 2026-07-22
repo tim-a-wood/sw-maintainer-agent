@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import time
 from dataclasses import asdict
@@ -58,7 +59,9 @@ class FileExchangeProvider(Provider):
 
     def exchange(self, request: ProviderRequest) -> ProviderResponse:
         self.exchange_dir.mkdir(parents=True, exist_ok=True)
-        stem = f"{request.run_id}-{request.task_id}-{request.role}"
+        serialized = json.dumps(asdict(request), sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(serialized.encode()).hexdigest()[:10]
+        stem = f"{request.run_id}-{request.task_id}-{request.role}-{digest}"
         outbound, inbound = self.exchange_dir / f"{stem}.request.json", self.exchange_dir / f"{stem}.response.json"
         temporary = outbound.with_suffix(".tmp")
         temporary.write_text(json.dumps(asdict(request), indent=2), encoding="utf-8")

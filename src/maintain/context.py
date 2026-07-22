@@ -12,9 +12,6 @@ from pathlib import Path
 
 from .security import secret_file
 
-TEXT_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".cs", ".cpp", ".c",
-                 ".h", ".m", ".md", ".json", ".toml", ".yaml", ".yml", ".html", ".css"}
-
 
 @dataclass(frozen=True)
 class ContextFile:
@@ -37,7 +34,7 @@ class ContextSelector:
         self.max_file_bytes = max_file_bytes
 
     def select(self, request: str, limit_files: int = 60, limit_bytes: int = 350_000) -> list[ContextFile]:
-        terms = {term for term in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", request.lower())
+        terms = {term for term in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{1,}", request.lower())
                  if term not in {"the", "and", "that", "with", "from", "this"}}
         ranked: list[ContextFile] = []
         for item in self._inventory():
@@ -67,16 +64,37 @@ class ContextSelector:
             root = (self.repository / root_name).resolve()
             if not root.exists():
                 continue
-            paths = [root] if root.is_file() else (Path(d) / n for d, dirs, files in os.walk(root)
-                    for _ in [dirs.__setitem__(slice(None), [x for x in dirs if x not in {".git", ".venv", "node_modules", "dist", "build", "__pycache__"}])]
-                    for n in files)
+            if root.is_file():
+                paths = [root]
+            else:
+                paths = []
+                ignored = {
+                    ".git", ".maintain", ".venv", ".mypy_cache", ".pytest_cache",
+                    ".ruff_cache", ".tox", ".nox", ".next", "node_modules", "vendor",
+                    "dist", "build", "coverage", "target", "__pycache__",
+                }
+                for directory, dirs, files in os.walk(root):
+                    kept = []
+                    for name in sorted(dirs):
+                        candidate = Path(directory) / name
+                        relative_dir = candidate.relative_to(self.repository).as_posix()
+                        if (name not in ignored and
+                                not any(fnmatch.fnmatch(relative_dir, pattern)
+                                        for pattern in self.excludes)):
+                            kept.append(name)
+                    dirs[:] = kept
+                    paths.extend(Path(directory) / name for name in sorted(files))
             for path in paths:
                 resolved = path.resolve()
                 if resolved in seen:
                     continue
                 seen.add(resolved)
+                try:
+                    resolved.relative_to(self.repository)
+                except ValueError:
+                    continue
                 relative = path.relative_to(self.repository).as_posix()
-                if (secret_file(path) or path.suffix.lower() not in TEXT_SUFFIXES
+                if (path.is_symlink() or secret_file(path)
                         or any(fnmatch.fnmatch(relative, x) for x in self.excludes)):
                     continue
                 try:
@@ -104,3 +122,8 @@ class ContextSelector:
 
     def repository_text_bytes(self) -> int:
         return sum(item.bytes for item in self._inventory())
+
+    def repository_map(self) -> list[dict[str, object]]:
+        """Return a content-free path index so the assistant can request precise expansion."""
+        return [{"path": item.path, "bytes": item.bytes, "sha256": item.sha256}
+                for item in self._inventory()]

@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,11 +22,10 @@ class ExchangePackage:
 def build_exchange_package(request: ProviderRequest, directory: Path) -> ExchangePackage:
     """Build no more than three files for a browser-based assistant."""
     directory.mkdir(parents=True, exist_ok=True)
-    stem = _safe_name(f"{request.task_id}-{request.role}")
     source_files = _source_files(request.payload)
-    task_name = f"{stem}-TASK.md"
-    code_name = f"{stem}-CODEBASE.md"
-    manifest_name = f"{stem}-MANIFEST.json"
+    task_name = "TASK.md"
+    code_name = "CODEBASE.md"
+    manifest_name = "MANIFEST.json"
 
     codebase = _codebase_markdown(source_files, request.payload.get("diff"))
     task = _task_markdown(request, code_name, manifest_name)
@@ -73,19 +71,63 @@ def _task_markdown(request: ProviderRequest, code_name: str, manifest_name: str)
     output = (
         "Create and attach `maintain-output.zip`. Put each complete changed file at its exact "
         "repository-relative path in the ZIP. Do not add an outer directory or unrelated files. "
+        "For an approved deletion, omit that file from the ZIP and list it in `deleted_files`. "
         "Also return the JSON envelope below in the chat. In `content`, include `changed_files` "
-        "and, for an issue, `root_cause`. Do not put a patch in the JSON."
+        "for every replaced, added, or deleted path; include `deleted_files` (an empty list when "
+        "none); and, for an issue, include `root_cause`. Do not put a patch in the JSON."
         if request.role == "implement" else
         "Return only the JSON envelope below in the chat. Do not create or attach output files."
     )
+    role_contract = {
+        "scope": (
+            "Return `content.tasks` in dependency order. Each task must contain `id`, `objective`, "
+            "`allowed_files`, `done_when`, `verification`, and `depends_on`. If essential code is "
+            "missing, return `content.context_queries` instead of tasks or guesses."
+        ),
+        "implement": (
+            "Return `content.changed_files` and `content.deleted_files` as exact repository paths. "
+            "Issue work must also return `content.root_cause.statement` and code-grounded "
+            "`content.root_cause.evidence_paths`."
+        ),
+        "review": (
+            "Return `content.decision` as `approve` or `changes_requested`. Return "
+            "`content.findings` as a list. Each finding must contain `severity`, `file`, `line`, "
+            "`evidence`, and `remediation`. Use an empty list when there are no findings."
+        ),
+    }.get(request.role, "Return a concise factual result in `content`.")
+    examples: dict[str, dict[str, Any]] = {
+        "scope": {
+            "tasks": [{
+                "id": "short-task-id",
+                "objective": "One exact outcome",
+                "allowed_files": ["path/from/the/file/map"],
+                "done_when": ["Observable completion condition"],
+                "verification": ["How the result will be checked"],
+                "depends_on": [],
+            }],
+            "context_queries": [],
+        },
+        "implement": {
+            "changed_files": ["exact/repository/path"],
+            "deleted_files": [],
+            "root_cause": {
+                "statement": "Required for issue work; omit for feature work.",
+                "evidence_paths": ["exact/repository/path"],
+            },
+        },
+        "review": {
+            "decision": "approve",
+            "findings": [],
+        },
+    }
     envelope = {
         "schema_version": request.schema_version,
         "run_id": request.run_id,
         "task_id": request.task_id,
         "role": request.role,
         "provider": "assistant",
-        "conversation_id": "current-conversation-id",
-        "content": {"role_specific_result": "Follow the required action"},
+        "conversation_id": "assigned-by-maintain",
+        "content": examples.get(request.role, {"summary": "Concise factual result"}),
     }
     return (
         "# Maintenance task\n\n"
@@ -99,7 +141,7 @@ def _task_markdown(request: ProviderRequest, code_name: str, manifest_name: str)
         f"Read `{manifest_name}` for exact identifiers, hashes, task data, and evidence. "
         "Use only these attachments. Do not use internet tools.\n\n"
         "## Required output\n\n"
-        f"{output}\n\n"
+        f"{output}\n\n{role_contract}\n\n"
         "```json\n"
         f"{json.dumps(envelope, ensure_ascii=False, indent=2)}\n"
         "```\n"
@@ -195,11 +237,8 @@ def _file_record(path: Path, purpose: str) -> dict[str, object]:
             "sha256": hashlib.sha256(data).hexdigest()}
 
 
-def _safe_name(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-.") or "exchange"
-
-
 def _longest_backtick_run(value: str) -> int:
+    import re
     return max((len(item) for item in re.findall(r"`+", value)), default=0)
 
 

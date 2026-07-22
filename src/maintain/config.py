@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,9 +28,27 @@ def _reject_unknown(value: dict[str, Any], allowed: set[str], label: str) -> Non
 
 
 def _strings(value: object) -> list[str]:
-    if not isinstance(value, list):
+    if value is None:
         return []
-    return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ConfigurationError("String-list configuration values must contain only strings.")
+    return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+
+def _boolean(value: object, label: str, default: bool) -> bool:
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise ConfigurationError(f"{label} must be true or false.")
+    return value
+
+
+def _directory_patterns(values: object) -> list[str]:
+    patterns: list[str] = []
+    for value in _strings(values):
+        cleaned = value.strip("/")
+        patterns.extend((cleaned, f"{cleaned}/**", f"**/{cleaned}", f"**/{cleaned}/**"))
+    return patterns
 
 
 @dataclass(frozen=True)
@@ -67,6 +86,10 @@ class ProjectConfig:
     allow_deletes: bool = False
     dependency_changes: str = "approval"
     runtime_root: Path = field(default_factory=lambda: Path.home() / ".maintain" / "runs")
+    retain_days: int = 365
+    ui_color: str = "auto"
+    ui_animation: bool = True
+    ui_max_width: int = 96
 
     @classmethod
     def load(cls, path: Path) -> "ProjectConfig":
@@ -112,6 +135,8 @@ class ProjectConfig:
         roles = provider_data.get("roles", {})
         if not isinstance(profiles, dict) or not isinstance(roles, dict):
             raise ConfigurationError("Provider profiles and roles must be objects.")
+        if not profiles:
+            raise ConfigurationError("At least one provider profile is required.")
         provider_common = {"type", "timeout_seconds"}
         provider_keys = {
             "codex_cli": {"executable", "model"},
@@ -136,12 +161,42 @@ class ProjectConfig:
             _reject_unknown(profile, provider_common | provider_keys[kind],
                             f"provider profile {profile_name}")
             if kind in {"chatgpt_browser", "m365_copilot_browser"}:
+                profile_dir = Path(os.path.expandvars(str(profile.get("profile_dir", "")))).expanduser()
+                if not str(profile.get("profile_dir", "")).strip():
+                    raise ConfigurationError(
+                        f"Browser provider profile {profile_name} needs profile_dir.")
+                if not profile_dir.is_absolute():
+                    profile_dir = path.parent / profile_dir
+                profile_dir = profile_dir.resolve()
+                try:
+                    profile_dir.relative_to(root)
+                except ValueError:
+                    pass
+                else:
+                    raise ConfigurationError("Browser profile directories must be outside the repository.")
+                profile["profile_dir"] = str(profile_dir)
+                browser = str(profile.get("browser") or "chromium").casefold()
+                if browser not in {"chromium", "chrome", "msedge"}:
+                    raise ConfigurationError(
+                        f"Browser provider profile {profile_name}.browser must be chromium, chrome, or msedge.")
                 allowed_hosts = profile.get("allowed_hosts", [])
                 if (not isinstance(allowed_hosts, list) or
                         any(not isinstance(item, str) or not item.strip()
                             for item in allowed_hosts)):
                     raise ConfigurationError(
                         f"Browser provider profile {profile_name}.allowed_hosts must be a string list.")
+                _boolean(profile.get("visible"), f"Browser provider profile {profile_name}.visible", True)
+                selectors = profile.get("selectors", {})
+                if (not isinstance(selectors, dict) or
+                        any(not isinstance(key, str) or
+                            (value is not None and not isinstance(value, str))
+                            for key, value in selectors.items())):
+                    raise ConfigurationError(
+                        f"Browser provider profile {profile_name}.selectors must use strings or null.")
+                for key in ("timeout_ms", "max_chunk_chars"):
+                    if key in profile and int(profile[key]) < 1:
+                        raise ConfigurationError(
+                            f"Browser provider profile {profile_name}.{key} must be positive.")
             if kind == "chatgpt_browser":
                 if "account_capabilities" not in profile:
                     raise ConfigurationError(
@@ -156,6 +211,34 @@ class ProjectConfig:
                             any(not isinstance(item, str) or not item.strip() for item in value)):
                         raise ConfigurationError(
                             f"ChatGPT account capabilities {profile_name}.{key} must be a string list.")
+            if kind == "file_exchange":
+                exchange_value = str(profile.get("exchange_dir", "")).strip()
+                if not exchange_value:
+                    raise ConfigurationError(
+                        f"File-exchange provider profile {profile_name} needs exchange_dir.")
+                exchange_dir = Path(os.path.expandvars(exchange_value)).expanduser()
+                if not exchange_dir.is_absolute():
+                    exchange_dir = path.parent / exchange_dir
+                exchange_dir = exchange_dir.resolve()
+                try:
+                    exchange_dir.relative_to(root)
+                except ValueError:
+                    pass
+                else:
+                    raise ConfigurationError("File-exchange directories must be outside the repository.")
+                profile["exchange_dir"] = str(exchange_dir)
+        allowed_roles = {"scope", "implement", "review", "summarize"}
+        unknown_roles = sorted(set(roles) - allowed_roles)
+        if unknown_roles:
+            raise ConfigurationError(f"Unknown provider role: {unknown_roles[0]}")
+        for role in ("scope", "implement", "review"):
+            profile_name = roles.get(role)
+            if not isinstance(profile_name, str) or profile_name not in profiles:
+                raise ConfigurationError(f"Provider role {role} must name an existing profile.")
+        if "summarize" in roles:
+            summary_profile = roles["summarize"]
+            if not isinstance(summary_profile, str) or summary_profile not in profiles:
+                raise ConfigurationError("Provider role summarize must name an existing profile.")
         verification = _object(data.get("verification", {}), "verification")
         _reject_unknown(verification, {"commands", "profiles", "feature_profile", "issue_profile",
                                        "matlab_required_paths"}, "verification")
@@ -169,13 +252,19 @@ class ProjectConfig:
             argv = raw.get("argv", []) if isinstance(raw, dict) else []
             if not argv or not all(isinstance(x, str) and x for x in argv):
                 raise ConfigurationError(f"Verification command {name!r} needs argv.")
+            timeout = int(raw.get("timeout_seconds", 900))
+            if timeout < 1:
+                raise ConfigurationError(f"Verification command {name!r} timeout must be positive.")
+            phase = str(raw.get("phase", "verify"))
+            if phase not in {"verify", "feature", "issue", "reproduce"}:
+                raise ConfigurationError(f"Verification command {name!r} has an unknown phase.")
             commands.append(CommandSpec(
                 name=name,
                 argv=tuple(argv),
-                timeout_seconds=int(raw.get("timeout_seconds", 900)),
+                timeout_seconds=timeout,
                 paths=tuple(_strings(raw.get("paths"))),
-                matlab=bool(raw.get("matlab", False)),
-                phase=str(raw.get("phase", "verify")),
+                matlab=_boolean(raw.get("matlab"), f"Verification command {name}.matlab", False),
+                phase=phase,
             ))
         execution = _object(data.get("execution", {}), "execution")
         audit = _object(data.get("audit", {}), "audit")
@@ -193,10 +282,32 @@ class ProjectConfig:
         _reject_unknown(delivery, {"mode", "commit_after_acceptance", "update_current_branch"},
                         "delivery")
         _reject_unknown(ui, {"color", "animation", "width", "max_width", "language_style"}, "ui")
+        if execution.get("workspace_strategy", "git_worktree") != "git_worktree":
+            raise ConfigurationError("execution.workspace_strategy must be git_worktree.")
+        if execution.get("dirty_repository", "reject") != "reject":
+            raise ConfigurationError("execution.dirty_repository must be reject.")
         dependency_changes = str(policy.get("allow_dependency_changes", "approval"))
         if dependency_changes not in {"allow", "deny", "approval"}:
             raise ConfigurationError("allow_dependency_changes must be allow, deny, or approval.")
         runtime = Path(os.path.expandvars(str(audit.get("runtime_root", "~/.maintain/runs")))).expanduser()
+        if not runtime.is_absolute():
+            runtime = path.parent / runtime
+        runtime = runtime.resolve()
+        try:
+            runtime.relative_to(root)
+        except ValueError:
+            pass
+        else:
+            raise ConfigurationError("audit.runtime_root must be outside the repository.")
+        retain_days = int(audit.get("retain_days", 365))
+        if retain_days < 1:
+            raise ConfigurationError("audit.retain_days must be a positive integer.")
+        ui_color = str(ui.get("color", "auto")).casefold()
+        if ui_color not in {"auto", "always", "never"}:
+            raise ConfigurationError("ui.color must be auto, always, or never.")
+        ui_max_width = int(ui.get("max_width", ui.get("width", 96)))
+        if ui_max_width < 48:
+            raise ConfigurationError("ui.max_width must be at least 48.")
         limits = {
             "max_attempts_per_task": int(execution.get("max_attempts_per_task", 3)),
             "max_changed_files": int(execution.get("max_changed_files", 20)),
@@ -214,7 +325,11 @@ class ProjectConfig:
             default_branch=str(project.get("default_branch") or "main"),
             source_roots=source_roots,
             test_roots=test_roots,
-            exclude_paths=tuple(_strings(repository.get("exclude_paths"))),
+            exclude_paths=tuple(dict.fromkeys([
+                *_strings(repository.get("exclude_paths")),
+                *_directory_patterns(repository.get("exclude_dirs")),
+                *_strings(repository.get("generated_paths")),
+            ])),
             protected_paths=tuple(_strings(repository.get("protected_paths"))),
             providers=profiles, roles={str(k): str(v) for k, v in roles.items()},
             commands=tuple(commands), max_attempts=limits["max_attempts_per_task"],
@@ -225,10 +340,16 @@ class ProjectConfig:
             max_file_bytes=limits["max_file_bytes"],
             max_command_log_bytes=limits["max_command_log_bytes"],
             minimum_free_disk_bytes=limits["minimum_free_disk_bytes"],
-            allow_new_files=bool(policy.get("allow_new_files", True)),
-            allow_deletes=bool(policy.get("allow_deletes", False)),
+            allow_new_files=_boolean(policy.get("allow_new_files"),
+                                     "policy.allow_new_files", True),
+            allow_deletes=_boolean(policy.get("allow_deletes"),
+                                   "policy.allow_deletes", False),
             dependency_changes=dependency_changes,
-            runtime_root=runtime.resolve(),
+            runtime_root=runtime,
+            retain_days=retain_days,
+            ui_color=ui_color,
+            ui_animation=_boolean(ui.get("animation"), "ui.animation", True),
+            ui_max_width=ui_max_width,
         )
 
 
@@ -253,24 +374,20 @@ def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
     elif provider == "chatgpt-browser":
         selected = "chatgpt"
         profiles = {selected: {"type": "chatgpt_browser", "url": "https://chatgpt.com/",
+                               "browser": "chromium",
                                "profile_dir": "~/.maintain/browser/chatgpt", "visible": True,
-                               "expected_workspace": "SET_WORKSPACE_NAME",
-                               "expected_identity": "SET_SIGNED_IN_IDENTITY",
                                "allowed_hosts": ["chatgpt.com"],
                                "account_capabilities": {"available": [], "required": []}}}
     elif provider == "m365-browser":
         selected = "m365"
         profiles = {selected: {"type": "m365_copilot_browser",
                                "url": "https://m365.cloud.microsoft/chat",
+                               "browser": "chromium",
                                "profile_dir": "~/.maintain/browser/m365", "visible": True,
-                               "expected_tenant": "SET_TENANT_NAME",
-                               "expected_identity": "SET_SIGNED_IN_IDENTITY",
                                "allowed_hosts": ["m365.cloud.microsoft"]}}
     else:
         selected = "codex"
         profiles = {selected: {"type": "codex_cli"}}
-    source_candidates = [name for name in ("src", "app", "lib", "backend", "frontend")
-                         if (repository / name).exists()]
     test_candidates = [name for name in ("tests", "test", "spec")
                        if (repository / name).exists()]
     commands: dict[str, Any] = {
@@ -298,15 +415,22 @@ def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
                                         "timeout_seconds": 900}
         except (OSError, json.JSONDecodeError):
             pass
+    branch = "main"
+    for argv in (["git", "-C", str(repository), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+                 ["git", "-C", str(repository), "branch", "--show-current"]):
+        result = subprocess.run(argv, text=True, capture_output=True, check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            branch = result.stdout.strip().removeprefix("origin/")
+            break
     return {
         "schema_version": 2,
-        "project": {"name": repository.name, "default_branch": "main"},
-        "repository": {"root": ".", "source_roots": source_candidates,
+        "project": {"name": repository.name, "default_branch": branch},
+        "repository": {"root": ".", "source_roots": ["."],
                        "test_roots": test_candidates,
                        "exclude_paths": [], "protected_paths": []},
         "providers": {"profiles": profiles,
                       "roles": {"scope": selected, "implement": selected,
-                                "review": selected, "summarize": selected}},
+                                "review": selected}},
         "execution": {"workspace_strategy": "git_worktree", "dirty_repository": "reject",
                       "max_attempts_per_task": 3, "max_changed_files": 20,
                       "max_diff_bytes": 500000, "max_prompt_bytes": 2000000,

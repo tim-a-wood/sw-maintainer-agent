@@ -1,4 +1,4 @@
-"""A restrained, responsive terminal presentation for Maintain."""
+"""A compact, responsive terminal presentation for Maintain."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from typing import Iterable
 
 from rich import box
 from rich.console import Console
-from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
@@ -32,17 +31,18 @@ THEME = Theme({
 
 class Presenter:
     def __init__(self, stream=None, animate: bool = True, width: int | None = None,
-                 no_color: bool = False) -> None:
+                 no_color: bool = False, max_width: int = 96,
+                 force_color: bool = False) -> None:
         file = stream or sys.stdout
         terminal_width = width or shutil.get_terminal_size((100, 24)).columns
-        self.width = max(48, min(88, terminal_width))
+        self.width = max(48, min(max_width, terminal_width))
         colors_disabled = no_color or os.environ.get("NO_COLOR") is not None
         is_tty = bool(getattr(file, "isatty", lambda: False)())
         self.animate = animate and is_tty and not colors_disabled
         self.console = Console(
             file=file,
             width=self.width,
-            force_terminal=is_tty and not colors_disabled,
+            force_terminal=(is_tty or force_color) and not colors_disabled,
             no_color=colors_disabled,
             highlight=False,
             soft_wrap=False,
@@ -52,17 +52,28 @@ class Presenter:
 
     def brand(self, project: str = "", provider: str = "") -> None:
         self.console.print()
-        content = Table.grid(expand=True)
-        content.add_column(ratio=1)
-        content.add_column(justify="right", no_wrap=True)
-        product = Text()
-        product.append((project or "PROJECT").upper(), style="brand")
-        product.append("  /  ", style="muted")
-        product.append("MAINTAIN", style="accent")
-        assistant = Text(f" {provider.upper()} ", style="bold #082F49 on #38BDF8") if provider else Text()
-        content.add_row(product, assistant)
-        content.add_row(Text("From request to reviewed, tested code", style="muted"), Text())
-        self.console.print(Panel(content, box=box.ROUNDED, border_style="accent", padding=(1, 2)))
+        if self.width < 62:
+            title = Text("◆  ", style="accent")
+            title.append("MAINTAIN", style="brand")
+            self.console.print(title)
+            context = "  •  ".join(item for item in (project, provider) if item)
+            if context:
+                self.console.print(context, style="muted")
+            self.console.print(Rule(style="line"))
+            return
+        art = [" ▄▄▄▄▄▄ ", "▟█ ▄  █▙", "██  ▀ ██", "▀█▄▄▄▄█▀", "  ▀  ▀  "]
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column(width=10)
+        grid.add_column(ratio=1)
+        details = Text()
+        details.append("MAINTAIN", style="bold #F8FAFC")
+        details.append("  SOFTWARE CARE, ON RAILS\n", style="accent")
+        details.append("PLAN  ·  BUILD  ·  REVIEW  ·  VERIFY\n", style="muted")
+        context = "  •  ".join(item for item in (project or "Project not set up", provider) if item)
+        details.append(context, style="label" if project else "warning")
+        grid.add_row(Text("\n".join(art), style="accent"), details)
+        self.console.print(grid)
+        self.console.print(Rule(style="line"))
 
     def header(self, title: str) -> None:
         """Compatibility entry point for concise section headers."""
@@ -76,33 +87,27 @@ class Presenter:
             self.console.print(detail, style="muted")
         self.console.print(Rule(style="line"))
 
-    def home(self, project: str = "", provider: str = "") -> None:
+    def home(self, project: str = "", provider: str = "", saved_count: int = 0,
+             configured: bool = True, setup_issue: str = "") -> None:
         self.brand(project, provider)
+        if setup_issue:
+            self.console.print()
+            self.console.print("!  PROJECT SETUP NEEDS ATTENTION", style="warning")
+            self.console.print(f"   {setup_issue}", style="muted")
         self.console.print()
-        self.console.print("START NEW WORK", style="muted")
+        self.console.print("WHAT DO YOU WANT TO DO?", style="brand")
         self.console.print()
-        primary = Table.grid(expand=True, padding=(0, 1))
-        primary.add_column(ratio=1)
-        primary.add_column(ratio=1)
-        primary.add_row(
-            self._action_card("1", "BUILD A FEATURE", "Add or change product behavior"),
-            self._action_card("2", "FIX AN ISSUE", "Find and correct a problem"),
-        )
-        self.console.print(primary)
+        self.menu_line("1", "Build a feature", "Add or change product behavior")
+        self.menu_line("2", "Fix an issue", "Find and correct a problem")
         self.console.print()
-        self.console.print("SAVED WORK", style="muted")
-        self.console.print()
-        secondary = Text("  ")
-        secondary.append_text(self._key("3"))
-        secondary.append("  Continue a run", style="label")
-        secondary.append("      ")
-        secondary.append_text(self._key("4"))
-        secondary.append("  View recent runs", style="label")
-        self.console.print(secondary)
-        quit_line = Text("  ")
-        quit_line.append_text(self._key("q", quiet=True))
-        quit_line.append("  Quit", style="muted")
-        self.console.print(quit_line)
+        count = f"{saved_count} saved" if saved_count else "No saved work"
+        self.menu_line("3", "Continue saved work", count)
+        self.menu_line("4", "View history", "Runs, results, and status")
+        if not configured:
+            self.console.print()
+            setup_label = "Repair project setup" if setup_issue else "Set up this project"
+            self.menu_line("s", setup_label, "Create or upgrade the project configuration")
+        self.menu_line("q", "Quit", "", quiet=True)
         self.console.print()
 
     def run_header(self, mode: str, request: str, project: str = "", provider: str = "") -> None:
@@ -171,8 +176,9 @@ class Presenter:
         fact_rows = [(name, value) for name, value in facts if value]
         if fact_rows:
             self.console.print()
+            label_width = min(20, max(12, max(len(name) for name, _ in fact_rows)))
             table = Table.grid(padding=(0, 2))
-            table.add_column(width=12, style="muted", no_wrap=True)
+            table.add_column(width=label_width, style="muted", no_wrap=True)
             table.add_column(style="label")
             for name, value in fact_rows:
                 table.add_row(name.upper(), value)
@@ -205,10 +211,14 @@ class Presenter:
                           Text(shown, style=style))
         self.console.print(table)
 
-    def saved_runs(self, rows: Iterable[dict[str, str]]) -> None:
+    def saved_runs(self, rows: Iterable[dict[str, str]], *, selectable: bool = False) -> None:
         items = list(rows)
-        self.section("SAVED WORK", "Recent maintenance runs",
-                     "Choose Continue a run from the main menu to resume one.")
+        self.section(
+            "SAVED WORK" if selectable else "HISTORY",
+            "Work you can continue" if selectable else "Maintenance run history",
+            ("Select a numbered run to continue, or return to the main menu."
+             if selectable else "Results and audit status for this project."),
+        )
         if not items:
             self.console.print()
             self.console.print("No saved runs.", style="muted")
@@ -230,7 +240,12 @@ class Presenter:
                 state_style = "danger" if state == "failed" else "muted"
             else:
                 state_style = "label"
-            heading = Text("●  ", style=state_style)
+            index = str(item.get("index", ""))
+            heading = Text()
+            if index:
+                heading.append_text(self._key(index))
+                heading.append("  ")
+            heading.append("●  ", style=state_style)
             heading.append(shown_state.upper(), style=state_style)
             heading.append(f"   {item['mode'].upper()}", style="muted")
             self.console.print(heading)
@@ -263,17 +278,33 @@ class Presenter:
     def _key(value: str, quiet: bool = False) -> Text:
         return Text(f" {value.upper()} ", style="muted" if quiet else "bold #082F49 on #38BDF8")
 
-    @staticmethod
-    def _action_card(key: str, title: str, description: str) -> Panel:
-        content = Text()
-        content.append(f" {key} ", style="bold #082F49 on #38BDF8")
-        content.append(f"  {title}\n", style="brand")
-        content.append(f"    {description}", style="muted")
-        return Panel(content, box=box.ROUNDED, border_style="line", padding=(1, 1))
+    def menu_line(self, key: str, title: str, description: str, quiet: bool = False) -> None:
+        line = Text("  ")
+        line.append_text(self._key(key, quiet=quiet))
+        line.append(f"  {title}", style="label" if not quiet else "muted")
+        if description:
+            line.append(" " * max(2, 32 - len(title)))
+            line.append(description, style="muted")
+        self.console.print(line)
 
 
 class QuietPresenter:
+    def run_header(self, *args, **kwargs) -> None:
+        pass
+
     def header(self, title: str) -> None:
+        pass
+
+    def outcome(self, *args, **kwargs) -> None:
+        pass
+
+    def gates(self, *args, **kwargs) -> None:
+        pass
+
+    def provider_assignments(self, *args, **kwargs) -> None:
+        pass
+
+    def saved_runs(self, *args, **kwargs) -> None:
         pass
 
     def complete(self, label: str, message: str) -> None:

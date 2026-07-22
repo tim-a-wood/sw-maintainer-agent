@@ -31,9 +31,11 @@ class DiffEvidence:
 
 
 class WorkspaceManager:
-    def __init__(self, repository: Path, workspace_root: Path) -> None:
+    def __init__(self, repository: Path, workspace_root: Path,
+                 ignored_source_paths: tuple[str, ...] = ()) -> None:
         self.repository = repository.resolve()
         self.workspace_root = workspace_root.resolve()
+        self.ignored_source_paths = ignored_source_paths
 
     @property
     def repository_lock(self) -> Path:
@@ -43,9 +45,14 @@ class WorkspaceManager:
         return common.resolve() / "maintain-workspace.lock"
 
     def preflight(self) -> str:
-        if git(self.repository, "status", "--porcelain"):
+        if self._source_status():
             raise PolicyError("The source repository has uncommitted changes.")
         return git(self.repository, "rev-parse", "HEAD")
+
+    def _source_status(self) -> str:
+        arguments = ["status", "--porcelain", "--", "."]
+        arguments.extend(f":(exclude){path}" for path in self.ignored_source_paths)
+        return git(self.repository, *arguments)
 
     def create(self, run_id: str, base_commit: str) -> tuple[str, Path]:
         branch = f"maintain/{run_id}"
@@ -127,9 +134,8 @@ class WorkspaceManager:
                     f"A rename needs both new-file and deletion permission: {path}")
             if code == "C":
                 raise PolicyError(f"Copy changes need human handling: {path}")
-            if Path(path).name in dependency_files and dependency_changes != "allow":
-                action = "approval" if dependency_changes == "approval" else "policy"
-                raise PolicyError(f"Dependency change needs {action}: {path}")
+            if Path(path).name in dependency_files and dependency_changes == "deny":
+                raise PolicyError(f"Dependency changes are not permitted: {path}")
 
     def apply_patch(self, worktree: Path, patch: str) -> None:
         if not patch.strip():
@@ -158,7 +164,8 @@ class WorkspaceManager:
 
     @staticmethod
     def apply_output_zip(worktree: Path, archive: Path, allowed: list[str],
-                         max_file_bytes: int, max_total_bytes: int) -> tuple[str, ...]:
+                         max_file_bytes: int, max_total_bytes: int, *,
+                         allow_empty: bool = False) -> tuple[str, ...]:
         """Safely apply complete repository files from an assistant ZIP."""
         worktree = worktree.resolve()
         allowed_paths = set(allowed)
@@ -195,7 +202,7 @@ class WorkspaceManager:
                         raise PolicyError(
                             f"The implementation ZIP contains a duplicate file: {path}")
                     members.append((item, path))
-                if not members:
+                if not members and not allow_empty:
                     raise PolicyError("The implementation ZIP contains no repository files.")
                 for item, path in members:
                     destination = worktree / Path(path)
@@ -214,6 +221,26 @@ class WorkspaceManager:
             raise PolicyError("The implementation output is not a valid ZIP file.") from exc
         return tuple(path for _, path in members)
 
+    @staticmethod
+    def apply_deletions(worktree: Path, deleted: list[str], allowed: list[str]) -> tuple[str, ...]:
+        """Delete only explicitly declared, task-scoped regular files."""
+        root = worktree.resolve()
+        scoped = set(allowed)
+        applied: list[str] = []
+        for path in deleted:
+            if path not in scoped:
+                raise PolicyError(f"The implementation deletes a file outside the task: {path}")
+            destination = root / path
+            try:
+                destination.resolve().relative_to(root)
+            except ValueError as exc:
+                raise PolicyError(f"The implementation deletion has an unsafe path: {path}") from exc
+            if destination.is_symlink() or not destination.is_file():
+                raise PolicyError(f"The implementation cannot delete this path: {path}")
+            destination.unlink()
+            applied.append(path)
+        return tuple(applied)
+
     def commit(self, worktree: Path, message: str, expected_tree: str) -> str:
         current_head = git(worktree, "rev-parse", "HEAD")
         current_tree = git(worktree, "show", "-s", "--format=%T", "HEAD")
@@ -229,7 +256,7 @@ class WorkspaceManager:
 
     def integrate_current_branch(self, branch: str, commit: str, expected_base: str) -> str:
         """Fast-forward the checked-out source branch after explicit confirmation."""
-        if git(self.repository, "status", "--porcelain"):
+        if self._source_status():
             raise RecoveryError("The target working tree is not clean.")
         current_branch = git(self.repository, "branch", "--show-current")
         if current_branch != branch:

@@ -8,7 +8,8 @@ from typing import Any
 
 from .errors import PolicyError
 
-SECRET_FILE_NAMES = {".env", ".env.local", ".npmrc", ".pypirc", "id_rsa", "id_ed25519",
+SECRET_FILE_NAMES = {".env", ".env.local", ".maintain.json", ".npmrc", ".pypirc",
+                     "id_rsa", "id_ed25519",
                      "credentials", "credentials.json"}
 SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 SECRET_PATTERNS = [

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import fnmatch
 import os
+import re
 import secrets
 import shutil
 import tempfile
@@ -32,6 +33,8 @@ PROVIDER_SAFETY_HEADER = (
     "dependencies, expose secrets, run MATLAB, or claim local verification."
 )
 
+TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
 
 class WorkflowEngine:
     def __init__(self, config: ProjectConfig, presenter: Presenter | None = None,
@@ -41,7 +44,8 @@ class WorkflowEngine:
         self.provider_builder = provider_builder
         self.transition_hook = transition_hook
         self.workspaces = WorkspaceManager(config.repository,
-                                           config.runtime_root.parent / "workspaces")
+                                           config.runtime_root.parent / "workspaces",
+                                           (".maintain.json",))
         self.runner = CommandRunner(config.max_command_log_bytes)
 
     def start(self, mode: str, request: str) -> RunRecord:
@@ -49,6 +53,9 @@ class WorkflowEngine:
             raise ValueError("Mode must be feature or issue.")
         if not request.strip():
             raise ValueError("The request is empty.")
+        assert_no_secrets(request, "maintenance request")
+        if len(request.encode()) > self.config.max_prompt_bytes:
+            raise PolicyError("The maintenance request exceeds the configured prompt limit.")
         transcript_markers = (
             "[Process completed]", "What would you like to do?", "Saving session...",
             "/  MAINTAIN", "/ MAINTAIN", "New maintenance run",
@@ -68,12 +75,7 @@ class WorkflowEngine:
     def resume(self, run_id: str) -> RunRecord:
         store = AuditStore(self.config.runtime_root, run_id)
         store.verify()
-        path = store.run_dir / "run.json"
-        if not path.is_file():
-            raise PolicyError("The saved run record is missing.")
-        record = RunRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
-        if record.config_hash != sha256(self.config.path.read_bytes()):
-            raise RecoveryError("The configuration changed after this run started.")
+        record = self._saved_record(store)
         before_preflight = {path.resolve() for path in store.artifacts.rglob("*") if path.is_file()}
         self._preflight_roles(store.artifacts / "browser-preflight")
         for artifact_path in store.artifacts.rglob("*"):
@@ -95,6 +97,9 @@ class WorkflowEngine:
             paused_from = record.evidence.pop("paused_from", "")
             if not paused_from:
                 raise RecoveryError("The paused run does not record where it can continue.")
+            if record.evidence.pop("pause_reason", "") == "repair_limit":
+                record.attempt = 0
+                record.evidence.pop("active_attempt", None)
             transition(record, RunState(paused_from))
             record.error = ""
             store.append("human_action_resolved", {"resumed_at": paused_from})
@@ -120,7 +125,7 @@ class WorkflowEngine:
                                RunState.CONTEXT_EXPANDING}:
                     self._scope(record, store)
                 elif state is RunState.TASKS_READY:
-                    if record.mode == "issue":
+                    if record.mode == "issue" and "pre_fix_reproduction" not in record.evidence:
                         self._reproduce_before_fix(record, store, Path(record.worktree))
                     self._implement(record, store, repair=False)
                 elif state is RunState.IMPLEMENTING:
@@ -147,6 +152,10 @@ class WorkflowEngine:
                     raise PolicyError(f"No executor exists for state {state}.")
             except (PolicyError, ProviderError, VerificationError) as exc:
                 record.error = str(exc)
+                active_exchange = record.evidence.pop("_active_exchange", "")
+                if isinstance(exc, ProviderError) and active_exchange:
+                    retries = record.evidence.setdefault("provider_retry_counts", {})
+                    retries[active_exchange] = int(retries.get(active_exchange, 0)) + 1
                 if RunState(record.state) not in {RunState.NEEDS_HUMAN, RunState.FAILED}:
                     allowed = __import__("maintain.policy", fromlist=["TRANSITIONS"]).TRANSITIONS.get(RunState(record.state), set())
                     target = RunState.NEEDS_HUMAN if RunState.NEEDS_HUMAN in allowed else RunState.FAILED
@@ -159,9 +168,10 @@ class WorkflowEngine:
 
     def accept(self, run_id: str) -> RunRecord:
         store = AuditStore(self.config.runtime_root, run_id)
+        self._require_saved_run(store)
         with FileLock(store.run_dir / "run.lock", f"accept {run_id}"):
             store.verify()
-            record = RunRecord.from_dict(json.loads((store.run_dir / "run.json").read_text()))
+            record = self._saved_record(store)
             current = self.workspaces.diff(Path(record.worktree))
             if current.tree_hash != record.tree_hash:
                 raise PolicyError("The workspace changed after verification.")
@@ -172,9 +182,10 @@ class WorkflowEngine:
     def deliver(self, run_id: str) -> RunRecord:
         """Create the verified commit only after a separate explicit action."""
         store = AuditStore(self.config.runtime_root, run_id)
+        self._require_saved_run(store)
         with FileLock(store.run_dir / "run.lock", f"deliver {run_id}"):
             store.verify()
-            record = RunRecord.from_dict(json.loads((store.run_dir / "run.json").read_text()))
+            record = self._saved_record(store)
             if RunState(record.state) not in {RunState.ACCEPTED, RunState.DELIVERING}:
                 raise PolicyError("Delivery requires an accepted run.")
             current = self.workspaces.diff(Path(record.worktree))
@@ -191,22 +202,34 @@ class WorkflowEngine:
         if not confirmed:
             raise DeliveryError("Current-branch integration needs explicit confirmation.")
         store = AuditStore(self.config.runtime_root, run_id)
+        self._require_saved_run(store)
         with FileLock(store.run_dir / "run.lock", f"integrate {run_id}"):
             store.verify()
-            record = RunRecord.from_dict(json.loads((store.run_dir / "run.json").read_text()))
-            if RunState(record.state) is not RunState.DELIVERED:
+            record = self._saved_record(store, require_current_config=False)
+            if RunState(record.state) not in {RunState.DELIVERED, RunState.NEEDS_HUMAN_DELIVERY}:
                 raise DeliveryError("Current-branch integration requires a delivered run.")
             commit = str(record.evidence.get("delivery", {}).get("commit", ""))
             if not commit:
                 raise DeliveryError("The delivered commit is missing.")
+            prior_branch = record.evidence.get("delivery", {}).get("integrated_branch")
+            prior_commit = record.evidence.get("delivery", {}).get("integrated_commit")
+            if prior_branch == target_branch and prior_commit:
+                from .workspace import git
+                if (git(self.config.repository, "branch", "--show-current") == target_branch and
+                        git(self.config.repository, "rev-parse", "HEAD") == prior_commit):
+                    return record
             try:
                 integrated = self.workspaces.integrate_current_branch(
                     target_branch, commit, record.base_commit,
                 )
             except RecoveryError as exc:
                 record.evidence.setdefault("delivery", {})["integration_error"] = str(exc)
-                self._move(record, store, RunState.NEEDS_HUMAN_DELIVERY,
-                           tree_hash=record.accepted_tree_hash)
+                record.error = str(exc)
+                if RunState(record.state) is not RunState.NEEDS_HUMAN_DELIVERY:
+                    self._move(record, store, RunState.NEEDS_HUMAN_DELIVERY,
+                               tree_hash=record.accepted_tree_hash)
+                else:
+                    store.save_record(record)
                 store.append("current_branch_integration_stopped", {
                     "target_branch": target_branch, "error": str(exc),
                     "verified_branch": record.branch,
@@ -214,9 +237,14 @@ class WorkflowEngine:
                 raise DeliveryError(str(exc)) from exc
             record.evidence["delivery"]["integrated_branch"] = target_branch
             record.evidence["delivery"]["integrated_commit"] = integrated
+            record.evidence["delivery"].pop("integration_error", None)
+            record.error = ""
             store.append("current_branch_integrated", {
                 "target_branch": target_branch, "commit": integrated, "confirmed": True,
             })
+            if RunState(record.state) is RunState.NEEDS_HUMAN_DELIVERY:
+                self._move(record, store, RunState.DELIVERED,
+                           tree_hash=record.accepted_tree_hash)
             store.save_record(record)
             return record
 
@@ -224,9 +252,10 @@ class WorkflowEngine:
         if not message.strip():
             raise PolicyError("Feedback is empty.")
         store = AuditStore(self.config.runtime_root, run_id)
+        self._require_saved_run(store)
         with FileLock(store.run_dir / "run.lock", f"feedback {run_id}"):
             store.verify()
-            record = RunRecord.from_dict(json.loads((store.run_dir / "run.json").read_text()))
+            record = self._saved_record(store)
             if RunState(record.state) is not RunState.AWAITING_ACCEPTANCE:
                 raise PolicyError("Feedback is available only before acceptance.")
             current = self.workspaces.diff(Path(record.worktree))
@@ -243,14 +272,71 @@ class WorkflowEngine:
 
     def cancel(self, run_id: str) -> RunRecord:
         store = AuditStore(self.config.runtime_root, run_id)
+        self._require_saved_run(store)
         with FileLock(store.run_dir / "run.lock", f"cancel {run_id}"):
             store.verify()
-            record = RunRecord.from_dict(json.loads((store.run_dir / "run.json").read_text()))
+            record = self._saved_record(store)
             if RunState(record.state) in {RunState.DELIVERED, RunState.CANCELLED}:
                 return record
             self._move(record, store, RunState.CANCELLED, tree_hash=record.tree_hash)
             store.append("human_cancelled", {"retained_worktree": record.worktree})
             return record
+
+    def cleanup_workspace(self, run_id: str) -> RunRecord:
+        """Remove only a delivered worktree while retaining its commit and audit record."""
+        store = AuditStore(self.config.runtime_root, run_id)
+        self._require_saved_run(store)
+        with FileLock(store.run_dir / "run.lock", f"workspace cleanup {run_id}"):
+            store.verify()
+            record = self._saved_record(store, require_current_config=False)
+            if RunState(record.state) not in {
+                    RunState.DELIVERED, RunState.FAILED, RunState.CANCELLED}:
+                raise PolicyError("Only a delivered, failed, or cancelled workspace can be removed.")
+            worktree = Path(record.worktree)
+            if worktree.exists():
+                from .workspace import git
+                arguments = ["worktree", "remove"]
+                if RunState(record.state) in {RunState.FAILED, RunState.CANCELLED}:
+                    arguments.append("--force")
+                git(self.config.repository, *arguments, str(worktree))
+            record.evidence["workspace_removed"] = {
+                "path": str(worktree), "retained_branch": record.branch,
+            }
+            store.append("workspace_removed", record.evidence["workspace_removed"])
+            store.save_record(record)
+            return record
+
+    def keep_delivered_branch(self, run_id: str) -> RunRecord:
+        """Finish a stopped integration while retaining the verified maintenance branch."""
+        store = AuditStore(self.config.runtime_root, run_id)
+        self._require_saved_run(store)
+        with FileLock(store.run_dir / "run.lock", f"finish delivery {run_id}"):
+            store.verify()
+            record = self._saved_record(store, require_current_config=False)
+            if RunState(record.state) is not RunState.NEEDS_HUMAN_DELIVERY:
+                raise DeliveryError("This run does not have a stopped branch update.")
+            record.evidence.get("delivery", {}).pop("integration_error", None)
+            record.error = ""
+            self._move(record, store, RunState.DELIVERED,
+                       tree_hash=record.accepted_tree_hash)
+            store.append("maintenance_branch_retained", {"branch": record.branch})
+            return record
+
+    def _saved_record(self, store: AuditStore, *, require_current_config: bool = True) -> RunRecord:
+        path = store.run_dir / "run.json"
+        if not path.is_file():
+            raise RecoveryError("The saved run record is missing.")
+        record = RunRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        if Path(record.repository).resolve() != self.config.repository.resolve():
+            raise PolicyError("The run belongs to a different project.")
+        if require_current_config and record.config_hash != sha256(self.config.path.read_bytes()):
+            raise RecoveryError("The configuration changed after this run started.")
+        return record
+
+    @staticmethod
+    def _require_saved_run(store: AuditStore) -> None:
+        if not (store.run_dir / "run.json").is_file() or not store.ledger.is_file():
+            raise RecoveryError(f"Run does not exist: {store.run_id}")
 
     def gate_status(self, record: RunRecord) -> dict[str, str]:
         """Compute user-visible trust gates from local evidence."""
@@ -280,7 +366,10 @@ class WorkflowEngine:
         return {
             "configuration": "pass" if config_ok else "fail",
             "base_commit": "pass" if record.base_commit else pending,
-            "isolated_workspace": "pass" if workspace_exists else pending,
+            "isolated_workspace": (
+                "not_applicable" if record.evidence.get("workspace_removed") else
+                "pass" if workspace_exists else pending
+            ),
             "task_package": "pass" if tasks_complete else pending,
             "policy_diff": "pass" if record.tree_hash else pending,
             "independent_review": ("pass" if review.get("decision") == "approve" else
@@ -290,8 +379,11 @@ class WorkflowEngine:
             "matlab": ("not_applicable" if not matlab_required else
                        "pass" if matlab_results and all(x.get("exit_code") == 0 for x in matlab_results)
                        else pending),
-            "issue_reproduction": ("not_applicable" if record.mode != "issue" else
-                                   "pass" if record.evidence.get("pre_fix_reproduction") else pending),
+            "issue_reproduction": (
+                "not_applicable" if record.mode != "issue" or
+                record.evidence.get("pre_fix_reproduction") == [] else
+                "pass" if record.evidence.get("pre_fix_reproduction") else pending
+            ),
             "single_tree": "pass" if same_tree else pending,
             "audit_chain": "pass" if audit_ok else "fail",
             "human_acceptance": "pass" if accepted else pending,
@@ -344,12 +436,17 @@ class WorkflowEngine:
                           wait_seconds=30):
                 base = record.base_commit or self.workspaces.preflight()
                 if not record.base_commit:
+                    from .workspace import git
                     record.base_commit = base
                     record.branch = f"maintain/{record.run_id}"
                     record.worktree = str(self.workspaces.workspace_root / record.run_id)
+                    record.evidence["source_branch"] = git(
+                        self.config.repository, "branch", "--show-current"
+                    )
                     store.append("workspace_planned", {
                         "base_commit": base, "branch": record.branch,
                         "worktree": record.worktree,
+                        "source_branch": record.evidence["source_branch"],
                     })
                     store.save_record(record)
                 branch, worktree = self.workspaces.create(record.run_id, record.base_commit)
@@ -382,6 +479,7 @@ class WorkflowEngine:
                 "instead of guessing.",
                 {"mode": record.mode, "request": record.request,
                  "context_expansions": expansions,
+                 "repository_map": selector.repository_map(),
                  "candidate_files": [{"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
                                       "content": x.content} for x in disclosed.values()]},
                 conversation_suffix=f"scope-{scope_attempt}")
@@ -390,13 +488,22 @@ class WorkflowEngine:
             queries = response.get("context_queries")
             if not isinstance(queries, list) or not queries or scope_attempt == 3:
                 break
+            self._finish_exchange(record, store)
             before = set(disclosed)
             expanded = selector.select(record.request + " " + " ".join(map(str, queries)),
                                        limit_files=100, limit_bytes=500_000)
             disclosed.update((item.path, item) for item in expanded)
             added = sorted(set(disclosed) - before)
             if not added:
-                raise ProviderError("The focused context search found no additional files.")
+                expansion = {
+                    "queries": [str(item) for item in queries],
+                    "added_files": [],
+                    "result": "No additional matching files were found.",
+                }
+                expansions.append(expansion)
+                store.append("context_expansion_empty", expansion)
+                self.presenter.complete("CONTEXT", "No additional matching files")
+                continue
             expansion = {"queries": [str(item) for item in queries], "added_files": added}
             expansions.append(expansion)
             store.append("context_expanded", expansion)
@@ -415,24 +522,70 @@ class WorkflowEngine:
         candidates = {item.path for item in context}
         if not isinstance(tasks, list) or not tasks:
             raise ProviderError("The scope response did not define a task.")
+        if len(tasks) > self.config.max_changed_files:
+            raise ProviderError("The scope response defined too many tasks.")
         seen: set[str] = set()
+        new_paths: set[str] = set()
         for task in tasks:
-            if not isinstance(task, dict) or not task.get("id") or not task.get("objective"):
+            if (not isinstance(task, dict) or not task.get("id") or
+                    not str(task.get("objective", "")).strip()):
                 raise ProviderError("The scope response contains an invalid task.")
             task_id = str(task["id"])
+            if not TASK_ID_PATTERN.fullmatch(task_id):
+                raise ProviderError(
+                    "Task identifiers can contain only letters, numbers, dots, dashes, and underscores.")
             if task_id in seen:
                 raise ProviderError("Task identifiers must be unique.")
             dependencies = task.get("depends_on", [])
-            if not isinstance(dependencies, list) or any(item not in seen for item in dependencies):
+            if (not isinstance(dependencies, list) or
+                    any(not isinstance(item, str) or item not in seen for item in dependencies)):
                 raise ProviderError("Task dependencies must refer to earlier tasks.")
             allowed = task.get("allowed_files", [])
-            if not allowed or any(path not in candidates for path in allowed):
-                raise ProviderError("A task references unavailable repository context.")
+            if (not isinstance(allowed, list) or not allowed or
+                    len(allowed) > self.config.max_changed_files or
+                    len(set(map(str, allowed))) != len(allowed)):
+                raise ProviderError("A task needs a unique, limited list of allowed files.")
+            for path in allowed:
+                self._validate_task_path(path, candidates, new_paths)
+            for field in ("done_when", "verification"):
+                values = task.get(field)
+                if (not isinstance(values, list) or not values or
+                        any(not isinstance(item, str) or not item.strip() for item in values)):
+                    raise ProviderError(f"A task needs explicit {field.replace('_', ' ')} criteria.")
             seen.add(task_id)
+        self._finish_exchange(record, store)
         record.tasks = tasks
         task_artifact = store.write_artifact("tasks.json", tasks)
         self._move(record, store, RunState.TASKS_READY, artifacts=[artifact, task_artifact])
         self.presenter.complete("SCOPE", "Change plan is ready")
+
+    def _validate_task_path(self, value: object, candidates: set[str],
+                            new_paths: set[str]) -> None:
+        if not isinstance(value, str) or not value or "\\" in value:
+            raise ProviderError("A task contains an invalid repository path.")
+        path = Path(value)
+        if (path.is_absolute() or value != path.as_posix() or
+                any(part in {"", ".", "..", ".git", ".maintain", ".maintain.json"}
+                    for part in path.parts)):
+            raise ProviderError(f"A task contains an unsafe repository path: {value}")
+        if any(fnmatch.fnmatch(value, pattern) for pattern in self.config.protected_paths):
+            raise ProviderError(f"A task references a protected path: {value}")
+        if any(fnmatch.fnmatch(value, pattern) for pattern in self.config.exclude_paths):
+            raise ProviderError(f"A task references an excluded path: {value}")
+        if value in candidates or value in new_paths:
+            return
+        target = self.config.repository / path
+        if target.exists() or target.is_symlink():
+            raise ProviderError(
+                f"A task references code that was not supplied in context: {value}")
+        if not self.config.allow_new_files:
+            raise ProviderError(f"A task proposes a new file that policy does not allow: {value}")
+        current = self.config.repository
+        for part in path.parts[:-1]:
+            current /= part
+            if current.is_symlink():
+                raise ProviderError(f"A task proposes a file below a symbolic link: {value}")
+        new_paths.add(value)
 
     def _implement(self, record: RunRecord, store: AuditStore, repair: bool) -> None:
         if not repair and RunState(record.state) is RunState.TASKS_READY:
@@ -453,9 +606,11 @@ class WorkflowEngine:
         task = record.tasks[record.task_index]
         attempt_dir = f"tasks/{task['id']}/attempt-{record.attempt}"
         paths = task["allowed_files"]
-        files = {path: (Path(record.worktree) / path).read_text(encoding="utf-8") for path in paths}
+        files = {path: (Path(record.worktree) / path).read_text(encoding="utf-8")
+                 for path in paths if (Path(record.worktree) / path).is_file()}
         payload = {"mode": record.mode, "request": record.request, "task": task,
-                   "files": files, "attempt": record.attempt,
+                   "files": files, "new_files": [path for path in paths if path not in files],
+                   "attempt": record.attempt,
                    "prior_evidence": record.evidence}
         patch_path = store.artifacts / f"{attempt_dir}/patch.diff"
         workspace_edited = False
@@ -482,13 +637,25 @@ class WorkflowEngine:
                 output_zip = store.artifacts / "browser" / str(output_zip_name)
                 if not output_zip.is_file():
                     raise ProviderError("The implementation ZIP is missing from the audit package.")
+                deleted_files = content.get("deleted_files", [])
+                if (not isinstance(deleted_files, list) or
+                        any(not isinstance(path, str) for path in deleted_files) or
+                        len(set(deleted_files)) != len(deleted_files)):
+                    raise ProviderError("The implementation response has invalid deleted files.")
+                if deleted_files and not self.config.allow_deletes:
+                    raise PolicyError("File deletion is not permitted by project policy.")
                 archive_paths = self.workspaces.apply_output_zip(
                     Path(record.worktree), output_zip, paths,
                     self.config.max_file_bytes, self.config.max_prompt_bytes,
+                    allow_empty=bool(deleted_files),
                 )
+                if set(archive_paths) & set(deleted_files):
+                    raise ProviderError("A file cannot be both replaced and deleted.")
+                removed_paths = self.workspaces.apply_deletions(
+                    Path(record.worktree), deleted_files, paths)
                 declared_paths = content.get("changed_files")
                 if (not isinstance(declared_paths, list) or
-                        set(map(str, declared_paths)) != set(archive_paths)):
+                        set(map(str, declared_paths)) != set(archive_paths) | set(removed_paths)):
                     raise ProviderError(
                         "The implementation ZIP does not match its declared changed files.")
                 workspace_edited = True
@@ -518,6 +685,7 @@ class WorkflowEngine:
                                  allow_new_files=self.config.allow_new_files,
                                  allow_deletes=self.config.allow_deletes,
                                  dependency_changes=self.config.dependency_changes)
+        self._finish_exchange(record, store)
         record.tree_hash = diff.tree_hash
         record.evidence["changed_files"] = diff.paths
         record.evidence.pop("active_attempt", None)
@@ -569,6 +737,7 @@ class WorkflowEngine:
             blocking = blocking or severity in {"high", "medium"}
         if blocking:
             decision = "changes_requested"
+        self._finish_exchange(record, store)
         record.evidence["review"] = {"decision": decision, "findings": findings,
                                      "tree_hash": diff.tree_hash}
         artifact = store.write_artifact(
@@ -582,7 +751,12 @@ class WorkflowEngine:
     def _reproduce_before_fix(self, record: RunRecord, store: AuditStore, worktree: Path) -> None:
         specs = [x for x in self.config.commands if x.phase == "reproduce"]
         if not specs:
-            raise VerificationError("Issue workflow needs a configured reproduction command.")
+            record.evidence["pre_fix_reproduction"] = []
+            store.append("issue_reproduction_not_configured", {
+                "reason": "No focused pre-fix reproduction command is configured."
+            })
+            self.presenter.complete("REPRODUCE", "No focused reproduction check configured")
+            return
         results = []
         for spec in specs:
             with self.presenter.progress("REPRODUCE", f"Confirm the issue with {spec.name}"):
@@ -655,13 +829,19 @@ class WorkflowEngine:
             return
         record.evidence["verified_tree_hash"] = diff.tree_hash
         if record.mode == "issue":
-            record.evidence["issue_outcome"] = "reproduced_and_fixed"
+            record.evidence["issue_outcome"] = (
+                "reproduced_and_fixed" if record.evidence.get("pre_fix_reproduction")
+                else "fixed_and_verified"
+            )
         record.tree_hash = diff.tree_hash
         self._move(record, store, RunState.VERIFIED, tree_hash=diff.tree_hash)
         self.presenter.complete("TEST", "Local verification passed")
 
     def _repair_or_stop(self, record: RunRecord, store: AuditStore) -> None:
         if record.attempt >= self.config.max_attempts:
+            record.evidence["paused_from"] = str(RunState.REPAIRING)
+            record.evidence["pause_reason"] = "repair_limit"
+            record.error = "The repair limit was reached. Continue the run to allow another repair cycle."
             self._move(record, store, RunState.NEEDS_HUMAN)
         else:
             self._move(record, store, RunState.REPAIRING)
@@ -669,8 +849,9 @@ class WorkflowEngine:
     def _deliver(self, record: RunRecord, store: AuditStore) -> None:
         if RunState(record.state) is RunState.ACCEPTED:
             self._move(record, store, RunState.DELIVERING)
+        summary = " ".join(record.request.split())[:60]
         commit = self.workspaces.commit(Path(record.worktree),
-            f"maintain: {record.request[:60]}", record.accepted_tree_hash)
+            f"maintain: {summary}", record.accepted_tree_hash)
         record.evidence["delivery"] = {"commit": commit, "tree_hash": record.accepted_tree_hash}
         self._move(record, store, RunState.DELIVERED)
         self.presenter.complete("DELIVER", f"Verified branch is ready: {record.branch}")
@@ -681,16 +862,23 @@ class WorkflowEngine:
         profile_name = self.config.roles.get(role)
         if not profile_name or profile_name not in self.config.providers:
             raise ProviderError(f"No provider is configured for role {role}.")
+        exchange_base = f"{role}-{conversation_suffix or task_id}"
+        retries = record.evidence.get("provider_retry_counts", {})
+        retry = int(retries.get(exchange_base, 0)) if isinstance(retries, dict) else 0
+        effective_payload = {**payload, "exchange_attempt": retry + 1}
         request = ProviderRequest(
             1, record.run_id, task_id, role,
-            f"{PROVIDER_SAFETY_HEADER}\n\n{instructions}", payload,
+            f"{PROVIDER_SAFETY_HEADER}\n\n{instructions}", effective_payload,
         )
         assert_no_secrets(request.__dict__, f"{role} request")
         request_bytes = len(json.dumps(request.__dict__, ensure_ascii=False).encode())
         if request_bytes > self.config.max_prompt_bytes:
             raise PolicyError("The provider package exceeds the configured prompt limit.")
-        response_name = f"provider/{role}-{conversation_suffix or task_id}-response.json"
+        exchange_name = f"{exchange_base}-retry-{retry}" if retry else exchange_base
+        response_name = f"provider/{exchange_name}-response.json"
         response_path = store.artifacts / response_name
+        record.evidence["_active_exchange"] = exchange_base
+        store.save_record(record)
         if response_path.is_file():
             cached = json.loads(response_path.read_text(encoding="utf-8"))
             if (cached.get("run_id"), cached.get("task_id"), cached.get("role")) != (
@@ -698,7 +886,7 @@ class WorkflowEngine:
                 raise ProviderError("The cached provider response belongs to another task.")
             return cached["content"]
         request_artifact = store.write_artifact(
-            f"provider/{role}-{conversation_suffix or task_id}-request.json", request.__dict__)
+            f"provider/{exchange_name}-request.json", request.__dict__)
         provider = self.provider_builder(profile_name, self.config.providers[profile_name],
                                          store.artifacts / "browser")
         capabilities = provider.capabilities
@@ -757,6 +945,11 @@ class WorkflowEngine:
                                            "artifacts": [request_artifact, response_artifact,
                                                          *provider_artifacts]})
         return response.content
+
+    @staticmethod
+    def _finish_exchange(record: RunRecord, store: AuditStore) -> None:
+        if record.evidence.pop("_active_exchange", None) is not None:
+            store.save_record(record)
 
     def _preflight_roles(self, evidence_dir: Path | None = None) -> None:
         providers = {}
