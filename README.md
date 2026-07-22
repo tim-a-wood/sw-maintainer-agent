@@ -86,7 +86,8 @@ maintain --repo /path/to/project
 ```
 
 Choose `S`, select Microsoft 365 Copilot, ChatGPT, or Codex, and follow the
-on-screen sign-in step. The setup creates `.maintain.json` in the target project.
+on-screen sign-in step. Browser setup retrieves the models available to the
+signed-in account and asks which model to use. The setup creates `.maintain.json` in the target project.
 It does not add that file to Git, and the file can remain untracked.
 
 Use the steps below when you want to inspect or customize setup before the first
@@ -162,6 +163,19 @@ maintain --repo /path/to/project provider doctor chatgpt
 
 Use the profile name shown by `maintain provider list` if you renamed it.
 
+To view, refresh, or change the models for a browser profile:
+
+```sh
+maintain --repo /path/to/project provider models chatgpt
+maintain --repo /path/to/project provider models chatgpt --refresh
+maintain --repo /path/to/project provider model chatgpt
+maintain --repo /path/to/project provider model chatgpt "MODEL NAME"
+```
+
+The interactive home screen provides the same controls under `Assistant settings`.
+Maintain saves the preference in `.maintain.json` and selects it at the start of
+every browser conversation. Refresh the list when the account's available models change.
+
 ## Start a workflow
 
 Open the interactive interface:
@@ -188,6 +202,10 @@ For each browser exchange, Maintain uploads `TASK.md`, `CODEBASE.md`, and
 an index and exact repository paths. Implementation returns a ZIP containing
 complete changed files at those paths. Maintain validates and applies the ZIP in
 the isolated worktree before review and local verification.
+
+After attaching a package, Maintain waits for upload activity to finish and for
+the Send control to become enabled. It clicks Send and confirms that the message
+left the prompt before waiting for a response.
 
 ```sh
 maintain --repo /path/to/project diff RUN_ID

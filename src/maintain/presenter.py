@@ -144,6 +144,8 @@ class Presenter:
         count = f"{saved_count} saved" if saved_count else "No saved work"
         self.menu_line("3", "Continue saved work", count)
         self.menu_line("4", "View history", "Runs, results, and status")
+        if configured:
+            self.menu_line("5", "Assistant settings", "Model preference")
         if not configured:
             self.console.print()
             setup_label = "Repair project setup" if setup_issue else "Set up this project"

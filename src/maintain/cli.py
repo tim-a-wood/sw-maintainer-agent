@@ -69,8 +69,11 @@ def parser() -> argparse.ArgumentParser:
     config_cmd.add_argument("--provider", choices=["codex", "file-exchange", "chatgpt-browser",
                                                     "m365-browser"], default="codex")
     provider = commands.add_parser("provider", help="Inspect provider readiness")
-    provider.add_argument("action", choices=["list", "doctor", "login"], nargs="?", default="list")
+    provider.add_argument("action", choices=["list", "doctor", "login", "models", "model"],
+                          nargs="?", default="list")
     provider.add_argument("profile", nargs="?")
+    provider.add_argument("value", nargs="?", help="Model name for the model action")
+    provider.add_argument("--refresh", action="store_true", help="Retrieve models from the web UI")
     workspace = commands.add_parser("workspace", help="Inspect or remove isolated workspaces")
     workspace.add_argument("action", choices=["list", "open", "cleanup"], nargs="?", default="list")
     workspace.add_argument("run_id", nargs="?")
@@ -245,6 +248,10 @@ def main(argv: list[str] | None = None) -> int:
                                       for role, profile, kind in rows], sort_keys=True))
                 else:
                     presenter.provider_assignments(rows)
+            elif args.action in {"models", "model"}:
+                result = _provider_models(args, config, presenter, engine)
+                if args.json_output:
+                    print(json.dumps(result, sort_keys=True))
             else:
                 names = [args.profile] if args.profile else sorted(set(config.roles.values()))
                 readiness = []
@@ -476,8 +483,8 @@ def _home(args: argparse.Namespace) -> int:
                 continue
             _pause(presenter)
             continue
-        if choice not in {"1", "2", "3", "4"}:
-            presenter.error("Choose 1, 2, 3, 4, S, or Q.")
+        if choice not in {"1", "2", "3", "4", "5"}:
+            presenter.error("Choose 1, 2, 3, 4, 5, S, or Q.")
             continue
         if config is None:
             presenter.error("Set up this project before starting work.",
@@ -485,6 +492,9 @@ def _home(args: argparse.Namespace) -> int:
             _pause(presenter)
             continue
         engine = WorkflowEngine(config, presenter)
+        if choice == "5":
+            _interactive_assistant_settings(args, config, presenter)
+            continue
         if choice in {"1", "2"}:
             mode = "feature" if choice == "1" else "issue"
             presenter.console.print()
@@ -567,7 +577,16 @@ def _interactive_setup(args: argparse.Namespace, presenter: Presenter) -> int:
     if args.no_color:
         login_args.append("--no-color")
     login_args.extend(["provider", "login", profile])
-    return main(login_args)
+    logged_in = main(login_args)
+    if logged_in:
+        return logged_in
+    model_args = ["--repo", str(repository)]
+    if args.no_animation:
+        model_args.append("--no-animation")
+    if args.no_color:
+        model_args.append("--no-color")
+    model_args.extend(["provider", "model", profile, "--refresh"])
+    return main(model_args)
 
 
 def _choose_run(config: ProjectConfig, presenter: Presenter) -> str | None:
@@ -696,8 +715,6 @@ def _pause(presenter: Presenter) -> None:
 
 
 def _provider_label(config: ProjectConfig) -> str:
-    kinds = {config.providers.get(profile, {}).get("type", "")
-             for profile in config.roles.values()}
     labels = {
         "chatgpt_browser": "ChatGPT",
         "m365_copilot_browser": "Microsoft 365 Copilot",
@@ -706,8 +723,145 @@ def _provider_label(config: ProjectConfig) -> str:
         "file_exchange": "File exchange",
         "command": "Enterprise assistant",
     }
-    shown = [labels.get(kind, kind.replace("_", " ").title()) for kind in sorted(kinds) if kind]
+    shown: list[str] = []
+    for profile in sorted(set(config.roles.values())):
+        profile_config = config.providers.get(profile, {})
+        kind = str(profile_config.get("type", ""))
+        if not kind:
+            continue
+        label = labels.get(kind, kind.replace("_", " ").title())
+        model = str(profile_config.get("model") or "").strip()
+        shown.append(f"{label} · {model}" if model else label)
     return ", ".join(shown)
+
+
+def _provider_models(args: argparse.Namespace, config: ProjectConfig, presenter,
+                     engine: WorkflowEngine) -> dict[str, object]:
+    browser_profiles = [name for name, profile in config.providers.items()
+                        if profile.get("type") in {"chatgpt_browser", "m365_copilot_browser"}]
+    profile_name = args.profile
+    if not profile_name:
+        if len(browser_profiles) != 1:
+            raise ConfigurationError("Specify the browser provider profile.")
+        profile_name = browser_profiles[0]
+    if profile_name not in browser_profiles:
+        raise ConfigurationError(f"Browser provider profile does not exist: {profile_name}")
+    profile = config.providers[profile_name]
+    models = [str(item) for item in profile.get("available_models", [])]
+    current = str(profile.get("model") or "").strip()
+    if args.refresh:
+        provider = engine.provider_builder(
+            profile_name, profile, config.runtime_root.parent / "browser")
+        if not hasattr(provider, "available_models"):
+            raise ConfigurationError("This provider cannot retrieve browser models.")
+        models = provider.available_models()
+        if current not in models:
+            current = ""
+        _write_provider_models(config, profile_name, models, current)
+    if args.action == "models":
+        if args.value:
+            raise ConfigurationError("The models action does not accept a model name.")
+        if not models:
+            raise ConfigurationError("No model list is saved. Use provider models --refresh.")
+        if not args.json_output:
+            presenter.section("MODELS", f"Available models for {profile_name}",
+                              f"Current preference: {current or 'Not selected'}")
+            presenter.console.print()
+            for index, model in enumerate(models, 1):
+                presenter.menu_line(str(index), model, "Selected" if model == current else "")
+        return {"profile": profile_name, "models": models, "selected": current or None}
+    if args.value:
+        selected = args.value.strip()
+    else:
+        if args.json_output:
+            raise ConfigurationError("Provide a model name when using --json.")
+        if not models:
+            raise ConfigurationError("No model list is saved. Use provider model --refresh.")
+        presenter.section("MODEL", f"Choose the model for {profile_name}",
+                          "Maintain selects this model for every new conversation.")
+        presenter.console.print()
+        for index, model in enumerate(models, 1):
+            presenter.menu_line(str(index), model, "Current" if model == current else "")
+        default = str(models.index(current) + 1) if current in models else "1"
+        choice = presenter.ask("Choose", default)
+        try:
+            selected = models[int(choice) - 1]
+        except (ValueError, IndexError) as exc:
+            raise ConfigurationError("Choose a listed model number.") from exc
+    if selected not in models:
+        raise ConfigurationError(
+            f"Model {selected!r} is not in the saved list. Refresh the available models.")
+    _write_provider_models(config, profile_name, models, selected)
+    if not args.json_output:
+        presenter.outcome("Saved", f"{selected} will be used for every conversation.",
+                          facts=[("Profile", profile_name), ("Model", selected)], tone="success")
+    return {"profile": profile_name, "models": models, "selected": selected}
+
+
+def _write_provider_models(config: ProjectConfig, profile_name: str, models: list[str],
+                           selected: str) -> None:
+    data = json.loads(config.path.read_text(encoding="utf-8"))
+    profile = data["providers"]["profiles"][profile_name]
+    profile["available_models"] = models
+    if selected:
+        profile["model"] = selected
+    else:
+        profile.pop("model", None)
+    rendered = json.dumps(data, indent=2) + "\n"
+    with tempfile.NamedTemporaryFile("w", suffix=".json", prefix=".maintain-model-",
+                                     dir=config.path.parent, delete=False) as temporary:
+        temporary.write(rendered)
+        temporary_path = Path(temporary.name)
+    try:
+        ProjectConfig.load(temporary_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    atomic_write(config.path, rendered.encode())
+
+
+def _interactive_assistant_settings(args: argparse.Namespace, config: ProjectConfig,
+                                    presenter: Presenter) -> None:
+    profiles = [name for name, profile in config.providers.items()
+                if profile.get("type") in {"chatgpt_browser", "m365_copilot_browser"}]
+    if not profiles:
+        presenter.error("Model settings are available only for browser assistants.")
+        _pause(presenter)
+        return
+    profile = profiles[0]
+    if len(profiles) > 1:
+        presenter.section("ASSISTANT", "Choose a browser profile")
+        presenter.console.print()
+        for index, name in enumerate(profiles, 1):
+            presenter.menu_line(str(index), name, "")
+        try:
+            profile = profiles[int(presenter.ask("Choose", "1")) - 1]
+        except (ValueError, IndexError):
+            presenter.error("Choose a listed profile number.")
+            _pause(presenter)
+            return
+    current = str(config.providers[profile].get("model") or "Not selected")
+    presenter.section("ASSISTANT", "Model preference", f"Current: {current}")
+    presenter.console.print()
+    presenter.menu_line("1", "Change model", "Use the saved model list")
+    presenter.menu_line("2", "Refresh and change", "Retrieve models from the browser")
+    presenter.menu_line("b", "Back", "", quiet=True)
+    choice = presenter.ask("Choose", "1").casefold()
+    if choice == "b":
+        return
+    if choice not in {"1", "2"}:
+        presenter.error("Choose 1, 2, or B.")
+        _pause(presenter)
+        return
+    command = ["--repo", str(config.repository)]
+    if args.no_animation:
+        command.append("--no-animation")
+    if args.no_color:
+        command.append("--no-color")
+    command.extend(["provider", "model", profile])
+    if choice == "2":
+        command.append("--refresh")
+    main(command)
+    _pause(presenter)
 
 
 def _elapsed(start: str, end: str) -> str:

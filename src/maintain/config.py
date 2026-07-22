@@ -146,12 +146,13 @@ class ProjectConfig:
             "m365_copilot_browser": {"url", "browser", "profile_dir", "visible",
                                       "expected_tenant", "expected_identity", "allowed_hosts",
                                       "package_transport", "response_format",
-                                      "selectors", "timeout_ms", "max_chunk_chars", "retention"},
+                                      "selectors", "timeout_ms", "max_chunk_chars", "retention",
+                                      "model", "available_models"},
             "chatgpt_browser": {"url", "browser", "profile_dir", "visible",
                                 "expected_workspace", "expected_identity", "allowed_hosts",
                                 "package_transport", "response_format",
                                 "selectors", "timeout_ms", "max_chunk_chars", "retention",
-                                "account_capabilities"},
+                                "account_capabilities", "model", "available_models"},
         }
         for profile_name, raw_profile in profiles.items():
             profile = _object(raw_profile, f"provider profile {profile_name}")
@@ -197,6 +198,16 @@ class ProjectConfig:
                     if key in profile and int(profile[key]) < 1:
                         raise ConfigurationError(
                             f"Browser provider profile {profile_name}.{key} must be positive.")
+                available_models = _strings(profile.get("available_models"))
+                if "available_models" in profile:
+                    profile["available_models"] = available_models
+                model = str(profile.get("model") or "").strip()
+                if "model" in profile and not model:
+                    raise ConfigurationError(
+                        f"Browser provider profile {profile_name}.model cannot be empty.")
+                if model and available_models and model not in available_models:
+                    raise ConfigurationError(
+                        f"Browser provider profile {profile_name}.model is not in available_models.")
             if kind == "chatgpt_browser":
                 if "account_capabilities" not in profile:
                     raise ConfigurationError(

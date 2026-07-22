@@ -127,6 +127,30 @@ class BrowserProvider(Provider):
         except Exception as exc:
             raise ProviderError(f"Browser login failed: {exc}") from exc
 
+    def available_models(self) -> list[str]:
+        """Read the models offered by the signed-in browser account."""
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise ProviderError("Install Maintain with the browser extra and install Chromium.") from exc
+        selectors = {**PAGE_OBJECTS.get(self.name, {}), **self.config.get("selectors", {})}
+        lock_path = self.profile_dir.parent / f".{self.profile_dir.name}.maintain.lock"
+        with FileLock(lock_path, f"browser profile {self.name}"), sync_playwright() as playwright:
+            context = self._launch_context(playwright)
+            page = context.pages[0] if context.pages else context.new_page()
+            try:
+                page.goto(str(self.config["url"]), wait_until="domcontentloaded")
+                sign_in_selector = selectors.get("sign_in_selector")
+                if sign_in_selector and page.locator(sign_in_selector).is_visible():
+                    raise ProviderError("Interactive sign-in or MFA is required in the visible browser.")
+                return self._model_options(page, selectors)
+            except ProviderError:
+                raise
+            except Exception as exc:
+                raise ProviderError(f"Could not retrieve browser models: {exc}") from exc
+            finally:
+                context.close()
+
     def exchange(self, request: ProviderRequest):
         from playwright.sync_api import sync_playwright
 
@@ -173,6 +197,9 @@ class BrowserProvider(Provider):
                                 f"The signed-in identity does not match {expected_identity!r}.")
                 page.get_by_role("link", name=new_chat_name).or_(
                     page.get_by_role("button", name=new_chat_name)).first.click(timeout=30_000)
+                selected_model = str(self.config.get("model") or "").strip()
+                if selected_model:
+                    self._select_model(page, selectors, selected_model)
                 prompt = page.get_by_role(prompt_role).last
                 serialized = json.dumps(asdict(request), ensure_ascii=False, separators=(",", ":"))
                 digest = hashlib.sha256(serialized.encode()).hexdigest()
@@ -190,6 +217,10 @@ class BrowserProvider(Provider):
                     if upload_complete:
                         page.locator(upload_complete).wait_for(
                             state="visible", timeout=int(self.config.get("timeout_ms", 300_000)))
+                    upload_pending = selectors.get("upload_pending_selector")
+                    if upload_pending:
+                        page.locator(upload_pending).last.wait_for(
+                            state="hidden", timeout=int(self.config.get("timeout_ms", 300_000)))
                     digest = package.sha256
                     package_bytes = package.bytes
                     attachment_names = [path.name for path in package.paths]
@@ -210,8 +241,7 @@ class BrowserProvider(Provider):
                                 "Configure chunk_ack_selector when file upload is unavailable.")
                         for chunk in chunks:
                             chunk_hash = chunk.splitlines()[0].rsplit(" ", 1)[-1]
-                            prompt.fill(chunk)
-                            prompt.press("Enter")
+                            self._submit(page, prompt, chunk, selectors)
                             page.wait_for_function(
                                 "([selector, hash]) => { const nodes = document.querySelectorAll(selector); "
                                 "return nodes.length && nodes[nodes.length - 1].textContent.includes(hash); }",
@@ -220,8 +250,16 @@ class BrowserProvider(Provider):
                         message = (f"{request.instructions}\nAll {len(chunks)} chunks are complete. "
                                    f"Package SHA-256: {digest}. Return the required envelope.")
                         transport = "chunks"
-                prompt.fill(message)
-                prompt.press("Enter")
+                previous_count = page.locator(response_selector).count()
+                previous_response = (page.locator(response_selector).last.text_content() or ""
+                                     if previous_count else "")
+                self._submit(page, prompt, message, selectors)
+                page.wait_for_function(
+                    "([selector, count, previous]) => { const nodes = document.querySelectorAll(selector); "
+                    "if (nodes.length > count) return true; if (!nodes.length) return false; "
+                    "return (nodes[nodes.length - 1].textContent || '') !== previous; }",
+                    arg=[response_selector, previous_count, previous_response],
+                    timeout=int(self.config.get("timeout_ms", 300_000)))
                 response = page.locator(response_selector).last
                 response.wait_for(state="visible", timeout=int(self.config.get("timeout_ms", 300_000)))
                 generation_selector = selectors.get("generation_active_selector")
@@ -238,10 +276,10 @@ class BrowserProvider(Provider):
                 except ProviderError:
                     repaired = True
                     previous = raw
-                    prompt.fill(
+                    repair_message = (
                         "Your last response did not match the required envelope. Return only the "
                         "complete JSON envelope for the same run, task, and role.")
-                    prompt.press("Enter")
+                    self._submit(page, prompt, repair_message, selectors)
                     page.wait_for_function(
                         "([selector, previous]) => { const nodes = document.querySelectorAll(selector); "
                         "return nodes.length && nodes[nodes.length - 1].textContent !== previous; }",
@@ -271,6 +309,7 @@ class BrowserProvider(Provider):
                 (exchange_dir / f"{request.role}-transport.json").write_text(
                     json.dumps({"transport": transport, "sha256": digest,
                                 "bytes": package_bytes, "attachments": attachment_names,
+                                "model": selected_model or None,
                                 "conversation_id": parsed.conversation_id,
                                 "schema_repair": repaired,
                                 "output_zip": (output_zip.name if request.role == "implement"
@@ -299,6 +338,65 @@ class BrowserProvider(Provider):
                 raise ProviderError(f"Browser provider stopped safely: {exc}") from exc
             finally:
                 context.close()
+
+    def _submit(self, page, prompt, message: str, selectors: dict[str, Any]) -> None:
+        """Submit only after the web UI says its Send control is ready."""
+        timeout = int(self.config.get("timeout_ms", 300_000))
+        prompt.fill(message)
+        send_selector = selectors.get("send_button_selector")
+        if send_selector:
+            send = page.locator(send_selector).last
+            send.wait_for(state="visible", timeout=timeout)
+            handle = send.element_handle(timeout=timeout)
+            page.wait_for_function(
+                "button => !button.disabled && button.getAttribute('aria-disabled') !== 'true'",
+                arg=handle, timeout=timeout)
+            send.click(timeout=timeout)
+        else:
+            prompt.press("Enter")
+        handle = prompt.element_handle(timeout=timeout)
+        page.wait_for_function(
+            "field => { const value = 'value' in field ? field.value : field.textContent; "
+            "return !(value || '').trim(); }",
+            arg=handle, timeout=timeout)
+
+    def _model_options(self, page, selectors: dict[str, Any]) -> list[str]:
+        picker_selector = selectors.get("model_picker_selector")
+        option_selector = selectors.get("model_option_selector")
+        if not picker_selector or not option_selector:
+            raise ProviderError("Model discovery selectors are not configured for this browser provider.")
+        timeout = int(self.config.get("timeout_ms", 300_000))
+        page.locator(picker_selector).last.click(timeout=timeout)
+        options = page.locator(option_selector)
+        options.first.wait_for(state="visible", timeout=timeout)
+        found: list[str] = []
+        for option in options.all():
+            if not option.is_visible():
+                continue
+            label = _model_label(option.inner_text())
+            if label and label.casefold() not in {item.casefold() for item in found}:
+                found.append(label)
+        page.keyboard.press("Escape")
+        if not found:
+            raise ProviderError("The model picker opened, but it did not contain any models.")
+        return found
+
+    def _select_model(self, page, selectors: dict[str, Any], model: str) -> None:
+        picker_selector = selectors.get("model_picker_selector")
+        option_selector = selectors.get("model_option_selector")
+        if not picker_selector or not option_selector:
+            raise ProviderError("Model selection selectors are not configured for this browser provider.")
+        timeout = int(self.config.get("timeout_ms", 300_000))
+        page.locator(picker_selector).last.click(timeout=timeout)
+        options = page.locator(option_selector)
+        options.first.wait_for(state="visible", timeout=timeout)
+        for option in options.all():
+            if option.is_visible() and _model_label(option.inner_text()).casefold() == model.casefold():
+                option.click(timeout=timeout)
+                return
+        page.keyboard.press("Escape")
+        raise ProviderError(
+            f"The preferred model {model!r} is no longer available. Refresh the model list.")
 
     def _download_output_zip(self, page, selectors: dict[str, Any],
                              request: ProviderRequest, exchange_id: str) -> Path:
@@ -363,6 +461,11 @@ def _configured_value(value: object) -> str:
     return "" if shown.startswith("SET_") else shown
 
 
+def _model_label(value: str) -> str:
+    lines = [" ".join(line.split()) for line in value.splitlines() if line.strip()]
+    return " · ".join(lines).removesuffix(" Selected").strip(" ✓")
+
+
 def make_chunks(serialized: str, maximum: int) -> list[str]:
     if maximum < 100:
         raise ValueError("Chunk size must be at least 100 characters.")
@@ -388,6 +491,20 @@ PAGE_OBJECTS = {
         "attachment_selector": 'input[type="file"]',
         "response_selector": '[data-message-author-role="assistant"]',
         "generation_active_selector": '[data-testid="stop-button"]',
+        "send_button_selector": (
+            'button[data-testid="send-button"], button[aria-label^="Send"]'
+        ),
+        "upload_pending_selector": (
+            '[data-testid*="upload-progress"], [aria-label*="Uploading"]'
+        ),
+        "model_picker_selector": (
+            'button.__composer-pill[aria-haspopup="menu"], '
+            'button[data-testid="model-switcher-dropdown-button"], '
+            'button[aria-label*="model" i]'
+        ),
+        "model_option_selector": (
+            '[role="menuitemradio"], [role="menuitem"][data-testid*="model"]'
+        ),
         "output_download_selector": (
             'a[download][href], a[href^="sandbox:"], a[href*="/files/"]'
         ),
@@ -397,6 +514,20 @@ PAGE_OBJECTS = {
         "attachment_selector": 'input[type="file"]',
         "response_selector": '[data-testid="copilot-response"]',
         "generation_active_selector": '[aria-label="Stop generating"]',
+        "send_button_selector": (
+            'button[data-testid*="send" i], button[aria-label^="Send" i], '
+            'button[title^="Send" i]'
+        ),
+        "upload_pending_selector": (
+            '[data-testid*="upload-progress"], [aria-label*="Uploading" i]'
+        ),
+        "model_picker_selector": (
+            'button[data-testid*="model" i], button[aria-label*="model" i], '
+            'button[title*="model" i]'
+        ),
+        "model_option_selector": (
+            '[role="menuitemradio"], [role="option"], [data-testid*="model-option" i]'
+        ),
         "output_download_selector": (
             'a[download][href], a[href*="download"], button[aria-label*="Download"]'
         ),
