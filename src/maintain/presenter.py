@@ -29,6 +29,28 @@ THEME = Theme({
 })
 
 
+ROBOT = (
+    "  G     G  ",
+    "   G   G   ",
+    "   GGGGG   ",
+    "  GDDDDDG  ",
+    "  GDWDWDG  ",
+    "  GDDDDDG  ",
+    "   GGRGG   ",
+    "  GGGGGGG  ",
+    " GG GGG GG ",
+    "   G   G   ",
+    "  GG   GG  ",
+)
+
+ROBOT_PALETTE = {
+    "G": "bold #4BF77D",
+    "D": "#123B25",
+    "W": "bold #EAFFF0",
+    "R": "bold #FF654F",
+}
+
+
 class Presenter:
     def __init__(self, stream=None, animate: bool = True, width: int | None = None,
                  no_color: bool = False, max_width: int = 96,
@@ -52,28 +74,38 @@ class Presenter:
 
     def brand(self, project: str = "", provider: str = "") -> None:
         self.console.print()
-        if self.width < 62:
+        if self.width < 76:
             title = Text("◆  ", style="accent")
-            title.append("MAINTAIN", style="brand")
+            title.append("{ MAINTAIN }", style="brand")
             self.console.print(title)
             context = "  •  ".join(item for item in (project, provider) if item)
             if context:
                 self.console.print(context, style="muted")
             self.console.print(Rule(style="line"))
             return
-        art = [" ▄▄▄▄▄▄ ", "▟█ ▄  █▙", "██  ▀ ██", "▀█▄▄▄▄█▀", "  ▀  ▀  "]
         grid = Table.grid(padding=(0, 2))
-        grid.add_column(width=10)
+        grid.add_column(width=22)
         grid.add_column(ratio=1)
         details = Text()
-        details.append("MAINTAIN", style="bold #F8FAFC")
-        details.append("  SOFTWARE CARE, ON RAILS\n", style="accent")
-        details.append("PLAN  ·  BUILD  ·  REVIEW  ·  VERIFY\n", style="muted")
+        details.append("SOFTWARE MAINTENANCE AGENT\n", style="muted")
+        details.append("{ MAINTAIN }\n", style="bold #F8FAFC")
+        details.append("PLAN  >  BUILD  >  REVIEW  >  VERIFY\n", style="accent")
         context = "  •  ".join(item for item in (project or "Project not set up", provider) if item)
         details.append(context, style="label" if project else "warning")
-        grid.add_row(Text("\n".join(art), style="accent"), details)
+        grid.add_row(self._robot(), details)
         self.console.print(grid)
         self.console.print(Rule(style="line"))
+
+    @staticmethod
+    def _robot() -> Text:
+        art = Text()
+        for row_index, row in enumerate(ROBOT):
+            for pixel in row:
+                art.append("██" if pixel != " " else "  ",
+                           style=ROBOT_PALETTE.get(pixel, ""))
+            if row_index < len(ROBOT) - 1:
+                art.append("\n")
+        return art
 
     def header(self, title: str) -> None:
         """Compatibility entry point for concise section headers."""

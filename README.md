@@ -4,11 +4,17 @@
 [![CLI](https://img.shields.io/badge/interface-terminal-34D399)](#start-a-workflow)
 
 ```text
- ▄▄▄▄▄▄     MAINTAIN  SOFTWARE CARE, ON RAILS
-▟█ ▄  █▙    PLAN  ·  BUILD  ·  REVIEW  ·  VERIFY
-██  ▀ ██
-▀█▄▄▄▄█▀
-  ▀  ▀
+  █       █       SOFTWARE MAINTENANCE AGENT
+   █     █        { MAINTAIN }
+   █████        PLAN > BUILD > REVIEW > VERIFY
+  █░░░░░█
+  █░■░■░█
+  █░░░░░█
+   ██●██
+  ███████
+ ██ ███ ██
+   █   █
+  ██   ██
 ```
 
 Software Maintainer Agent is a focused command-line workflow for changing an
