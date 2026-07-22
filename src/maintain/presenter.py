@@ -19,7 +19,7 @@ from rich.theme import Theme
 
 THEME = Theme({
     "brand": "bold #F8FAFC",
-    "accent": "bold #38BDF8",
+    "accent": "bold #4BF77D",
     "muted": "#94A3B8",
     "success": "bold #34D399",
     "warning": "bold #FBBF24",
@@ -36,7 +36,7 @@ ROBOT = (
     "  GDDDDDG  ",
     "  GDWDWDG  ",
     "  GDDDDDG  ",
-    "   GGRGG   ",
+    "   GGGGG   ",
     "  GGGGGGG  ",
     " GG GGG GG ",
     "   G   G   ",
@@ -44,10 +44,9 @@ ROBOT = (
 )
 
 ROBOT_PALETTE = {
-    "G": "bold #4BF77D",
+    "G": "#4BF77D",
     "D": "#123B25",
-    "W": "bold #EAFFF0",
-    "R": "bold #FF654F",
+    "W": "#EAFFF0",
 }
 
 
@@ -74,7 +73,7 @@ class Presenter:
 
     def brand(self, project: str = "", provider: str = "") -> None:
         self.console.print()
-        if self.width < 76:
+        if self.width < 62:
             title = Text("◆  ", style="accent")
             title.append("{ MAINTAIN }", style="brand")
             self.console.print(title)
@@ -84,7 +83,7 @@ class Presenter:
             self.console.print(Rule(style="line"))
             return
         grid = Table.grid(padding=(0, 2))
-        grid.add_column(width=22)
+        grid.add_column(width=13)
         grid.add_column(ratio=1)
         details = Text()
         details.append("SOFTWARE MAINTENANCE AGENT\n", style="muted")
@@ -99,11 +98,21 @@ class Presenter:
     @staticmethod
     def _robot() -> Text:
         art = Text()
-        for row_index, row in enumerate(ROBOT):
-            for pixel in row:
-                art.append("██" if pixel != " " else "  ",
-                           style=ROBOT_PALETTE.get(pixel, ""))
-            if row_index < len(ROBOT) - 1:
+        rows = list(ROBOT)
+        if len(rows) % 2:
+            rows.append(" " * len(rows[0]))
+        for row_index in range(0, len(rows), 2):
+            for top, bottom in zip(rows[row_index], rows[row_index + 1], strict=True):
+                if top == bottom == " ":
+                    art.append(" ")
+                elif bottom == " ":
+                    art.append("▀", style=ROBOT_PALETTE[top])
+                elif top == " ":
+                    art.append("▄", style=ROBOT_PALETTE[bottom])
+                else:
+                    art.append("▀", style=(
+                        f"{ROBOT_PALETTE[top]} on {ROBOT_PALETTE[bottom]}"))
+            if row_index < len(rows) - 2:
                 art.append("\n")
         return art
 
@@ -308,7 +317,7 @@ class Presenter:
 
     @staticmethod
     def _key(value: str, quiet: bool = False) -> Text:
-        return Text(f" {value.upper()} ", style="muted" if quiet else "bold #082F49 on #38BDF8")
+        return Text(f" {value.upper()} ", style="muted" if quiet else "bold #052E16 on #4BF77D")
 
     def menu_line(self, key: str, title: str, description: str, quiet: bool = False) -> None:
         line = Text("  ")
