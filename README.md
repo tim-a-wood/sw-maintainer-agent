@@ -242,6 +242,8 @@ After attaching a package, Maintain confirms that all three files are visible an
 that upload activity has stopped. It requires that state to remain stable, checks
 that Send is enabled, clicks Send, and confirms the outgoing request. This avoids
 submitting a request while Copilot is still attaching files.
+The permanent Microsoft 365 notice about copying device uploads to OneDrive is
+informational and does not block submission.
 
 Maintain recognizes a completed JSON response by its run, task, and role fields,
 not only by Microsoft-specific page markup. This lets a visible valid response

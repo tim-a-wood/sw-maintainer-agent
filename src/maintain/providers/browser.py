@@ -763,7 +763,9 @@ PAGE_OBJECTS = {
             '[data-author="user"]'
         ),
         "upload_pending_selector": (
-            '[data-testid*="upload-progress"], [aria-label*="Uploading" i]'
+            '[data-testid*="upload-progress" i], '
+            '[data-testid*="attachment" i][aria-busy="true"], '
+            '[data-testid*="file" i][aria-busy="true"]'
         ),
         "attachment_ready_selector": (
             '[data-testid*="attachment" i], [data-testid*="file-chip" i], '
