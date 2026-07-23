@@ -17,12 +17,13 @@ from .engine import WorkflowEngine
 from .errors import ConfigurationError, DeliveryError, MaintainError
 from .presenter import Presenter
 from .presenter import QuietPresenter
+from .repository_memory import remember_repository, repository_for_cli
 
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="maintain", description="Complete verified maintenance work.")
     root.add_argument("--version", action="version", version=f"Maintain {__version__}")
-    root.add_argument("--repo", default=".", help="Target repository or path inside it")
+    root.add_argument("--repo", help="Target repository or path inside it")
     root.add_argument("--config", help="Configuration file")
     root.add_argument("--no-animation", action="store_true")
     root.add_argument("--no-color", action="store_true")
@@ -87,13 +88,20 @@ def _config(args: argparse.Namespace) -> ProjectConfig:
     path = Path(args.config).expanduser() if args.config else find_config(Path(args.repo))
     if path is None:
         raise ConfigurationError(f"No {CONFIG_NAME} was found. Run maintain init.")
-    return ProjectConfig.load(path)
+    config = ProjectConfig.load(path)
+    remember_repository(config.repository)
+    return config
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     presenter = None
     try:
+        if args.command != "init":
+            if args.repo is None and args.config:
+                args.repo = str(Path(args.config).expanduser().resolve().parent)
+            args.repo = str(repository_for_cli(
+                args.repo, interactive=sys.stdin.isatty() and not args.json_output))
         if args.command is None:
             return _home(args)
         if args.command == "init":
@@ -125,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({"created": str(path), "provider": args.provider}, sort_keys=True))
             else:
                 print(f"Created {path}")
+            remember_repository(repository)
             return 0
         if args.command == "config" and args.action in {"upgrade", "migrate"}:
             from .migration import migrate_v1

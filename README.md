@@ -50,6 +50,32 @@ browser profile.
 
 ## Install
 
+### Windows
+
+Download and extract this repository, then double-click:
+
+```text
+install-or-update-windows.cmd
+```
+
+The script installs or updates the latest CLI in a private per-user environment,
+installs Chromium, adds `maintain` to the user PATH, and creates desktop and Start
+Menu shortcuts with the Maintain robot icon. It also asks Windows to pin the
+shortcut to the taskbar. Some company policies block automatic taskbar pinning;
+if that happens, the installer gives the single manual step required.
+
+Run the same script whenever you want to update. To remove the CLI and its
+shortcuts, double-click:
+
+```text
+uninstall-windows.cmd
+```
+
+Uninstall keeps run history, settings, and browser sign-in data under
+`%USERPROFILE%\.maintain`.
+
+### Manual installation
+
 Clone this repository and create a dedicated virtual environment:
 
 ```sh
@@ -70,7 +96,7 @@ without the browser extra:
 python -m pip install -e .
 ```
 
-On Windows, activate the environment with:
+For a manual Windows installation, activate the environment with:
 
 ```powershell
 .venv\Scripts\Activate.ps1
@@ -84,6 +110,10 @@ maintains. The simplest setup is interactive:
 ```sh
 maintain --repo /path/to/project
 ```
+
+You only need `--repo` when choosing or changing projects. After a successful
+use, `maintain` opens the last repository automatically. On the first launch,
+Windows shows a folder picker and asks for the Git repository root.
 
 Choose `S`, select Microsoft 365 Copilot, ChatGPT, or Codex, and follow the
 on-screen sign-in step. Browser setup retrieves the models available to the
