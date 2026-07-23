@@ -837,7 +837,7 @@ class BrowserProvider(Provider):
     @staticmethod
     def _attachment_readiness_script() -> str:
         return """
-            ([completeSelector, readySelector, pendingSelector, names, expected]) => {
+            ([pendingSelector, names, expected]) => {
               const visible = node => {
                 const style = getComputedStyle(node);
                 const rect = node.getBoundingClientRect();
@@ -846,21 +846,18 @@ class BrowserProvider(Provider):
               };
               const visibleNodes = selector => selector
                 ? [...document.querySelectorAll(selector)].filter(visible) : [];
-              const complete = visibleNodes(completeSelector).length > 0;
-              const ready = visibleNodes(readySelector).length >= expected;
-              const text = document.body.innerText || '';
-              const named = names.every(name => text.includes(name));
+              const text = (document.body.innerText || '').toLocaleLowerCase();
+              const named = names.length === expected &&
+                names.every(name => text.includes(String(name).toLocaleLowerCase()));
               const pending = visibleNodes(pendingSelector).length > 0;
-              return named && (complete || ready) && !pending;
+              return named && !pending;
             }
         """
 
     def _attachments_ready(self, page, names: list[str], selectors: dict[str, Any]) -> bool:
         return bool(page.evaluate(
             self._attachment_readiness_script(),
-            [selectors.get("upload_complete_selector"),
-             selectors.get("attachment_ready_selector"),
-             selectors.get("upload_pending_selector"), names, len(names)],
+            [selectors.get("upload_pending_selector"), names, len(names)],
         ))
 
     def _wait_for_attachments(self, page, file_input, paths: tuple[Path, ...] | list[Path],
@@ -873,10 +870,8 @@ class BrowserProvider(Provider):
             "([field, count]) => field.files && field.files.length === count",
             arg=[input_handle, len(names)], timeout=timeout)
 
-        complete_selector = selectors.get("upload_complete_selector")
-        ready_selector = selectors.get("attachment_ready_selector")
         pending_selector = selectors.get("upload_pending_selector")
-        args = [complete_selector, ready_selector, pending_selector, names, len(names)]
+        args = [pending_selector, names, len(names)]
         page.wait_for_function(self._attachment_readiness_script(), arg=args, timeout=timeout)
         page.wait_for_timeout(int(self.config.get(
             "upload_settle_ms", 2_000 if self.name == "m365_copilot_browser" else 500)))
@@ -961,13 +956,27 @@ class BrowserProvider(Provider):
                 if (option.is_visible()
                         and _model_label(option.inner_text()).casefold() == model.casefold()):
                     option.click(timeout=timeout)
-                    page.wait_for_timeout(300)
-                    picker_labels = self._visible_labels(page, picker_selector)
-                    if any(_model_matches(model, label) for label in picker_labels):
-                        self._mark_state("model_confirmed", model)
-                        return
+                    confirm_deadline = time.monotonic() + min(timeout, 15_000) / 1_000
+                    observed = ""
+                    while time.monotonic() < confirm_deadline:
+                        try:
+                            picker = self._primary_model_picker(page, picker_selector)
+                            labels = self._model_control_labels(picker)
+                            observed = next(
+                                (label for label in labels if label), observed)
+                            if any(_model_matches(model, label) for label in labels):
+                                self._mark_state("model_confirmed", model)
+                                return
+                        except ProviderError as exc:
+                            if "More than one" in str(exc):
+                                raise
+                        except Exception:
+                            # The control can be replaced while the UI applies a model.
+                            pass
+                        page.wait_for_timeout(250)
                     raise ProviderError(
-                        f"The model control did not confirm {model!r}. No request was sent.")
+                        f"The model control did not confirm {model!r}; it still showed "
+                        f"{observed or 'an unknown value'!r}. No request was sent.")
             queued.extend(path + (label,)
                           for label in self._visible_labels(page, submenu_selector))
         self._close_model_menu(page, 4)
@@ -979,14 +988,8 @@ class BrowserProvider(Provider):
         for attempt in range(2):
             try:
                 self._close_model_menu(page, 4)
-                pickers = [node for node in page.locator(picker_selector).all()
-                           if node.is_visible()]
-                if len(pickers) != 1:
-                    if not pickers:
-                        raise ProviderError("The model control was not found.")
-                    raise ProviderError(
-                        "More than one model control was found. No browser action was taken.")
-                pickers[0].click(timeout=timeout)
+                picker = self._primary_model_picker(page, picker_selector)
+                picker.click(timeout=timeout)
                 self._wait_for_visible_options(page, option_selector, timeout)
                 for label in path:
                     target = self._visible_option(page, submenu_selector, label)
@@ -1028,6 +1031,45 @@ class BrowserProvider(Provider):
             if not option.is_visible():
                 continue
             label = _model_label(option.inner_text())
+            if label and label.casefold() not in {item.casefold() for item in found}:
+                found.append(label)
+        return found
+
+    @staticmethod
+    def _primary_model_picker(page, selector: str):
+        """Return the one top-level model control, never a model menu option."""
+        candidates = []
+        for node in page.locator(selector).all():
+            if not node.is_visible():
+                continue
+            is_primary = bool(node.evaluate(
+                """candidate => {
+                  const role = (candidate.getAttribute('role') || '').toLocaleLowerCase();
+                  const testId = (candidate.getAttribute('data-testid') || '')
+                    .toLocaleLowerCase();
+                  if (['menuitem', 'menuitemradio', 'option'].includes(role) ||
+                      testId.includes('model-option')) return false;
+                  return !candidate.closest('[role="menu"], [role="listbox"]');
+                }"""
+            ))
+            if is_primary:
+                candidates.append(node)
+        if not candidates:
+            raise ProviderError("The model control was not found.")
+        if len(candidates) > 1:
+            raise ProviderError(
+                "More than one model control was found. No browser action was taken.")
+        return candidates[0]
+
+    @staticmethod
+    def _model_control_labels(control) -> list[str]:
+        visible_label = _model_label(str(control.inner_text() or ""))
+        if visible_label:
+            return [visible_label]
+        values = [control.get_attribute("aria-label"), control.get_attribute("title")]
+        found: list[str] = []
+        for value in values:
+            label = _model_label(str(value or ""))
             if label and label.casefold() not in {item.casefold() for item in found}:
                 found.append(label)
         return found
@@ -1110,11 +1152,18 @@ class BrowserProvider(Provider):
             selectors = {**PAGE_OBJECTS.get(self.name, {}),
                          **self.config.get("selectors", {})}
             picker_selector = selectors.get("model_picker_selector")
-            diagnostic["observed_model_labels"] = (
-                self._visible_labels(page, picker_selector) if picker_selector else [])
+            if picker_selector:
+                try:
+                    diagnostic["observed_model_labels"] = self._model_control_labels(
+                        self._primary_model_picker(page, picker_selector))
+                except ProviderError:
+                    diagnostic["observed_model_labels"] = self._visible_labels(
+                        page, picker_selector)
+            else:
+                diagnostic["observed_model_labels"] = []
             diagnostic["observed_attachments"] = page.locator("body").evaluate(
-                "(body, names) => names.filter(name => "
-                "(body.innerText || '').includes(name))",
+                "(body, names) => { const text = (body.innerText || '').toLocaleLowerCase(); "
+                "return names.filter(name => text.includes(String(name).toLocaleLowerCase())); }",
                 self._expected_attachments,
             )
             diagnostic["controls"] = page.locator(
@@ -1152,10 +1201,18 @@ class BrowserProvider(Provider):
 
 def _extract_json(text: str) -> str:
     stripped = text.strip()
-    if "```" in stripped:
-        parts = stripped.split("```")
-        for candidate in parts[1::2]:
-            candidate = candidate.removeprefix("json").strip()
+    fences = [match.start() for match in re.finditer(r"```", stripped)]
+    for index, opening in enumerate(fences[:-1]):
+        content_start = opening + 3
+        leading = len(stripped[content_start:]) - len(
+            stripped[content_start:].lstrip())
+        content_start += leading
+        if stripped[content_start:content_start + 4].casefold() == "json":
+            content_start += 4
+        for closing in reversed(fences[index + 1:]):
+            if closing <= content_start:
+                continue
+            candidate = stripped[content_start:closing].strip()
             try:
                 json.loads(candidate)
                 return candidate

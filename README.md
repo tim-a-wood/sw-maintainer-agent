@@ -247,8 +247,10 @@ complete changed files at those paths. Maintain validates and applies the ZIP in
 the isolated worktree before review and local verification.
 
 After attaching a package, Maintain confirms that all three files are visible and
-that upload activity has stopped. It requires that state to remain stable, checks
-that Send is enabled, clicks Send, and confirms the outgoing request. This avoids
+that upload activity has stopped. Filename matching is case-insensitive and does
+not depend on Copilot's current attachment-chip markup. Maintain also confirms the
+exact browser file count, requires the visible state to remain stable, checks that
+Send is enabled, clicks Send, and confirms the outgoing request. This avoids
 submitting a request while Copilot is still attaching files.
 The permanent Microsoft 365 notice about copying device uploads to OneDrive is
 informational and does not block submission.
@@ -265,6 +267,9 @@ when the complete prompt is still present and there is clear evidence that
 nothing was submitted. Ambiguous controls stop without a click. Failure evidence
 contains a screenshot, state trail, and sanitized control inventory; it does not
 record cookies, tokens, message-field values, or general page text.
+After every model click, Maintain waits for the main model selector itself to show
+the preferred model. A matching item that remains visible in the open menu does
+not count, and an unchanged selector stops the exchange before files are sent.
 Redirects to unapproved hosts stop before page recognition. If generation is
 interrupted, Maintain uses one visible **Continue generating** control. If the
 response still does not finish, it stops instead of sending a repair request
