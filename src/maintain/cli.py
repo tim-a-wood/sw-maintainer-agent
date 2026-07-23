@@ -70,7 +70,8 @@ def parser() -> argparse.ArgumentParser:
     config_cmd.add_argument("--provider", choices=["codex", "file-exchange", "chatgpt-browser",
                                                     "m365-browser"], default="codex")
     provider = commands.add_parser("provider", help="Inspect provider readiness")
-    provider.add_argument("action", choices=["list", "doctor", "login", "models", "model"],
+    provider.add_argument("action",
+                          choices=["list", "doctor", "login", "check", "models", "model"],
                           nargs="?", default="list")
     provider.add_argument("profile", nargs="?")
     provider.add_argument("value", nargs="?", help="Model name for the model action")
@@ -269,15 +270,33 @@ def main(argv: list[str] | None = None) -> int:
                         raise ConfigurationError(f"Provider profile does not exist: {name}")
                     provider = engine.provider_builder(name, config.providers[name],
                                                        config.runtime_root.parent / "browser")
-                    if args.action == "login" and not provider.capabilities.browser_automation:
-                        raise ConfigurationError("Login is available only for browser providers.")
+                    if args.action in {"login", "check"} and not (
+                            provider.capabilities.browser_automation):
+                        raise ConfigurationError(
+                            f"{args.action.title()} is available only for browser providers.")
                     if args.action == "login":
                         provider.login()
-                    provider.preflight()
-                    readiness.append({"profile": name, "ready": True})
+                    if args.action == "check":
+                        if not hasattr(provider, "compatibility_check"):
+                            raise ConfigurationError(
+                                "This browser provider cannot run a compatibility check.")
+                        result = provider.compatibility_check()
+                    else:
+                        provider.preflight()
+                        result = {"ready": True}
+                    readiness.append({"profile": name, **result})
                     if not args.json_output:
-                        presenter.outcome("Ready", f"The {name} provider is ready.",
-                                          tone="success")
+                        facts = []
+                        if result.get("layout"):
+                            facts.append(("Layout", str(result["layout"])))
+                        if result.get("model"):
+                            facts.append(("Model", str(result["model"])))
+                        presenter.outcome(
+                            "Compatible" if args.action == "check" else "Ready",
+                            (f"The {name} browser is compatible."
+                             if args.action == "check"
+                             else f"The {name} provider is ready."),
+                            facts=facts, tone="success")
                 if args.json_output:
                     print(json.dumps(readiness, sort_keys=True))
         elif args.command == "workspace":
@@ -853,12 +872,13 @@ def _interactive_assistant_settings(args: argparse.Namespace, config: ProjectCon
     presenter.console.print()
     presenter.menu_line("1", "Change model", "Use the saved model list")
     presenter.menu_line("2", "Refresh and change", "Retrieve models from the browser")
+    presenter.menu_line("3", "Check compatibility", "Inspect the browser without sending")
     presenter.menu_line("b", "Back", "", quiet=True)
     choice = presenter.ask("Choose", "1").casefold()
     if choice == "b":
         return
-    if choice not in {"1", "2"}:
-        presenter.error("Choose 1, 2, or B.")
+    if choice not in {"1", "2", "3"}:
+        presenter.error("Choose 1, 2, 3, or B.")
         _pause(presenter)
         return
     command = ["--repo", str(config.repository)]
@@ -866,9 +886,12 @@ def _interactive_assistant_settings(args: argparse.Namespace, config: ProjectCon
         command.append("--no-animation")
     if args.no_color:
         command.append("--no-color")
-    command.extend(["provider", "model", profile])
-    if choice == "2":
-        command.append("--refresh")
+    if choice == "3":
+        command.extend(["provider", "check", profile])
+    else:
+        command.extend(["provider", "model", profile])
+        if choice == "2":
+            command.append("--refresh")
     main(command)
     _pause(presenter)
 

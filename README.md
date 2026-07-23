@@ -189,9 +189,13 @@ Then verify the selected profile:
 
 ```sh
 maintain --repo /path/to/project provider doctor chatgpt
+maintain --repo /path/to/project provider check chatgpt
 ```
 
 Use the profile name shown by `maintain provider list` if you renamed it.
+The compatibility check finds the message, attachment, Send, and model controls
+without attaching files or sending a message. It reports the detected layout and
+stops safely if the page is unfamiliar.
 
 To view, refresh, or change the models for a browser profile:
 
@@ -249,6 +253,14 @@ Maintain recognizes a completed JSON response by its run, task, and role fields,
 not only by Microsoft-specific page markup. This lets a visible valid response
 complete the exchange even when the Copilot message element changes. Browser
 failure evidence identifies the stage that stopped.
+
+Browser controls are matched by purpose and proximity to the message field. The
+tool confirms the selected model, every attachment filename, the complete prompt,
+submission, response start, and response completion. It retries Send once only
+when the complete prompt is still present and there is clear evidence that
+nothing was submitted. Ambiguous controls stop without a click. Failure evidence
+contains a screenshot, state trail, and sanitized control inventory; it does not
+record cookies, tokens, message-field values, or general page text.
 
 ```sh
 maintain --repo /path/to/project diff RUN_ID

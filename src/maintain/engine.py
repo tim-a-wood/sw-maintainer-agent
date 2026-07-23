@@ -899,6 +899,8 @@ class WorkflowEngine:
                 "chatgpt_browser", "m365_copilot_browser"} and not capabilities.browser_automation:
             raise ProviderError(f"Provider {profile_name} does not declare browser automation.")
         provider.preflight()
+        if hasattr(provider, "set_status_callback"):
+            provider.set_status_callback(self.presenter.complete)
         before_provider = {path.resolve() for path in store.artifacts.rglob("*") if path.is_file()}
         try:
             provider_kind = str(self.config.providers[profile_name].get("type", ""))

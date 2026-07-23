@@ -149,6 +149,7 @@ class ProjectConfig:
                                       "selectors", "timeout_ms", "max_chunk_chars", "retention",
                                       "upload_settle_ms", "send_settle_ms",
                                       "submission_confirm_timeout_ms", "response_start_timeout_ms",
+                                      "response_settle_ms",
                                       "model", "available_models"},
             "chatgpt_browser": {"url", "browser", "profile_dir", "visible",
                                 "expected_workspace", "expected_identity", "allowed_hosts",
@@ -156,6 +157,7 @@ class ProjectConfig:
                                 "selectors", "timeout_ms", "max_chunk_chars", "retention",
                                 "upload_settle_ms", "send_settle_ms",
                                 "submission_confirm_timeout_ms", "response_start_timeout_ms",
+                                "response_settle_ms",
                                 "account_capabilities", "model", "available_models"},
         }
         for profile_name, raw_profile in profiles.items():
@@ -200,7 +202,7 @@ class ProjectConfig:
                         f"Browser provider profile {profile_name}.selectors must use strings or null.")
                 for key in ("timeout_ms", "max_chunk_chars", "upload_settle_ms",
                             "send_settle_ms", "submission_confirm_timeout_ms",
-                            "response_start_timeout_ms"):
+                            "response_start_timeout_ms", "response_settle_ms"):
                     if key in profile and int(profile[key]) < 1:
                         raise ConfigurationError(
                             f"Browser provider profile {profile_name}.{key} must be positive.")
