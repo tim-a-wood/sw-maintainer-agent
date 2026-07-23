@@ -197,6 +197,9 @@ The compatibility check finds the message, attachment, Send, and model controls
 without attaching files or sending a message. It reports the detected layout and
 stops safely if the page is unfamiliar. Initial model setup and each model
 refresh run the same compatibility inspection automatically.
+On ChatGPT, it distinguishes the general attachment input from photo-only inputs.
+It briefly enters and clears an unsent draft when ChatGPT hides Send until text
+is present.
 
 To view, refresh, or change the models for a browser profile:
 

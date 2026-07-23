@@ -191,20 +191,38 @@ class BrowserProvider(Provider):
         prompt_handle = prompt.element_handle(
             timeout=int(self.config.get("timeout_ms", 300_000)))
         ranked = sorted(
-            ((self._control_distance(node, prompt_handle), node) for node in candidates),
-            key=lambda item: item[0],
+            ((self._control_purpose_penalty(node, purpose),
+              self._control_distance(node, prompt_handle), node)
+             for node in candidates),
+            key=lambda item: item[:2],
         )
-        if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+        if len(ranked) > 1 and ranked[0][:2] == ranked[1][:2]:
             raise ProviderError(
                 f"More than one possible {purpose} control was found. "
                 "No browser action was taken.")
-        return ranked[0][1]
+        return ranked[0][2]
+
+    @staticmethod
+    def _control_purpose_penalty(control, purpose: str) -> int:
+        """Prefer a general file input over purpose-specific media inputs."""
+        if purpose != "attachment":
+            return 0
+        accept = str(control.get_attribute("accept") or "").casefold()
+        label = " ".join(filter(None, [
+            control.get_attribute("aria-label"),
+            control.get_attribute("data-testid"),
+            control.get_attribute("name"),
+        ])).casefold()
+        media_only = bool(accept) and all(
+            item.strip().startswith(("image/", "video/", "audio/"))
+            for item in accept.split(",") if item.strip())
+        return 10 if media_only or any(
+            word in label for word in ("photo", "image", "camera", "video", "audio")
+        ) else 0
 
     def _recognize_page(self, page, selectors: dict[str, Any]) -> tuple[BrowserLayout, Any]:
         """Recognise a supported layout before performing any consequential action."""
         prompt = self._resolve_prompt(page, selectors)
-        self._resolve_control(
-            page, selectors.get("send_button_selector"), prompt, "send")
         if selectors.get("attachment_selector"):
             self._resolve_control(
                 page, selectors.get("attachment_selector"), prompt, "attachment",
@@ -220,6 +238,27 @@ class BrowserProvider(Provider):
         self._layout_name = layout.name
         self._mark_state("page_ready", f"Recognised {layout.name}")
         return layout, prompt
+
+    def _check_send_control(self, page, prompt, selectors: dict[str, Any]) -> bool:
+        """Expose a dynamic Send button with an unsent draft, then clear it."""
+        draft = "Maintain compatibility check. This text will not be sent."
+        if self._prompt_value(prompt).strip():
+            raise ProviderError(
+                "The message field contains a draft. Clear it before compatibility checking.")
+        try:
+            prompt.fill(draft)
+            if self._prompt_value(prompt) != draft:
+                raise ProviderError(
+                    "The compatibility draft did not appear in the message field.")
+            page.wait_for_timeout(250)
+            send = self._resolve_control(
+                page, selectors.get("send_button_selector"), prompt, "send")
+            if not self._control_enabled(send):
+                raise ProviderError(
+                    "The Send control remained disabled with a complete draft.")
+            return True
+        finally:
+            prompt.fill("")
 
     def _new_chat(self, page, name: str) -> None:
         names = re.compile(
@@ -265,23 +304,24 @@ class BrowserProvider(Provider):
                     raise ProviderError(
                         f"The preferred model {selected_model!r} is no longer available. "
                         "Refresh the model list.")
-                self._mark_state("compatibility_confirmed", "Required controls are available")
+                controls = {
+                    "message": True,
+                    "attachment": bool(self._resolve_control(
+                        page, selectors.get("attachment_selector"), prompt, "attachment",
+                        allow_hidden=True)),
+                    "send": self._check_send_control(page, prompt, selectors),
+                }
+                self._mark_state(
+                    "compatibility_confirmed", "Required controls are available")
                 result = {
                     "ready": True,
                     "provider": self.name,
                     "layout": layout.name,
-                    "model": selected_model if model_available else None,
+                    "model": (selected_model or None) if model_available else None,
                     "configured_model": selected_model or None,
                     "model_available": model_available,
                     "models": models,
-                    "controls": {
-                        "message": True,
-                        "attachment": bool(self._resolve_control(
-                            page, selectors.get("attachment_selector"), prompt, "attachment",
-                            allow_hidden=True)),
-                        "send": bool(self._resolve_control(
-                            page, selectors.get("send_button_selector"), prompt, "send")),
-                    },
+                    "controls": controls,
                     "states": self._journey,
                 }
                 evidence.write_text(json.dumps(result, indent=2), encoding="utf-8")
