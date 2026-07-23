@@ -143,6 +143,7 @@ class BrowserProvider(Provider):
                 sign_in_selector = selectors.get("sign_in_selector")
                 if sign_in_selector and page.locator(sign_in_selector).is_visible():
                     raise ProviderError("Interactive sign-in or MFA is required in the visible browser.")
+                self._enable_preferred_design(page, selectors)
                 return self._model_options(page, selectors)
             except ProviderError:
                 raise
@@ -170,6 +171,7 @@ class BrowserProvider(Provider):
                 sign_in_selector = selectors.get("sign_in_selector")
                 if sign_in_selector and page.locator(sign_in_selector).is_visible():
                     raise ProviderError("Interactive sign-in or MFA is required in the visible browser.")
+                self._enable_preferred_design(page, selectors)
                 identity_selector = selectors.get("identity_selector")
                 expected_context = _configured_value(
                     self.config.get("expected_tenant") or self.config.get("expected_workspace"))
@@ -213,14 +215,7 @@ class BrowserProvider(Provider):
                     page.locator(attachment_selector).set_input_files(
                         [str(path) for path in package.paths]
                     )
-                    upload_complete = selectors.get("upload_complete_selector")
-                    if upload_complete:
-                        page.locator(upload_complete).wait_for(
-                            state="visible", timeout=int(self.config.get("timeout_ms", 300_000)))
-                    upload_pending = selectors.get("upload_pending_selector")
-                    if upload_pending:
-                        page.locator(upload_pending).last.wait_for(
-                            state="hidden", timeout=int(self.config.get("timeout_ms", 300_000)))
+                    self._wait_for_attachments(page, attachment_selector, package.paths, selectors)
                     digest = package.sha256
                     package_bytes = package.bytes
                     attachment_names = [path.name for path in package.paths]
@@ -259,7 +254,10 @@ class BrowserProvider(Provider):
                     "if (nodes.length > count) return true; if (!nodes.length) return false; "
                     "return (nodes[nodes.length - 1].textContent || '') !== previous; }",
                     arg=[response_selector, previous_count, previous_response],
-                    timeout=int(self.config.get("timeout_ms", 300_000)))
+                    timeout=int(self.config.get(
+                        "response_start_timeout_ms",
+                        min(int(self.config.get("timeout_ms", 300_000)), 90_000),
+                    )))
                 response = page.locator(response_selector).last
                 response.wait_for(state="visible", timeout=int(self.config.get("timeout_ms", 300_000)))
                 generation_selector = selectors.get("generation_active_selector")
@@ -342,12 +340,20 @@ class BrowserProvider(Provider):
     def _submit(self, page, prompt, message: str, selectors: dict[str, Any]) -> None:
         """Submit only after the web UI says its Send control is ready."""
         timeout = int(self.config.get("timeout_ms", 300_000))
+        user_message_selector = selectors.get("user_message_selector")
+        previous_user_messages = (page.locator(user_message_selector).count()
+                                  if user_message_selector else 0)
         prompt.fill(message)
         send_selector = selectors.get("send_button_selector")
         if send_selector:
             send = page.locator(send_selector).last
             send.wait_for(state="visible", timeout=timeout)
             handle = send.element_handle(timeout=timeout)
+            page.wait_for_function(
+                "button => !button.disabled && button.getAttribute('aria-disabled') !== 'true'",
+                arg=handle, timeout=timeout)
+            page.wait_for_timeout(int(self.config.get(
+                "send_settle_ms", 750 if self.name == "m365_copilot_browser" else 250)))
             page.wait_for_function(
                 "button => !button.disabled && button.getAttribute('aria-disabled') !== 'true'",
                 arg=handle, timeout=timeout)
@@ -359,6 +365,69 @@ class BrowserProvider(Provider):
             "field => { const value = 'value' in field ? field.value : field.textContent; "
             "return !(value || '').trim(); }",
             arg=handle, timeout=timeout)
+        if user_message_selector:
+            page.wait_for_function(
+                "([selector, count]) => document.querySelectorAll(selector).length > count",
+                arg=[user_message_selector, previous_user_messages],
+                timeout=int(self.config.get("submission_confirm_timeout_ms", 30_000)))
+
+    def _wait_for_attachments(self, page, input_selector: str, paths: tuple[Path, ...] | list[Path],
+                              selectors: dict[str, Any]) -> None:
+        """Wait until every selected file is attached and the UI is stably ready."""
+        timeout = int(self.config.get("timeout_ms", 300_000))
+        names = [path.name for path in paths]
+        file_input = page.locator(input_selector).last
+        input_handle = file_input.element_handle(timeout=timeout)
+        page.wait_for_function(
+            "([field, count]) => field.files && field.files.length === count",
+            arg=[input_handle, len(names)], timeout=timeout)
+
+        complete_selector = selectors.get("upload_complete_selector")
+        ready_selector = selectors.get("attachment_ready_selector")
+        pending_selector = selectors.get("upload_pending_selector")
+        readiness = """
+            ([completeSelector, readySelector, pendingSelector, names, expected]) => {
+              const visible = node => {
+                const style = getComputedStyle(node);
+                const rect = node.getBoundingClientRect();
+                return style.visibility !== 'hidden' && style.display !== 'none' &&
+                       rect.width > 0 && rect.height > 0;
+              };
+              const visibleNodes = selector => selector
+                ? [...document.querySelectorAll(selector)].filter(visible) : [];
+              const complete = visibleNodes(completeSelector).length > 0;
+              const ready = visibleNodes(readySelector).length >= expected;
+              const text = document.body.innerText || '';
+              const named = names.every(name => text.includes(name));
+              const pending = visibleNodes(pendingSelector).length > 0;
+              return (complete || ready || named) && !pending;
+            }
+        """
+        args = [complete_selector, ready_selector, pending_selector, names, len(names)]
+        page.wait_for_function(readiness, arg=args, timeout=timeout)
+        page.wait_for_timeout(int(self.config.get(
+            "upload_settle_ms", 2_000 if self.name == "m365_copilot_browser" else 500)))
+        page.wait_for_function(readiness, arg=args, timeout=timeout)
+
+    def _enable_preferred_design(self, page, selectors: dict[str, Any]) -> None:
+        """Enable the current Copilot design when its opt-in toggle is present."""
+        toggle_selector = selectors.get("new_design_toggle_selector")
+        if not toggle_selector:
+            return
+        toggles = page.locator(toggle_selector)
+        for toggle in toggles.all():
+            if not toggle.is_visible():
+                continue
+            state = str(toggle.get_attribute("aria-checked") or
+                        toggle.get_attribute("aria-pressed") or "").casefold()
+            label = " ".join(filter(None, [toggle.get_attribute("aria-label"),
+                                             toggle.inner_text()])).casefold()
+            if state == "true" or any(text in label for text in (
+                    "turn off", "switch to old", "use old", "classic design")):
+                return
+            toggle.click(timeout=int(self.config.get("timeout_ms", 300_000)))
+            page.wait_for_timeout(1_000)
+            return
 
     def _model_options(self, page, selectors: dict[str, Any]) -> list[str]:
         picker_selector = selectors.get("model_picker_selector")
@@ -367,15 +436,24 @@ class BrowserProvider(Provider):
             raise ProviderError("Model discovery selectors are not configured for this browser provider.")
         timeout = int(self.config.get("timeout_ms", 300_000))
         page.locator(picker_selector).last.click(timeout=timeout)
-        options = page.locator(option_selector)
-        options.first.wait_for(state="visible", timeout=timeout)
-        found: list[str] = []
-        for option in options.all():
-            if not option.is_visible():
+        self._wait_for_visible_options(page, option_selector, timeout)
+        submenu_selector = selectors.get("model_submenu_selector")
+        submenu_labels = self._visible_labels(page, submenu_selector)
+        found = [label for label in self._visible_labels(page, option_selector)
+                 if label.casefold() not in {item.casefold() for item in submenu_labels}]
+        for submenu_label in submenu_labels:
+            submenu = page.locator(submenu_selector).filter(has_text=submenu_label).last
+            if not submenu.is_visible():
                 continue
-            label = _model_label(option.inner_text())
-            if label and label.casefold() not in {item.casefold() for item in found}:
-                found.append(label)
+            submenu.click(timeout=timeout)
+            page.wait_for_timeout(300)
+            for label in self._visible_labels(page, option_selector):
+                if (label.casefold() not in {item.casefold() for item in submenu_labels}
+                        and label.casefold() not in {item.casefold() for item in found}):
+                    found.append(label)
+            page.keyboard.press("Escape")
+            page.locator(picker_selector).last.click(timeout=timeout)
+            self._wait_for_visible_options(page, option_selector, timeout)
         page.keyboard.press("Escape")
         if not found:
             raise ProviderError("The model picker opened, but it did not contain any models.")
@@ -389,14 +467,51 @@ class BrowserProvider(Provider):
         timeout = int(self.config.get("timeout_ms", 300_000))
         page.locator(picker_selector).last.click(timeout=timeout)
         options = page.locator(option_selector)
-        options.first.wait_for(state="visible", timeout=timeout)
+        self._wait_for_visible_options(page, option_selector, timeout)
         for option in options.all():
             if option.is_visible() and _model_label(option.inner_text()).casefold() == model.casefold():
                 option.click(timeout=timeout)
                 return
+        submenu_selector = selectors.get("model_submenu_selector")
+        for submenu_label in self._visible_labels(page, submenu_selector):
+            submenu = page.locator(submenu_selector).filter(has_text=submenu_label).last
+            if not submenu.is_visible():
+                continue
+            submenu.click(timeout=timeout)
+            page.wait_for_timeout(300)
+            for option in page.locator(option_selector).all():
+                if (option.is_visible()
+                        and _model_label(option.inner_text()).casefold() == model.casefold()):
+                    option.click(timeout=timeout)
+                    return
+            page.keyboard.press("Escape")
+            page.locator(picker_selector).last.click(timeout=timeout)
+            self._wait_for_visible_options(page, option_selector, timeout)
         page.keyboard.press("Escape")
         raise ProviderError(
             f"The preferred model {model!r} is no longer available. Refresh the model list.")
+
+    @staticmethod
+    def _visible_labels(page, selector: str | None) -> list[str]:
+        if not selector:
+            return []
+        found: list[str] = []
+        for option in page.locator(selector).all():
+            if not option.is_visible():
+                continue
+            label = _model_label(option.inner_text())
+            if label and label.casefold() not in {item.casefold() for item in found}:
+                found.append(label)
+        return found
+
+    @staticmethod
+    def _wait_for_visible_options(page, selector: str, timeout: int) -> None:
+        page.wait_for_function(
+            "selector => [...document.querySelectorAll(selector)].some(node => { "
+            "const style = getComputedStyle(node); const rect = node.getBoundingClientRect(); "
+            "return style.visibility !== 'hidden' && style.display !== 'none' && "
+            "rect.width > 0 && rect.height > 0; })",
+            arg=selector, timeout=timeout)
 
     def _download_output_zip(self, page, selectors: dict[str, Any],
                              request: ProviderRequest, exchange_id: str) -> Path:
@@ -494,8 +609,13 @@ PAGE_OBJECTS = {
         "send_button_selector": (
             'button[data-testid="send-button"], button[aria-label^="Send"]'
         ),
+        "user_message_selector": '[data-message-author-role="user"]',
         "upload_pending_selector": (
             '[data-testid*="upload-progress"], [aria-label*="Uploading"]'
+        ),
+        "attachment_ready_selector": (
+            '[data-testid*="attachment"], [data-testid*="file-thumbnail"], '
+            'button[aria-label*="Remove file" i]'
         ),
         "model_picker_selector": (
             'button.__composer-pill[aria-haspopup="menu"], '
@@ -518,8 +638,21 @@ PAGE_OBJECTS = {
             'button[data-testid*="send" i], button[aria-label^="Send" i], '
             'button[title^="Send" i]'
         ),
+        "user_message_selector": (
+            '[data-testid*="user-message" i], [data-message-author-role="user"], '
+            '[data-author="user"]'
+        ),
         "upload_pending_selector": (
             '[data-testid*="upload-progress"], [aria-label*="Uploading" i]'
+        ),
+        "attachment_ready_selector": (
+            '[data-testid*="attachment" i], [data-testid*="file-chip" i], '
+            'button[aria-label*="Remove attachment" i]'
+        ),
+        "new_design_toggle_selector": (
+            '[role="switch"][aria-label*="new design" i], '
+            'input[type="checkbox"][aria-label*="new design" i], '
+            'button[aria-label*="new design" i], button:text-is("New design")'
         ),
         "model_picker_selector": (
             'button[data-testid*="model" i], button[aria-label*="model" i], '
@@ -527,6 +660,12 @@ PAGE_OBJECTS = {
         ),
         "model_option_selector": (
             '[role="menuitemradio"], [role="option"], [data-testid*="model-option" i]'
+        ),
+        "model_submenu_selector": (
+            '[role="menuitem"]:text-is("More"), [role="option"]:text-is("More"), '
+            'button:text-is("More"), [role="menuitem"]:text-is("GPT models"), '
+            '[role="option"]:text-is("GPT models"), button:text-is("GPT models"), '
+            '[role="menuitem"]:text-is("GPT"), button:text-is("GPT")'
         ),
         "output_download_selector": (
             'a[download][href], a[href*="download"], button[aria-label*="Download"]'

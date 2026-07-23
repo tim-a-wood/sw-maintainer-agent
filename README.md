@@ -175,6 +175,9 @@ maintain --repo /path/to/project provider model chatgpt "MODEL NAME"
 The interactive home screen provides the same controls under `Assistant settings`.
 Maintain saves the preference in `.maintain.json` and selects it at the start of
 every browser conversation. Refresh the list when the account's available models change.
+For Microsoft 365 Copilot, refresh enables the new design when its opt-in toggle
+is present and opens the nested `More` or `GPT models` list. This includes named
+GPT models as well as the default Copilot response modes.
 
 ## Start a workflow
 
@@ -203,9 +206,10 @@ an index and exact repository paths. Implementation returns a ZIP containing
 complete changed files at those paths. Maintain validates and applies the ZIP in
 the isolated worktree before review and local verification.
 
-After attaching a package, Maintain waits for upload activity to finish and for
-the Send control to become enabled. It clicks Send and confirms that the message
-left the prompt before waiting for a response.
+After attaching a package, Maintain confirms that all three files are visible and
+that upload activity has stopped. It requires that state to remain stable, checks
+that Send is enabled, clicks Send, and confirms the outgoing request. This avoids
+submitting a request while Copilot is still attaching files.
 
 ```sh
 maintain --repo /path/to/project diff RUN_ID
