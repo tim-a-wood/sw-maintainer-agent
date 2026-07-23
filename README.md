@@ -195,7 +195,8 @@ maintain --repo /path/to/project provider check chatgpt
 Use the profile name shown by `maintain provider list` if you renamed it.
 The compatibility check finds the message, attachment, Send, and model controls
 without attaching files or sending a message. It reports the detected layout and
-stops safely if the page is unfamiliar.
+stops safely if the page is unfamiliar. Initial model setup and each model
+refresh run the same compatibility inspection automatically.
 
 To view, refresh, or change the models for a browser profile:
 
@@ -261,6 +262,10 @@ when the complete prompt is still present and there is clear evidence that
 nothing was submitted. Ambiguous controls stop without a click. Failure evidence
 contains a screenshot, state trail, and sanitized control inventory; it does not
 record cookies, tokens, message-field values, or general page text.
+Redirects to unapproved hosts stop before page recognition. If generation is
+interrupted, Maintain uses one visible **Continue generating** control. If the
+response still does not finish, it stops instead of sending a repair request
+while the assistant is working.
 
 ```sh
 maintain --repo /path/to/project diff RUN_ID

@@ -44,12 +44,16 @@ class BrowserProvider(Provider):
         self.profile_dir = Path(os.path.expandvars(profile)).expanduser().resolve()
         self._journey: list[dict[str, str]] = []
         self._status_callback: Callable[[str, str], None] | None = None
+        self._expected_attachments: list[str] = []
+        self._layout_name = ""
 
     def set_status_callback(self, callback: Callable[[str, str], None]) -> None:
         self._status_callback = callback
 
     def _start_journey(self) -> None:
         self._journey = []
+        self._expected_attachments = []
+        self._layout_name = ""
         self._mark_state("opening", "Open the configured assistant")
 
     def _mark_state(self, state: str, detail: str = "") -> None:
@@ -78,7 +82,23 @@ class BrowserProvider(Provider):
         for attempt in range(2):
             try:
                 page.goto(str(self.config["url"]), wait_until="domcontentloaded", timeout=timeout)
+                configured = urlparse(str(self.config["url"])).hostname or ""
+                actual = urlparse(page.url).hostname or ""
+                default_hosts = (
+                    {"chatgpt.com"} if self.name == "chatgpt_browser"
+                    else {"m365.cloud.microsoft"})
+                allowed = {
+                    str(host).casefold() for host in
+                    self.config.get("allowed_hosts", default_hosts)
+                }
+                allowed.add(configured.casefold())
+                if not actual or actual.casefold() not in allowed:
+                    raise ProviderError(
+                        f"The assistant redirected to an unapproved host: "
+                        f"{actual or 'unknown'}.")
                 return
+            except ProviderError:
+                raise
             except Exception as exc:
                 last_error = exc
                 if attempt == 0:
@@ -197,6 +217,7 @@ class BrowserProvider(Provider):
                 node.is_visible() for node in page.locator(toggle_selector).all()))
             name = "m365-new" if has_toggle else "m365-classic"
         layout = BrowserLayout(name=name, provider=self.name, composer="message composer")
+        self._layout_name = layout.name
         self._mark_state("page_ready", f"Recognised {layout.name}")
         return layout, prompt
 
@@ -216,7 +237,7 @@ class BrowserProvider(Provider):
                 "More than one New chat control was found. No browser action was taken.")
         candidates[0].click(timeout=30_000)
 
-    def compatibility_check(self) -> dict[str, Any]:
+    def compatibility_check(self, *, require_selected_model: bool = True) -> dict[str, Any]:
         """Inspect the signed-in UI without attaching files or sending a message."""
         try:
             from playwright.sync_api import sync_playwright
@@ -239,7 +260,8 @@ class BrowserProvider(Provider):
                 layout, prompt = self._recognize_page(page, selectors)
                 selected_model = str(self.config.get("model") or "").strip()
                 models = self._model_options(page, selectors)
-                if selected_model and selected_model not in models:
+                model_available = not selected_model or selected_model in models
+                if require_selected_model and not model_available:
                     raise ProviderError(
                         f"The preferred model {selected_model!r} is no longer available. "
                         "Refresh the model list.")
@@ -248,7 +270,9 @@ class BrowserProvider(Provider):
                     "ready": True,
                     "provider": self.name,
                     "layout": layout.name,
-                    "model": selected_model or None,
+                    "model": selected_model if model_available else None,
+                    "configured_model": selected_model or None,
+                    "model_available": model_available,
                     "models": models,
                     "controls": {
                         "message": True,
@@ -357,36 +381,9 @@ class BrowserProvider(Provider):
             raise ProviderError(f"Browser login failed: {exc}") from exc
 
     def available_models(self) -> list[str]:
-        """Read the models offered by the signed-in browser account."""
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as exc:
-            raise ProviderError("Install Maintain with the browser extra and install Chromium.") from exc
-        selectors = {**PAGE_OBJECTS.get(self.name, {}), **self.config.get("selectors", {})}
-        self.evidence_dir.mkdir(parents=True, exist_ok=True)
-        lock_path = self.profile_dir.parent / f".{self.profile_dir.name}.maintain.lock"
-        with FileLock(lock_path, f"browser profile {self.name}"), sync_playwright() as playwright:
-            context = self._launch_context(playwright)
-            page = context.pages[0] if context.pages else context.new_page()
-            try:
-                self._start_journey()
-                self._open_page(page)
-                self._verify_session(page, selectors)
-                self._enable_preferred_design(page, selectors)
-                self._recognize_page(page, selectors)
-                return self._model_options(page, selectors)
-            except ProviderError:
-                raise
-            except Exception as exc:
-                try:
-                    page.screenshot(path=str(
-                        self.evidence_dir / f"{self.name}-model-discovery-failure.png"),
-                        full_page=True)
-                except Exception:
-                    pass
-                raise ProviderError(f"Could not retrieve browser models: {exc}") from exc
-            finally:
-                context.close()
+        """Run the non-sending compatibility inspection and return its models."""
+        return [str(model) for model in self.compatibility_check(
+            require_selected_model=False)["models"]]
 
     def exchange(self, request: ProviderRequest):
         from playwright.sync_api import sync_playwright
@@ -430,6 +427,7 @@ class BrowserProvider(Provider):
                     package = build_exchange_package(request, exchange_dir / "packages")
                     if len(package.paths) > 3:
                         raise ProviderError("A browser exchange can attach no more than three files.")
+                    self._expected_attachments = [path.name for path in package.paths]
                     attachment_input = self._resolve_control(
                         page, attachment_selector, prompt, "attachment", allow_hidden=True)
                     self._mark_state("attaching", f"Attach {len(package.paths)} package files")
@@ -440,7 +438,7 @@ class BrowserProvider(Provider):
                         page, attachment_input, package.paths, selectors)
                     digest = package.sha256
                     package_bytes = package.bytes
-                    attachment_names = [path.name for path in package.paths]
+                    attachment_names = list(self._expected_attachments)
                     message = (
                         f"Read all {len(package.paths)} attached package files. Start with TASK.md, "
                         f"then use the indexed CODEBASE.md and MANIFEST.json. Package SHA-256: "
@@ -538,6 +536,7 @@ class BrowserProvider(Provider):
         response_selector = str(selectors.get("response_selector") or "")
         envelope_selector = str(selectors.get("response_envelope_selector") or "pre, code")
         generation_selector = selectors.get("generation_active_selector")
+        continuation_selector = selectors.get("response_continue_selector")
         start_timeout = int(self.config.get(
             "response_start_timeout_ms",
             min(int(self.config.get("timeout_ms", 300_000)), 90_000),
@@ -549,12 +548,42 @@ class BrowserProvider(Provider):
         latest = ""
         latest_at = time.monotonic()
         started = False
+        continued = False
+        generating = False
+        continuation_visible = False
         while time.monotonic() < (complete_deadline or start_deadline):
             candidates = self._response_candidates(
                 page, response_selector, envelope_selector, request, previous_texts,
                 str(selectors.get("user_message_selector") or ""))
             generating = bool(generation_selector and any(
                 node.is_visible() for node in page.locator(generation_selector).all()))
+            continuation_controls = (
+                [node for node in page.locator(continuation_selector).all()
+                 if node.is_visible()]
+                if continuation_selector else [])
+            continuation_visible = bool(continuation_controls)
+            if len(continuation_controls) > 1:
+                raise ProviderError(
+                    "More than one response continuation control was found.")
+            if continuation_visible:
+                if not started:
+                    started = True
+                    complete_deadline = time.monotonic() + complete_timeout / 1_000
+                    self._mark_state("response_started", "Assistant response detected")
+                if continued:
+                    raise ProviderError(
+                        "The assistant response remained incomplete after one continuation.")
+                continuation_controls[0].click(
+                    timeout=int(self.config.get("timeout_ms", 300_000)))
+                continued = True
+                self._mark_state(
+                    "response_generating", "Continue one interrupted response")
+                try:
+                    continuation_controls[0].wait_for(state="hidden", timeout=5_000)
+                except Exception as exc:
+                    raise ProviderError(
+                        "The response continuation control did not activate.") from exc
+                continue
             if (candidates or generating) and not started:
                 started = True
                 complete_deadline = time.monotonic() + complete_timeout / 1_000
@@ -578,13 +607,18 @@ class BrowserProvider(Provider):
                         and str(envelope.get("role")) == request.role):
                     self._mark_state("response_complete", "Complete response envelope received")
                     return candidate
-                if not generating and time.monotonic() - latest_at >= settle_seconds:
+                if (not generating and not continuation_visible
+                        and time.monotonic() - latest_at >= settle_seconds):
                     self._mark_state("response_complete", "Response stopped changing")
                     return latest
             page.wait_for_timeout(250)
-        if latest:
+        if (latest and not generating and not continuation_visible
+                and time.monotonic() - latest_at >= settle_seconds):
             self._mark_state("response_complete", "Last complete visible response retained")
             return latest
+        if started:
+            raise ProviderError(
+                "The assistant response started but did not finish before the timeout.")
         raise ProviderError(
             "The assistant did not expose a response to browser automation. "
             "The visible page was saved in the failure evidence.")
@@ -971,7 +1005,9 @@ class BrowserProvider(Provider):
             "error": str(error),
             "stage": stage,
             "provider": self.name,
+            "layout": self._layout_name or None,
             "expected_model": str(self.config.get("model") or "") or None,
+            "expected_attachments": self._expected_attachments,
             "states": states,
         }
         screenshot = screenshot or path.with_suffix(".png")
@@ -983,6 +1019,16 @@ class BrowserProvider(Provider):
         try:
             diagnostic["url"] = page.url
             diagnostic["title"] = page.title()
+            selectors = {**PAGE_OBJECTS.get(self.name, {}),
+                         **self.config.get("selectors", {})}
+            picker_selector = selectors.get("model_picker_selector")
+            diagnostic["observed_model_labels"] = (
+                self._visible_labels(page, picker_selector) if picker_selector else [])
+            diagnostic["observed_attachments"] = page.locator("body").evaluate(
+                "(body, names) => names.filter(name => "
+                "(body.innerText || '').includes(name))",
+                self._expected_attachments,
+            )
             diagnostic["controls"] = page.locator(
                 'button, [role="button"], [role="switch"], [role="menuitem"], '
                 '[role="menuitemradio"], [role="option"], input, textarea, '
@@ -1095,6 +1141,10 @@ PAGE_OBJECTS = {
             '[role="article"]'
         ),
         "generation_active_selector": '[data-testid="stop-button"]',
+        "response_continue_selector": (
+            'button:has-text("Continue generating"), '
+            'button[aria-label*="Continue generating" i]'
+        ),
         "send_button_selector": (
             'button[data-testid="send-button"], button[aria-label^="Send" i], '
             'button[aria-label^="Submit" i], button[title^="Send" i]'
@@ -1137,6 +1187,11 @@ PAGE_OBJECTS = {
             '[role="article"]'
         ),
         "generation_active_selector": '[aria-label="Stop generating"]',
+        "response_continue_selector": (
+            'button:has-text("Continue generating"), '
+            'button[aria-label*="Continue generating" i], '
+            'button:has-text("Continue response")'
+        ),
         "send_button_selector": (
             'button[data-testid*="send" i], button[aria-label^="Send" i], '
             'button[aria-label^="Submit" i], button[title^="Send" i], '
