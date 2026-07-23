@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from maintain.errors import ProviderError
 from maintain.exchange_package import build_exchange_package
@@ -272,9 +272,57 @@ class BrowserProvider(Provider):
         if len(candidates) != 1:
             if not candidates:
                 raise ProviderError("The New chat control was not found.")
-            raise ProviderError(
-                "More than one New chat control was found. No browser action was taken.")
-        candidates[0].click(timeout=30_000)
+            ranked = sorted(
+                ((self._new_chat_penalty(node), node) for node in candidates),
+                key=lambda item: item[0],
+            )
+            if ranked[0][0] == ranked[1][0]:
+                best = [node for score, node in ranked if score == ranked[0][0]]
+                destinations = {
+                    urlparse(str(node.get_attribute("href") or "")).path
+                    for node in best
+                }
+                if destinations != {"/"}:
+                    raise ProviderError(
+                        "More than one New chat control was found. "
+                        "No browser action was taken.")
+                target = best[0]
+            else:
+                target = ranked[0][1]
+        else:
+            target = candidates[0]
+        try:
+            target.click(timeout=min(
+                int(self.config.get("timeout_ms", 300_000)), 5_000))
+        except Exception as exc:
+            href = str(target.get_attribute("href") or "")
+            destination = urlparse(urljoin(page.url, href))
+            current = urlparse(page.url)
+            if (not href or destination.hostname != current.hostname
+                    or destination.path != "/"):
+                raise ProviderError(
+                    "The New chat control could not be activated safely.") from exc
+            page.goto(destination.geturl(), wait_until="domcontentloaded",
+                      timeout=min(int(self.config.get("timeout_ms", 300_000)), 60_000))
+
+    @staticmethod
+    def _new_chat_penalty(control) -> int:
+        href = str(control.get_attribute("href") or "")
+        label = " ".join(filter(None, [
+            control.get_attribute("aria-label"),
+            control.get_attribute("data-testid"),
+            control.get_attribute("id"),
+        ])).casefold()
+        path = urlparse(href).path if href else ""
+        if any(token in label for token in (
+                "create-new-chat", "new-chat-button", "new chat button")):
+            return 0
+        if path in {"", "/"} and href:
+            return 2
+        if "/c/" in path or any(token in label for token in (
+                "conversation", "history", "pin", "options")):
+            return 20
+        return 5
 
     def compatibility_check(self, *, require_selected_model: bool = True) -> dict[str, Any]:
         """Inspect the signed-in UI without attaching files or sending a message."""
