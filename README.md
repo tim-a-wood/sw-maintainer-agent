@@ -177,7 +177,9 @@ Maintain saves the preference in `.maintain.json` and selects it at the start of
 every browser conversation. Refresh the list when the account's available models change.
 For Microsoft 365 Copilot, refresh enables the new design when its opt-in toggle
 is present and opens the nested `More` or `GPT models` list. This includes named
-GPT models as well as the default Copilot response modes.
+GPT models as well as the default Copilot response modes. Discovery follows up to
+three nested menu levels and saves the observed menu paths in the browser evidence
+directory.
 
 ## Start a workflow
 
@@ -211,6 +213,11 @@ that upload activity has stopped. It requires that state to remain stable, check
 that Send is enabled, clicks Send, and confirms the outgoing request. This avoids
 submitting a request while Copilot is still attaching files.
 
+Maintain recognizes a completed JSON response by its run, task, and role fields,
+not only by Microsoft-specific page markup. This lets a visible valid response
+complete the exchange even when the Copilot message element changes. Browser
+failure evidence identifies the stage that stopped.
+
 ```sh
 maintain --repo /path/to/project diff RUN_ID
 maintain --repo /path/to/project accept RUN_ID
@@ -234,7 +241,9 @@ maintain --repo /path/to/project audit export RUN_ID --output run-audit.zip
 ```
 
 Audit data is stored outside the target repository under `~/.maintain/runs` by
-default.
+default. On Windows this is `%USERPROFILE%\.maintain\runs`. Browser exchanges are
+under `<RUN-ID>\artifacts\browser\exchanges`; model-discovery evidence is under
+`%USERPROFILE%\.maintain\browser`. Browser failures print the exact evidence path.
 
 ## Operating boundaries
 

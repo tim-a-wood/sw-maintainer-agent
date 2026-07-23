@@ -134,6 +134,7 @@ class BrowserProvider(Provider):
         except ImportError as exc:
             raise ProviderError("Install Maintain with the browser extra and install Chromium.") from exc
         selectors = {**PAGE_OBJECTS.get(self.name, {}), **self.config.get("selectors", {})}
+        self.evidence_dir.mkdir(parents=True, exist_ok=True)
         lock_path = self.profile_dir.parent / f".{self.profile_dir.name}.maintain.lock"
         with FileLock(lock_path, f"browser profile {self.name}"), sync_playwright() as playwright:
             context = self._launch_context(playwright)
@@ -148,6 +149,12 @@ class BrowserProvider(Provider):
             except ProviderError:
                 raise
             except Exception as exc:
+                try:
+                    page.screenshot(path=str(
+                        self.evidence_dir / f"{self.name}-model-discovery-failure.png"),
+                        full_page=True)
+                except Exception:
+                    pass
                 raise ProviderError(f"Could not retrieve browser models: {exc}") from exc
             finally:
                 context.close()
@@ -166,6 +173,7 @@ class BrowserProvider(Provider):
         with FileLock(lock_path, f"browser profile {self.name}"), sync_playwright() as playwright:
             context = self._launch_context(playwright)
             page = context.pages[0] if context.pages else context.new_page()
+            stage = "open Copilot"
             try:
                 page.goto(str(self.config["url"]), wait_until="domcontentloaded")
                 sign_in_selector = selectors.get("sign_in_selector")
@@ -199,6 +207,7 @@ class BrowserProvider(Provider):
                                 f"The signed-in identity does not match {expected_identity!r}.")
                 page.get_by_role("link", name=new_chat_name).or_(
                     page.get_by_role("button", name=new_chat_name)).first.click(timeout=30_000)
+                stage = "select model"
                 selected_model = str(self.config.get("model") or "").strip()
                 if selected_model:
                     self._select_model(page, selectors, selected_model)
@@ -211,6 +220,7 @@ class BrowserProvider(Provider):
                 attachment_names: list[str] = []
                 package_bytes = len(serialized.encode())
                 if attachment_selector:
+                    stage = "attach package files"
                     package = build_exchange_package(request, exchange_dir / "packages")
                     page.locator(attachment_selector).set_input_files(
                         [str(path) for path in package.paths]
@@ -245,51 +255,28 @@ class BrowserProvider(Provider):
                         message = (f"{request.instructions}\nAll {len(chunks)} chunks are complete. "
                                    f"Package SHA-256: {digest}. Return the required envelope.")
                         transport = "chunks"
-                previous_count = page.locator(response_selector).count()
-                previous_response = (page.locator(response_selector).last.text_content() or ""
-                                     if previous_count else "")
+                previous_responses = self._visible_texts(page, response_selector)
+                stage = "submit request"
                 self._submit(page, prompt, message, selectors)
-                page.wait_for_function(
-                    "([selector, count, previous]) => { const nodes = document.querySelectorAll(selector); "
-                    "if (nodes.length > count) return true; if (!nodes.length) return false; "
-                    "return (nodes[nodes.length - 1].textContent || '') !== previous; }",
-                    arg=[response_selector, previous_count, previous_response],
-                    timeout=int(self.config.get(
-                        "response_start_timeout_ms",
-                        min(int(self.config.get("timeout_ms", 300_000)), 90_000),
-                    )))
-                response = page.locator(response_selector).last
-                response.wait_for(state="visible", timeout=int(self.config.get("timeout_ms", 300_000)))
-                generation_selector = selectors.get("generation_active_selector")
-                if generation_selector:
-                    page.locator(generation_selector).wait_for(
-                        state="hidden", timeout=int(self.config.get("timeout_ms", 300_000)))
-                # text_content preserves patch indentation. inner_text collapses spaces.
-                raw = response.text_content() or ""
+                stage = "read Copilot response"
+                raw = self._wait_for_response_text(
+                    page, selectors, request, previous_responses)
                 assert_no_secrets(raw, "browser response")
                 (exchange_dir / f"{request.role}-initial.txt").write_text(raw, encoding="utf-8")
                 repaired = False
                 try:
+                    stage = "validate response"
                     parsed = parse_response(_extract_json(raw), request, self.name)
                 except ProviderError:
                     repaired = True
-                    previous = raw
+                    stage = "repair response"
                     repair_message = (
                         "Your last response did not match the required envelope. Return only the "
                         "complete JSON envelope for the same run, task, and role.")
+                    previous_responses = self._visible_texts(page, response_selector)
                     self._submit(page, prompt, repair_message, selectors)
-                    page.wait_for_function(
-                        "([selector, previous]) => { const nodes = document.querySelectorAll(selector); "
-                        "return nodes.length && nodes[nodes.length - 1].textContent !== previous; }",
-                        arg=[response_selector, previous],
-                        timeout=int(self.config.get("timeout_ms", 300_000)))
-                    response = page.locator(response_selector).last
-                    response.wait_for(
-                        state="visible", timeout=int(self.config.get("timeout_ms", 300_000)))
-                    if generation_selector:
-                        page.locator(generation_selector).wait_for(
-                            state="hidden", timeout=int(self.config.get("timeout_ms", 300_000)))
-                    raw = response.text_content() or ""
+                    raw = self._wait_for_response_text(
+                        page, selectors, request, previous_responses)
                     assert_no_secrets(raw, "browser repair response")
                     (exchange_dir / f"{request.role}-repair.txt").write_text(
                         raw, encoding="utf-8")
@@ -299,6 +286,7 @@ class BrowserProvider(Provider):
                     conversation_id=f"{self.name}-{exchange_dir.name}",
                 )
                 if request.role == "implement":
+                    stage = "download implementation"
                     output_zip = self._download_output_zip(
                         page, selectors, request, exchange_dir.name)
                     parsed.content["_maintain_output_zip"] = output_zip.name
@@ -317,7 +305,7 @@ class BrowserProvider(Provider):
             except Exception as exc:
                 exchange_dir = locals().get("exchange_dir") or self._new_exchange_dir(
                     hashlib.sha256(f"{request.task_id}-{request.role}-{time.time_ns()}".encode()).hexdigest())
-                diagnostic = {"error": str(exc)}
+                diagnostic = {"error": str(exc), "stage": stage}
                 try:
                     page.screenshot(path=str(exchange_dir / f"{request.role}-failure.png"),
                                     full_page=True)
@@ -333,9 +321,98 @@ class BrowserProvider(Provider):
                     diagnostic["visible_text"] = "[omitted by safety check]"
                 (exchange_dir / f"{request.role}-failure.json").write_text(
                     json.dumps(diagnostic), encoding="utf-8")
-                raise ProviderError(f"Browser provider stopped safely: {exc}") from exc
+                raise ProviderError(
+                    f"Browser provider stopped safely at {stage}. "
+                    f"Evidence: {exchange_dir.resolve()}. Error: {exc}") from exc
             finally:
                 context.close()
+
+    def _wait_for_response_text(self, page, selectors: dict[str, Any],
+                                request: ProviderRequest, previous_texts: list[str]) -> str:
+        """Return a complete response without depending on one Copilot DOM locator."""
+        response_selector = str(selectors.get("response_selector") or "")
+        envelope_selector = str(selectors.get("response_envelope_selector") or "pre, code")
+        generation_selector = selectors.get("generation_active_selector")
+        start_timeout = int(self.config.get(
+            "response_start_timeout_ms",
+            min(int(self.config.get("timeout_ms", 300_000)), 90_000),
+        ))
+        deadline = time.monotonic() + start_timeout / 1_000
+        latest = ""
+        latest_at = time.monotonic()
+        while time.monotonic() < deadline:
+            candidates = self._response_candidates(
+                page, response_selector, envelope_selector, request, previous_texts)
+            if candidates:
+                candidate = min(candidates, key=len)
+                if candidate != latest:
+                    latest = candidate
+                    latest_at = time.monotonic()
+                try:
+                    envelope = json.loads(_extract_json(candidate))
+                except json.JSONDecodeError:
+                    envelope = None
+                if (isinstance(envelope, dict)
+                        and str(envelope.get("run_id")) == request.run_id
+                        and str(envelope.get("task_id")) == request.task_id
+                        and str(envelope.get("role")) == request.role):
+                    return candidate
+                generating = bool(generation_selector and any(
+                    node.is_visible() for node in page.locator(generation_selector).all()))
+                if not generating and time.monotonic() - latest_at >= 1.0:
+                    return latest
+            page.wait_for_timeout(250)
+        if latest:
+            return latest
+        raise ProviderError(
+            "Copilot did not expose its response to browser automation. "
+            "The visible page was saved in the failure evidence.")
+
+    @staticmethod
+    def _response_candidates(page, response_selector: str, envelope_selector: str,
+                             request: ProviderRequest, previous_texts: list[str]) -> list[str]:
+        found: list[str] = []
+        if response_selector:
+            for node in page.locator(response_selector).all():
+                if not node.is_visible():
+                    continue
+                text = node.text_content() or ""
+                if text and text not in previous_texts and text not in found:
+                    found.append(text)
+        if envelope_selector:
+            for node in page.locator(envelope_selector).all():
+                if not node.is_visible():
+                    continue
+                text = node.text_content() or ""
+                if (text and all(token in text for token in (
+                        request.run_id, request.task_id, request.role)) and text not in found):
+                    found.append(text)
+        token_matches = page.locator("body").evaluate(
+            """(body, tokens) => {
+              const visible = node => {
+                const style = getComputedStyle(node);
+                const rect = node.getBoundingClientRect();
+                return style.visibility !== 'hidden' && style.display !== 'none' &&
+                       rect.width > 0 && rect.height > 0;
+              };
+              const matches = node => {
+                const text = node.textContent || '';
+                return visible(node) && tokens.every(token => text.includes(token));
+              };
+              return [...body.querySelectorAll('*')]
+                .filter(node => matches(node) && ![...node.children].some(matches))
+                .map(node => node.textContent || '');
+            }""",
+            [request.run_id, request.task_id, request.role])
+        for text in token_matches:
+            if text and text not in found:
+                found.append(text)
+        return found
+
+    @staticmethod
+    def _visible_texts(page, selector: str) -> list[str]:
+        return [node.text_content() or "" for node in page.locator(selector).all()
+                if node.is_visible()]
 
     def _submit(self, page, prompt, message: str, selectors: dict[str, Any]) -> None:
         """Submit only after the web UI says its Send control is ready."""
@@ -435,26 +512,32 @@ class BrowserProvider(Provider):
         if not picker_selector or not option_selector:
             raise ProviderError("Model discovery selectors are not configured for this browser provider.")
         timeout = int(self.config.get("timeout_ms", 300_000))
-        page.locator(picker_selector).last.click(timeout=timeout)
-        self._wait_for_visible_options(page, option_selector, timeout)
         submenu_selector = selectors.get("model_submenu_selector")
-        submenu_labels = self._visible_labels(page, submenu_selector)
-        found = [label for label in self._visible_labels(page, option_selector)
-                 if label.casefold() not in {item.casefold() for item in submenu_labels}]
-        for submenu_label in submenu_labels:
-            submenu = page.locator(submenu_selector).filter(has_text=submenu_label).last
-            if not submenu.is_visible():
+        found: list[str] = []
+        states: list[dict[str, Any]] = []
+        queued: list[tuple[str, ...]] = [()]
+        visited: set[tuple[str, ...]] = set()
+        while queued:
+            path = queued.pop(0)
+            if path in visited or len(path) > 3:
                 continue
-            submenu.click(timeout=timeout)
-            page.wait_for_timeout(300)
-            for label in self._visible_labels(page, option_selector):
-                if (label.casefold() not in {item.casefold() for item in submenu_labels}
-                        and label.casefold() not in {item.casefold() for item in found}):
+            visited.add(path)
+            if not self._open_model_path(
+                    page, picker_selector, submenu_selector, option_selector, path, timeout):
+                continue
+            submenu_labels = self._visible_labels(page, submenu_selector)
+            submenu_keys = {label.casefold() for label in submenu_labels}
+            option_labels = self._visible_labels(page, option_selector)
+            states.append({"path": list(path), "options": option_labels,
+                           "submenus": submenu_labels})
+            for label in option_labels:
+                if label.casefold() not in submenu_keys and label.casefold() not in {
+                        item.casefold() for item in found}:
                     found.append(label)
-            page.keyboard.press("Escape")
-            page.locator(picker_selector).last.click(timeout=timeout)
-            self._wait_for_visible_options(page, option_selector, timeout)
-        page.keyboard.press("Escape")
+            queued.extend(path + (label,) for label in submenu_labels)
+        self._close_model_menu(page, 4)
+        (self.evidence_dir / f"{self.name}-model-discovery.json").write_text(
+            json.dumps({"models": found, "menu_states": states}, indent=2), encoding="utf-8")
         if not found:
             raise ProviderError("The model picker opened, but it did not contain any models.")
         return found
@@ -465,31 +548,55 @@ class BrowserProvider(Provider):
         if not picker_selector or not option_selector:
             raise ProviderError("Model selection selectors are not configured for this browser provider.")
         timeout = int(self.config.get("timeout_ms", 300_000))
-        page.locator(picker_selector).last.click(timeout=timeout)
-        options = page.locator(option_selector)
-        self._wait_for_visible_options(page, option_selector, timeout)
-        for option in options.all():
-            if option.is_visible() and _model_label(option.inner_text()).casefold() == model.casefold():
-                option.click(timeout=timeout)
-                return
         submenu_selector = selectors.get("model_submenu_selector")
-        for submenu_label in self._visible_labels(page, submenu_selector):
-            submenu = page.locator(submenu_selector).filter(has_text=submenu_label).last
-            if not submenu.is_visible():
+        queued: list[tuple[str, ...]] = [()]
+        visited: set[tuple[str, ...]] = set()
+        while queued:
+            path = queued.pop(0)
+            if path in visited or len(path) > 3:
                 continue
-            submenu.click(timeout=timeout)
-            page.wait_for_timeout(300)
+            visited.add(path)
+            if not self._open_model_path(
+                    page, picker_selector, submenu_selector, option_selector, path, timeout):
+                continue
             for option in page.locator(option_selector).all():
                 if (option.is_visible()
                         and _model_label(option.inner_text()).casefold() == model.casefold()):
                     option.click(timeout=timeout)
                     return
-            page.keyboard.press("Escape")
-            page.locator(picker_selector).last.click(timeout=timeout)
-            self._wait_for_visible_options(page, option_selector, timeout)
-        page.keyboard.press("Escape")
+            queued.extend(path + (label,)
+                          for label in self._visible_labels(page, submenu_selector))
+        self._close_model_menu(page, 4)
         raise ProviderError(
             f"The preferred model {model!r} is no longer available. Refresh the model list.")
+
+    def _open_model_path(self, page, picker_selector: str, submenu_selector: str | None,
+                         option_selector: str, path: tuple[str, ...], timeout: int) -> bool:
+        self._close_model_menu(page, 4)
+        page.locator(picker_selector).last.click(timeout=timeout)
+        self._wait_for_visible_options(page, option_selector, timeout)
+        for label in path:
+            target = self._visible_option(page, submenu_selector, label)
+            if target is None:
+                return False
+            target.click(timeout=timeout)
+            page.wait_for_timeout(300)
+        return True
+
+    @staticmethod
+    def _visible_option(page, selector: str | None, label: str):
+        if not selector:
+            return None
+        for option in page.locator(selector).all():
+            if (option.is_visible()
+                    and _model_label(option.inner_text()).casefold() == label.casefold()):
+                return option
+        return None
+
+    @staticmethod
+    def _close_model_menu(page, attempts: int) -> None:
+        for _ in range(attempts):
+            page.keyboard.press("Escape")
 
     @staticmethod
     def _visible_labels(page, selector: str | None) -> list[str]:
@@ -605,6 +712,10 @@ PAGE_OBJECTS = {
         "new_chat_name": "New chat", "prompt_role": "textbox",
         "attachment_selector": 'input[type="file"]',
         "response_selector": '[data-message-author-role="assistant"]',
+        "response_envelope_selector": (
+            'pre, code, [data-message-author-role="assistant"], [data-author="assistant"], '
+            '[role="article"]'
+        ),
         "generation_active_selector": '[data-testid="stop-button"]',
         "send_button_selector": (
             'button[data-testid="send-button"], button[aria-label^="Send"]'
@@ -632,7 +743,16 @@ PAGE_OBJECTS = {
     "m365_copilot_browser": {
         "new_chat_name": "New chat", "prompt_role": "textbox",
         "attachment_selector": 'input[type="file"]',
-        "response_selector": '[data-testid="copilot-response"]',
+        "response_selector": (
+            '[data-testid="copilot-response"], [data-testid*="response" i], '
+            '[data-testid*="ai-message" i], [data-message-author-role="assistant"], '
+            '[data-author="assistant"], [role="article"]'
+        ),
+        "response_envelope_selector": (
+            'pre, code, [data-testid*="response" i], [data-testid*="message" i], '
+            '[data-message-author-role="assistant"], [data-author="assistant"], '
+            '[role="article"]'
+        ),
         "generation_active_selector": '[aria-label="Stop generating"]',
         "send_button_selector": (
             'button[data-testid*="send" i], button[aria-label^="Send" i], '
@@ -651,21 +771,36 @@ PAGE_OBJECTS = {
         ),
         "new_design_toggle_selector": (
             '[role="switch"][aria-label*="new design" i], '
+            '[role="switch"][aria-label*="new experience" i], '
+            '[role="switch"][aria-label*="new copilot" i], '
             'input[type="checkbox"][aria-label*="new design" i], '
-            'button[aria-label*="new design" i], button:text-is("New design")'
+            'input[type="checkbox"][aria-label*="new experience" i], '
+            'button[aria-label*="new design" i], button[aria-label*="new experience" i], '
+            'button[aria-label*="new copilot" i], button:text-is("New design"), '
+            'button:has-text("Try the new design"), '
+            'button:has-text("Switch to the new design"), '
+            'button:has-text("Try the new Copilot")'
         ),
         "model_picker_selector": (
             'button[data-testid*="model" i], button[aria-label*="model" i], '
             'button[title*="model" i]'
         ),
         "model_option_selector": (
-            '[role="menuitemradio"], [role="option"], [data-testid*="model-option" i]'
+            '[role="menuitemradio"], [role="option"], [data-testid*="model-option" i], '
+            '[role="menu"] button[data-testid*="model" i]'
         ),
         "model_submenu_selector": (
-            '[role="menuitem"]:text-is("More"), [role="option"]:text-is("More"), '
-            'button:text-is("More"), [role="menuitem"]:text-is("GPT models"), '
-            '[role="option"]:text-is("GPT models"), button:text-is("GPT models"), '
-            '[role="menuitem"]:text-is("GPT"), button:text-is("GPT")'
+            '[role="menuitem"][aria-haspopup="menu"], '
+            '[role="option"][aria-haspopup="menu"], '
+            '[role="menuitem"][aria-expanded], [role="option"][aria-expanded], '
+            '[role="menu"] button[aria-haspopup="menu"], '
+            '[data-testid*="model-submenu" i], '
+            '[role="menuitem"]:has-text("More"), [role="option"]:has-text("More"), '
+            'button:text-is("More"), [role="menuitem"]:has-text("GPT models"), '
+            '[role="option"]:has-text("GPT models"), button:has-text("GPT models"), '
+            '[role="menuitem"]:text-is("GPT"), button:text-is("GPT"), '
+            '[role="menuitem"]:text-is("OpenAI"), button:text-is("OpenAI"), '
+            '[role="menuitem"]:text-is("ChatGPT"), button:text-is("ChatGPT")'
         ),
         "output_download_selector": (
             'a[download][href], a[href*="download"], button[aria-label*="Download"]'
