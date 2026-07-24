@@ -120,6 +120,11 @@ class ContextSelector:
         tree = result.stdout.strip() if result.returncode == 0 else "no-git-tree"
         return (str(self.repository.resolve()), tree, self.roots, self.excludes, self.max_file_bytes)
 
+    def exact(self, paths: set[str]) -> list[ContextFile]:
+        """Return exact safe inventory entries for bounded context expansion."""
+        requested = set(paths)
+        return [item for item in self._inventory() if item.path in requested]
+
     def repository_text_bytes(self) -> int:
         return sum(item.bytes for item in self._inventory())
 

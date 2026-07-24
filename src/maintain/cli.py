@@ -276,7 +276,8 @@ def main(argv: list[str] | None = None) -> int:
                             f"{args.action.title()} is available only for browser providers.")
                     if args.action == "login":
                         provider.login()
-                    if args.action == "check":
+                        result = {"ready": True}
+                    elif args.action == "check":
                         if not hasattr(provider, "compatibility_check"):
                             raise ConfigurationError(
                                 "This browser provider cannot run a compatibility check.")

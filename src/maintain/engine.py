@@ -483,20 +483,41 @@ class WorkflowEngine:
                  "candidate_files": [{"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
                                       "content": x.content} for x in disclosed.values()]},
                 conversation_suffix=f"scope-{scope_attempt}")
-            if response.get("tasks"):
+            tasks = response.get("tasks")
+            referenced = {
+                str(path)
+                for task in tasks if isinstance(tasks, list) and isinstance(task, dict)
+                for path in task.get("allowed_files", [])
+                if isinstance(path, str)
+            } if isinstance(tasks, list) else set()
+            inventory_paths = {str(item["path"]) for item in selector.repository_map()}
+            missing_context = sorted((referenced & inventory_paths) - set(disclosed))
+            if tasks and not missing_context:
                 break
+
             queries = response.get("context_queries")
-            if not isinstance(queries, list) or not queries or scope_attempt == 3:
+            has_queries = isinstance(queries, list) and bool(queries)
+            if scope_attempt == 3 or (not missing_context and not has_queries):
                 break
+
             self._finish_exchange(record, store)
             before = set(disclosed)
-            expanded = selector.select(record.request + " " + " ".join(map(str, queries)),
-                                       limit_files=100, limit_bytes=500_000)
+            if missing_context:
+                expanded = selector.exact(set(missing_context))
+                reason = "task_allowed_files"
+                expansion_queries = missing_context
+            else:
+                expanded = selector.select(
+                    record.request + " " + " ".join(map(str, queries)),
+                    limit_files=100, limit_bytes=500_000)
+                reason = "context_queries"
+                expansion_queries = [str(item) for item in queries]
             disclosed.update((item.path, item) for item in expanded)
             added = sorted(set(disclosed) - before)
             if not added:
                 expansion = {
-                    "queries": [str(item) for item in queries],
+                    "reason": reason,
+                    "queries": expansion_queries,
                     "added_files": [],
                     "result": "No additional matching files were found.",
                 }
@@ -504,10 +525,77 @@ class WorkflowEngine:
                 store.append("context_expansion_empty", expansion)
                 self.presenter.complete("CONTEXT", "No additional matching files")
                 continue
-            expansion = {"queries": [str(item) for item in queries], "added_files": added}
+            expansion = {
+                "reason": reason,
+                "queries": expansion_queries,
+                "added_files": added,
+            }
             expansions.append(expansion)
             store.append("context_expanded", expansion)
             self.presenter.complete("CONTEXT", f"Added {len(added)} focused file(s)")
+        if not response.get("tasks"):
+            # Context queries are valid during discovery, but they are not a final scope result.
+            # After bounded expansion is exhausted, request task synthesis from the context that
+            # is already available instead of pausing the run immediately.
+            self._finish_exchange(record, store)
+            response = self._exchange(
+                record, store, "scope", "scope-final",
+                "Context discovery is complete. Do not return context_queries. Define the "
+                "smallest complete tasks that can satisfy the request from the supplied context. "
+                "Use exact repository-relative paths from the repository map. New files are "
+                "allowed only when project policy permits them. Return content.tasks with id, "
+                "objective, allowed_files, done_when, verification, and depends_on.",
+                {"mode": record.mode, "request": record.request,
+                 "context_expansions": expansions,
+                 "repository_map": selector.repository_map(),
+                 "candidate_files": [{"path": x.path, "sha256": x.sha256,
+                                      "bytes": x.bytes, "content": x.content}
+                                     for x in disclosed.values()],
+                 "scope_retry_reason": "context_expansion_exhausted"},
+                conversation_suffix="scope-final")
+            store.append("scope_task_synthesis_retry", {
+                "reason": "context_expansion_exhausted",
+                "disclosed_files": sorted(disclosed),
+                "defined_tasks": len(response.get("tasks", []))
+                if isinstance(response.get("tasks"), list) else 0,
+            })
+
+        if not response.get("tasks") and len(disclosed) == 1:
+            # Last-resort deterministic scope for an unambiguous single-file repository context.
+            # This avoids stopping when the assistant repeatedly refuses or returns empty scope
+            # content. The implementation and review stages still enforce the approved path.
+            only_path = next(iter(disclosed))
+            response = {
+                "tasks": [{
+                    "id": "implement-requested-change",
+                    "objective": record.request.strip(),
+                    "allowed_files": [only_path],
+                    "done_when": [
+                        f"{only_path} contains the complete requested implementation.",
+                        f"The observable behavior satisfies: {record.request.strip()}",
+                    ],
+                    "verification": [
+                        f"Inspect the complete contents of {only_path}.",
+                        "Run the configured local verification commands.",
+                    ],
+                    "depends_on": [],
+                }],
+                "context_queries": [],
+            }
+            fallback = {
+                "reason": "assistant_scope_exhausted",
+                "path": only_path,
+                "request": record.request,
+            }
+            store.append("deterministic_single_file_scope", fallback)
+            expansions.append({
+                "reason": "deterministic_single_file_scope",
+                "queries": [],
+                "added_files": [],
+                "result": f"Created a constrained task for {only_path}.",
+            })
+            self.presenter.complete("SCOPE", "Used constrained single-file plan")
+
         context = list(disclosed.values())
         repository_bytes = selector.repository_text_bytes()
         disclosed_bytes = sum(item.bytes for item in context)
@@ -711,9 +799,52 @@ class WorkflowEngine:
              "root_cause": record.evidence.get("root_cause")},
             conversation_suffix=f"{task['id']}-review-{record.attempt}")
         decision = content.get("decision")
+        if decision not in {"approve", "changes_requested"} and isinstance(
+                content.get("approved"), bool):
+            decision = "approve" if content["approved"] else "changes_requested"
+            content["decision"] = decision
+        if decision not in {"approve", "changes_requested"}:
+            result = str(content.get("result", "")).strip().casefold()
+            result_decisions = {
+                "pass": "approve",
+                "passed": "approve",
+                "approve": "approve",
+                "approved": "approve",
+                "success": "approve",
+                "fail": "changes_requested",
+                "failed": "changes_requested",
+                "reject": "changes_requested",
+                "rejected": "changes_requested",
+                "changes_requested": "changes_requested",
+            }
+            if result in result_decisions:
+                decision = result_decisions[result]
+                content["decision"] = decision
+
+        findings = content.get("findings", [])
+        if isinstance(findings, list):
+            severity_map = {"critical": "high", "major": "medium", "minor": "low"}
+            normalized_findings = []
+            for finding in findings:
+                if not isinstance(finding, dict):
+                    normalized_findings.append(finding)
+                    continue
+                normalized = dict(finding)
+                severity = str(normalized.get("severity", "")).lower()
+                normalized["severity"] = severity_map.get(severity, severity)
+                if "file" not in normalized and isinstance(normalized.get("path"), str):
+                    normalized["file"] = normalized["path"]
+                if "line" not in normalized:
+                    normalized["line"] = 1
+                if not str(normalized.get("remediation", "")).strip():
+                    normalized["remediation"] = str(
+                        normalized.get("issue") or "Correct the cited review finding.")
+                normalized_findings.append(normalized)
+            findings = normalized_findings
+            content["findings"] = findings
+
         if decision not in {"approve", "changes_requested"}:
             raise ProviderError("The review response has no valid decision.")
-        findings = content.get("findings", [])
         if not isinstance(findings, list):
             raise ProviderError("Review findings must be a list.")
         blocking = False

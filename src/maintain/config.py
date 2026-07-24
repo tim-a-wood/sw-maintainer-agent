@@ -400,10 +400,12 @@ def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
     elif provider == "m365-browser":
         selected = "m365"
         profiles = {selected: {"type": "m365_copilot_browser",
-                               "url": "https://m365.cloud.microsoft/chat",
-                               "browser": "chromium",
+                               "url": ("https://copilot.cloud.microsoft/"
+                                       "?internalredirect=M365Cloud&auth=2"),
+                               "browser": "msedge",
                                "profile_dir": "~/.maintain/browser/m365", "visible": True,
-                               "allowed_hosts": ["m365.cloud.microsoft"]}}
+                               "allowed_hosts": ["copilot.cloud.microsoft",
+                                                 "m365.cloud.microsoft"]}}
     else:
         selected = "codex"
         profiles = {selected: {"type": "codex_cli"}}

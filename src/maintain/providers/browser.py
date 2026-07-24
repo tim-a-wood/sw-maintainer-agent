@@ -24,6 +24,10 @@ from .base import Provider
 from .command import parse_response
 
 
+M365_ENTRY_URL = "https://copilot.cloud.microsoft/?internalredirect=M365Cloud&auth=2"
+M365_APPROVED_HOSTS = {"copilot.cloud.microsoft", "m365.cloud.microsoft"}
+
+
 @dataclass(frozen=True)
 class BrowserLayout:
     """A recognised, supported browser presentation."""
@@ -75,27 +79,52 @@ class BrowserProvider(Provider):
         if shown and self._status_callback:
             self._status_callback(*shown)
 
+    def _navigation_url(self) -> str:
+        """Return the supported entry URL for the configured assistant."""
+        configured = str(self.config["url"])
+        parsed = urlparse(configured)
+        if (self.name == "m365_copilot_browser"
+                and parsed.hostname == "m365.cloud.microsoft"
+                and parsed.path.rstrip("/") in {"", "/chat"}):
+            return M365_ENTRY_URL
+        return configured
+
+    def _approved_hosts(self, navigation_url: str) -> set[str]:
+        """Return configured hosts plus the provider's fixed service hosts."""
+        defaults = ({"chatgpt.com"} if self.name == "chatgpt_browser"
+                    else M365_APPROVED_HOSTS)
+        allowed = {str(host).casefold() for host in defaults}
+        allowed.update(
+            str(host).casefold() for host in self.config.get("allowed_hosts", []))
+        configured = urlparse(navigation_url).hostname or ""
+        if configured:
+            allowed.add(configured.casefold())
+        return allowed
+
+    def _wait_for_approved_host(self, page, allowed: set[str], timeout: int) -> str:
+        """Wait for an authentication redirect chain to reach an approved service host."""
+        deadline = time.monotonic() + timeout / 1_000
+        actual = ""
+        while time.monotonic() < deadline:
+            actual = urlparse(page.url).hostname or ""
+            if actual.casefold() in allowed:
+                return actual
+            page.wait_for_timeout(250)
+        raise ProviderError(
+            f"The assistant did not complete authentication on an approved host. "
+            f"Last host: {actual or 'unknown'}.")
+
     def _open_page(self, page) -> None:
-        """Open the configured page with one bounded retry for ordinary load failures."""
+        """Open the assistant and allow a bounded Microsoft authentication redirect chain."""
         timeout = min(int(self.config.get("timeout_ms", 300_000)), 60_000)
+        redirect_timeout = min(timeout, 30_000)
+        navigation_url = self._navigation_url()
+        allowed = self._approved_hosts(navigation_url)
         last_error: Exception | None = None
         for attempt in range(2):
             try:
-                page.goto(str(self.config["url"]), wait_until="domcontentloaded", timeout=timeout)
-                configured = urlparse(str(self.config["url"])).hostname or ""
-                actual = urlparse(page.url).hostname or ""
-                default_hosts = (
-                    {"chatgpt.com"} if self.name == "chatgpt_browser"
-                    else {"m365.cloud.microsoft"})
-                allowed = {
-                    str(host).casefold() for host in
-                    self.config.get("allowed_hosts", default_hosts)
-                }
-                allowed.add(configured.casefold())
-                if not actual or actual.casefold() not in allowed:
-                    raise ProviderError(
-                        f"The assistant redirected to an unapproved host: "
-                        f"{actual or 'unknown'}.")
+                page.goto(navigation_url, wait_until="domcontentloaded", timeout=timeout)
+                self._wait_for_approved_host(page, allowed, redirect_timeout)
                 return
             except ProviderError:
                 raise
@@ -136,23 +165,31 @@ class BrowserProvider(Provider):
         self._mark_state("workspace_confirmed", "Signed-in browser context confirmed")
 
     def _resolve_prompt(self, page, selectors: dict[str, Any]):
+        """Resolve the visible composer after allowing the client UI to finish rendering."""
         configured = selectors.get("prompt_selector")
-        candidates = (page.locator(configured).all() if configured
-                      else page.get_by_role(selectors.get("prompt_role", "textbox")).all())
-        visible = [node for node in candidates if node.is_visible()]
-        if len(visible) == 1:
-            return visible[0]
-        preferred = []
-        for node in visible:
-            label = " ".join(filter(None, [
-                node.get_attribute("aria-label"),
-                node.get_attribute("placeholder"),
-                node.get_attribute("data-testid"),
-            ])).casefold()
-            if any(word in label for word in ("message", "copilot", "prompt", "ask", "chat")):
-                preferred.append(node)
-        if len(preferred) == 1:
-            return preferred[0]
+        timeout = min(int(self.config.get("timeout_ms", 300_000)), 30_000)
+        deadline = time.monotonic() + timeout / 1_000
+        visible = []
+        while time.monotonic() < deadline:
+            candidates = (page.locator(configured).all() if configured
+                          else page.get_by_role(
+                              selectors.get("prompt_role", "textbox")).all())
+            visible = [node for node in candidates if node.is_visible()]
+            if len(visible) == 1:
+                return visible[0]
+            preferred = []
+            for node in visible:
+                label = " ".join(filter(None, [
+                    node.get_attribute("aria-label"),
+                    node.get_attribute("placeholder"),
+                    node.get_attribute("data-testid"),
+                ])).casefold()
+                if any(word in label for word in (
+                        "message", "copilot", "prompt", "ask", "chat")):
+                    preferred.append(node)
+            if len(preferred) == 1:
+                return preferred[0]
+            page.wait_for_timeout(250)
         if not visible:
             raise ProviderError("The message field was not found.")
         raise ProviderError(
@@ -220,13 +257,115 @@ class BrowserProvider(Provider):
             word in label for word in ("photo", "image", "camera", "video", "audio")
         ) else 0
 
+    def _attachment_trigger(self, page, prompt, selectors: dict[str, Any]):
+        """Resolve the current Copilot Add control without stale-node distance evaluation."""
+        selector = selectors.get("attachment_trigger_selector")
+        if not selector:
+            raise ProviderError("The attachment trigger is not configured.")
+        timeout = min(int(self.config.get("timeout_ms", 300_000)), 30_000)
+        deadline = time.monotonic() + timeout / 1_000
+        while time.monotonic() < deadline:
+            visible = [node for node in page.locator(selector).all() if node.is_visible()]
+            if len(visible) == 1:
+                return visible[0]
+            if len(visible) > 1:
+                exact = [node for node in visible
+                         if node.get_attribute("data-testid") == "chat-input-attach-button"]
+                if len(exact) == 1:
+                    return exact[0]
+                raise ProviderError(
+                    "More than one possible attachment trigger was found. "
+                    "No browser action was taken.")
+            page.wait_for_timeout(250)
+        raise ProviderError("The attachment trigger was not found.")
+
+    def _attachment_input(self, page, prompt, selectors: dict[str, Any]):
+        """Return an existing file input, or None when Copilot exposes only Add."""
+        selector = selectors.get("attachment_selector")
+        if not selector:
+            return None
+        inputs = page.locator(selector).all()
+        if not inputs:
+            return None
+        return self._resolve_control(
+            page, selector, prompt, "attachment", allow_hidden=True)
+
+    def _attach_files(self, page, prompt, paths: tuple[Path, ...] | list[Path],
+                      selectors: dict[str, Any]) -> None:
+        """Attach files using the POC flow, including Add-menu and file-chooser variants."""
+        timeout = min(int(self.config.get("timeout_ms", 300_000)), 30_000)
+        values = [str(path) for path in paths]
+        file_input = self._attachment_input(page, prompt, selectors)
+        if file_input is not None:
+            file_input.set_input_files(values, timeout=timeout)
+            self._wait_for_attachments(page, file_input, paths, selectors)
+            return
+
+        trigger = self._attachment_trigger(page, prompt, selectors)
+        chooser = None
+        try:
+            with page.expect_file_chooser(timeout=min(timeout, 5_000)) as pending:
+                trigger.click(timeout=timeout)
+            chooser = pending.value
+        except Exception:
+            # Some M365 layouts open a menu or create a hidden input instead.
+            pass
+        if chooser is not None:
+            chooser.set_files(values)
+            self._wait_for_attachments(page, None, paths, selectors)
+            return
+
+        deadline = time.monotonic() + min(timeout, 10_000) / 1_000
+        file_input = None
+        actions = []
+        action_selector = selectors.get("attachment_action_selector")
+        while time.monotonic() < deadline:
+            file_input = self._attachment_input(page, prompt, selectors)
+            if file_input is not None:
+                break
+            actions = ([node for node in page.locator(action_selector).all()
+                        if node.is_visible()] if action_selector else [])
+            if actions:
+                break
+            page.wait_for_timeout(250)
+
+        if file_input is not None:
+            file_input.set_input_files(values, timeout=timeout)
+            self._wait_for_attachments(page, file_input, paths, selectors)
+            return
+
+        if not actions:
+            raise ProviderError(
+                "The Add control did not expose a file chooser, file input, or upload action.")
+        ranked = sorted(
+            ((self._control_purpose_penalty(node, "attachment"), node) for node in actions),
+            key=lambda item: item[0],
+        )
+        if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+            raise ProviderError(
+                "More than one possible file upload action was found. No browser action was taken.")
+        action = ranked[0][1]
+        try:
+            with page.expect_file_chooser(timeout=timeout) as pending:
+                action.click(timeout=timeout)
+            pending.value.set_files(values)
+        except Exception:
+            action.click(timeout=timeout)
+            page.wait_for_function(
+                "selector => document.querySelectorAll(selector).length > 0",
+                arg=selectors.get("attachment_selector"), timeout=timeout)
+            file_input = self._attachment_input(page, prompt, selectors)
+            if file_input is None:
+                raise ProviderError("The file upload action did not expose a file chooser.")
+            file_input.set_input_files(values, timeout=timeout)
+        self._wait_for_attachments(page, file_input, paths, selectors)
+
     def _recognize_page(self, page, selectors: dict[str, Any]) -> tuple[BrowserLayout, Any]:
         """Recognise a supported layout before performing any consequential action."""
         prompt = self._resolve_prompt(page, selectors)
         if selectors.get("attachment_selector"):
-            self._resolve_control(
-                page, selectors.get("attachment_selector"), prompt, "attachment",
-                allow_hidden=True)
+            if self._attachment_input(page, prompt, selectors) is None:
+                self._attachment_trigger(page, prompt, selectors)
         if self.name == "chatgpt_browser":
             name = "chatgpt-current"
         else:
@@ -239,6 +378,36 @@ class BrowserProvider(Provider):
         self._mark_state("page_ready", f"Recognised {layout.name}")
         return layout, prompt
 
+    def _set_prompt_text(self, page, prompt, value: str) -> None:
+        """Set text on the live M365 editable node, not its role=textbox wrapper."""
+        timeout = min(int(self.config.get("timeout_ms", 300_000)), 30_000)
+        expected = self._normalize_prompt_text(value)
+        target = prompt.locator(
+            'xpath=self::*[self::textarea or self::input or @contenteditable="true"] | '
+            './/*[self::textarea or self::input or @contenteditable="true"]'
+        ).first
+        if not target.count():
+            target = prompt
+        target.click(timeout=timeout)
+        try:
+            target.fill(value, timeout=timeout)
+        except Exception:
+            try:
+                target.press("Control+A", timeout=5_000)
+                target.press("Backspace", timeout=5_000)
+            except Exception:
+                pass
+            if value:
+                page.keyboard.insert_text(value)
+        deadline = time.monotonic() + min(timeout, 5_000) / 1_000
+        while time.monotonic() < deadline:
+            live_prompt = self._resolve_prompt(page, {
+                **PAGE_OBJECTS.get(self.name, {}), **self.config.get("selectors", {})})
+            if self._prompt_value(live_prompt) == expected:
+                return
+            page.wait_for_timeout(100)
+        raise ProviderError("The complete request did not appear in the message field.")
+
     def _check_send_control(self, page, prompt, selectors: dict[str, Any]) -> bool:
         """Expose a dynamic Send button with an unsent draft, then clear it."""
         draft = "Maintain compatibility check. This text will not be sent."
@@ -246,10 +415,13 @@ class BrowserProvider(Provider):
             raise ProviderError(
                 "The message field contains a draft. Clear it before compatibility checking.")
         try:
-            prompt.fill(draft)
-            if self._prompt_value(prompt) != draft:
+            self._set_prompt_text(page, prompt, draft)
+            # M365 can replace the composer node after input. Reacquire the live
+            # textbox before resolving nearby controls or reading its value.
+            prompt = self._resolve_prompt(page, selectors)
+            if self._prompt_value(prompt) != self._normalize_prompt_text(draft):
                 raise ProviderError(
-                    "The compatibility draft did not appear in the message field.")
+                    "The compatibility draft did not remain in the live message field.")
             page.wait_for_timeout(250)
             send = self._resolve_control(
                 page, selectors.get("send_button_selector"), prompt, "send")
@@ -258,7 +430,8 @@ class BrowserProvider(Provider):
                     "The Send control remained disabled with a complete draft.")
             return True
         finally:
-            prompt.fill("")
+            live_prompt = self._resolve_prompt(page, selectors)
+            self._set_prompt_text(page, live_prompt, "")
 
     def _new_chat(self, page, name: str) -> None:
         names = re.compile(
@@ -352,11 +525,12 @@ class BrowserProvider(Provider):
                     raise ProviderError(
                         f"The preferred model {selected_model!r} is no longer available. "
                         "Refresh the model list.")
+                attachment_ready = bool(
+                    self._attachment_input(page, prompt, selectors)
+                    or self._attachment_trigger(page, prompt, selectors))
                 controls = {
                     "message": True,
-                    "attachment": bool(self._resolve_control(
-                        page, selectors.get("attachment_selector"), prompt, "attachment",
-                        allow_hidden=True)),
+                    "attachment": attachment_ready,
                     "send": self._check_send_control(page, prompt, selectors),
                 }
                 self._mark_state(
@@ -458,7 +632,9 @@ class BrowserProvider(Provider):
             with FileLock(lock_path, f"browser profile {self.name}"), sync_playwright() as playwright:
                 context = self._launch_context(playwright, visible=True)
                 page = context.pages[0] if context.pages else context.new_page()
-                page.goto(str(self.config["url"]), wait_until="domcontentloaded")
+                page.goto(
+                    self._navigation_url(), wait_until="domcontentloaded",
+                    timeout=min(int(self.config.get("timeout_ms", 300_000)), 60_000))
                 try:
                     input("Complete sign-in in the browser. Press Enter here when sign-in is complete: ")
                 finally:
@@ -516,21 +692,18 @@ class BrowserProvider(Provider):
                     if len(package.paths) > 3:
                         raise ProviderError("A browser exchange can attach no more than three files.")
                     self._expected_attachments = [path.name for path in package.paths]
-                    attachment_input = self._resolve_control(
-                        page, attachment_selector, prompt, "attachment", allow_hidden=True)
                     self._mark_state("attaching", f"Attach {len(package.paths)} package files")
-                    attachment_input.set_input_files(
-                        [str(path) for path in package.paths]
-                    )
-                    self._wait_for_attachments(
-                        page, attachment_input, package.paths, selectors)
+                    self._attach_files(page, prompt, package.paths, selectors)
                     digest = package.sha256
                     package_bytes = package.bytes
                     attachment_names = list(self._expected_attachments)
                     message = (
-                        f"Read all {len(package.paths)} attached package files. Start with TASK.md, "
-                        f"then use the indexed CODEBASE.md and MANIFEST.json. Package SHA-256: "
-                        f"{digest}. Follow the output instructions exactly."
+                        f"This request is run_id={request.run_id}, task_id={request.task_id}, "
+                        f"role={request.role}. Read all {len(package.paths)} attached package "
+                        "files. Start with TASK.md, then use the indexed CODEBASE.md and "
+                        f"MANIFEST.json. Package SHA-256: {digest}. Return an envelope with these "
+                        "exact run_id, task_id, and role values. Follow the output instructions "
+                        "exactly."
                     )
                     transport = "attachment"
                 else:
@@ -571,8 +744,14 @@ class BrowserProvider(Provider):
                     repaired = True
                     stage = "repair response"
                     repair_message = (
-                        "Your last response did not match the required envelope. Return only the "
-                        "complete JSON envelope for the same run, task, and role.")
+                        "Your last response did not match this request. Return only one complete "
+                        f"JSON envelope with schema_version={request.schema_version}, "
+                        f"run_id={json.dumps(request.run_id)}, "
+                        f"task_id={json.dumps(request.task_id)}, "
+                        f"role={json.dumps(request.role)}, provider=\"assistant\", and the "
+                        "correct content for the attached package. Do not reuse identifiers from "
+                        "an earlier chat or task."
+                    )
                     previous_responses = self._visible_texts(page, response_selector)
                     self._submit(page, prompt, repair_message, selectors)
                     raw = self._wait_for_response_text(
@@ -581,14 +760,57 @@ class BrowserProvider(Provider):
                     (exchange_dir / f"{request.role}-repair.txt").write_text(
                         raw, encoding="utf-8")
                     parsed = parse_response(_extract_json(raw), request, self.name)
+                parsed, raw, contract_repairs = self._repair_role_contract(
+                    page, prompt, selectors, request, parsed, raw,
+                    exchange_dir, response_selector)
                 parsed = replace(
                     parsed,
                     conversation_id=f"{self.name}-{exchange_dir.name}",
                 )
                 if request.role == "implement":
-                    stage = "download implementation"
-                    output_zip = self._download_output_zip(
-                        page, selectors, request, exchange_dir.name)
+                    output_zip = self._inline_output_zip(
+                        parsed.content, request, exchange_dir.name)
+                    queries = parsed.content.get("context_queries")
+                    if (output_zip is None and isinstance(queries, list) and queries):
+                        stage = "repair implementation content"
+                        allowed = [
+                            str(path) for path in
+                            request.payload.get("task", {}).get("allowed_files", [])
+                        ]
+                        implementation_repair = (
+                            "The supplied package is sufficient for this implementation. Do not "
+                            "return context_queries. Return only one complete JSON envelope for "
+                            f"run_id={json.dumps(request.run_id)}, "
+                            f"task_id={json.dumps(request.task_id)}, "
+                            f"role={json.dumps(request.role)}. In content.files, return the complete "
+                            "final text for every changed file. Use only these exact approved paths: "
+                            f"{json.dumps(allowed)}. Also return changed_files and deleted_files."
+                        )
+                        previous_responses = self._visible_texts(page, response_selector)
+                        self._submit(page, prompt, implementation_repair, selectors)
+                        raw = self._wait_for_response_text(
+                            page, selectors, request, previous_responses)
+                        assert_no_secrets(raw, "browser implementation repair response")
+                        (exchange_dir / f"{request.role}-content-repair.txt").write_text(
+                            raw, encoding="utf-8")
+                        parsed = parse_response(_extract_json(raw), request, self.name)
+                        parsed = replace(
+                            parsed,
+                            conversation_id=f"{self.name}-{exchange_dir.name}",
+                        )
+                        output_zip = self._inline_output_zip(
+                            parsed.content, request, exchange_dir.name)
+                    if output_zip is None:
+                        download_selector = selectors.get("output_download_selector")
+                        downloadable = bool(download_selector and any(
+                            node.is_visible() for node in page.locator(download_selector).all()))
+                        if not downloadable:
+                            raise ProviderError(
+                                "The implementation response contained neither complete inline "
+                                "files nor a downloadable output artifact.")
+                        stage = "download implementation"
+                        output_zip = self._download_output_zip(
+                            page, selectors, request, exchange_dir.name)
                     parsed.content["_maintain_output_zip"] = output_zip.name
                 page.screenshot(path=str(exchange_dir / f"{request.role}.png"), full_page=True)
                 (exchange_dir / f"{request.role}.txt").write_text(raw, encoding="utf-8")
@@ -601,6 +823,7 @@ class BrowserProvider(Provider):
                                 "conversation_id": parsed.conversation_id,
                                 "states": self._journey,
                                 "schema_repair": repaired,
+                                "contract_repairs": contract_repairs,
                                 "output_zip": (output_zip.name if request.role == "implement"
                                                else None)}),
                     encoding="utf-8")
@@ -763,9 +986,22 @@ class BrowserProvider(Provider):
                 if node.is_visible()]
 
     @staticmethod
-    def _prompt_value(prompt) -> str:
-        return str(prompt.evaluate(
-            "field => ('value' in field ? field.value : field.textContent) || ''"))
+    def _normalize_prompt_text(value: object) -> str:
+        """Normalize editor text and remove Lexical formatting sentinels."""
+        normalized = str(value or "").replace("\r\n", "\n").replace("\u00a0", " ")
+        return normalized.replace("\u200b", "").replace("\u200c", "").strip()
+
+    @classmethod
+    def _prompt_value(cls, prompt) -> str:
+        value = prompt.evaluate(
+            """field => {
+              const target = field.matches('textarea, input, [contenteditable="true"]')
+                ? field
+                : field.querySelector('textarea, input, [contenteditable="true"]');
+              if (!target) return field.innerText || field.textContent || '';
+              return ('value' in target ? target.value : target.innerText || target.textContent) || '';
+            }""")
+        return cls._normalize_prompt_text(value)
 
     @staticmethod
     def _control_enabled(control) -> bool:
@@ -791,53 +1027,84 @@ class BrowserProvider(Provider):
         user_message_selector = selectors.get("user_message_selector")
         previous_user_messages = (page.locator(user_message_selector).count()
                                   if user_message_selector else 0)
-        prompt.fill(message)
-        if self._prompt_value(prompt) != message:
-            raise ProviderError("The complete request did not appear in the message field.")
+        self._set_prompt_text(page, prompt, message)
+        # Input can replace the M365 composer node. Continue with the current node.
+        prompt = self._resolve_prompt(page, selectors)
+        if self._prompt_value(prompt) != self._normalize_prompt_text(message):
+            raise ProviderError("The complete request did not remain in the live message field.")
         self._mark_state("prompt_entered", "Complete request entered")
-        send = self._resolve_control(
-            page, selectors.get("send_button_selector"), prompt, "send")
-        deadline = time.monotonic() + timeout / 1_000
-        while not self._control_enabled(send):
-            if time.monotonic() >= deadline:
-                raise ProviderError("The Send control did not become ready.")
-            page.wait_for_timeout(250)
         page.wait_for_timeout(int(self.config.get(
             "send_settle_ms", 750 if self.name == "m365_copilot_browser" else 250)))
-        if self._prompt_value(prompt) != message:
+        if self._prompt_value(prompt) != self._normalize_prompt_text(message):
             raise ProviderError("The request changed before it could be submitted.")
         if expected_attachments and not self._attachments_ready(
                 page, expected_attachments, selectors):
             raise ProviderError("The attached files were not ready when Send was checked.")
-        if not self._control_enabled(send):
-            raise ProviderError("The Send control changed before submission.")
 
-        for attempt in range(2):
-            send.click(timeout=timeout)
-            confirm_deadline = time.monotonic() + confirm_timeout / 1_000
-            while time.monotonic() < confirm_deadline:
-                if self._submission_observed(
-                        page, prompt, selectors, previous_user_messages):
-                    self._mark_state("request_submitted", "Outgoing request confirmed")
-                    return
-                page.wait_for_timeout(250)
+        submit_attempts = max(2, min(int(self.config.get("submit_retries", 3)), 5))
+        last_problem = ""
+        for attempt in range(1, submit_attempts + 1):
+            prompt = self._resolve_prompt(page, selectors)
             current = self._prompt_value(prompt)
-            if attempt == 0 and current == message:
+            if current != self._normalize_prompt_text(message):
+                self._set_prompt_text(page, prompt, message)
+                prompt = self._resolve_prompt(page, selectors)
+            submitted = False
+            try:
                 send = self._resolve_control(
                     page, selectors.get("send_button_selector"), prompt, "send")
+                enable_deadline = time.monotonic() + min(timeout, 10_000) / 1_000
+                while not self._control_enabled(send) and time.monotonic() < enable_deadline:
+                    page.wait_for_timeout(250)
+                    prompt = self._resolve_prompt(page, selectors)
+                    try:
+                        send = self._resolve_control(
+                            page, selectors.get("send_button_selector"), prompt, "send")
+                    except ProviderError:
+                        continue
                 if self._control_enabled(send):
-                    continue
+                    send.click(timeout=min(timeout, 30_000))
+                    submitted = True
+            except Exception as exc:
+                last_problem = str(exc)
+
+            if not submitted:
+                # M365 can temporarily replace or omit the Send button after several replies.
+                # Enter on the live composer is the supported semantic fallback.
+                prompt = self._resolve_prompt(page, selectors)
+                try:
+                    prompt.press("Enter", timeout=min(timeout, 30_000))
+                    submitted = True
+                except Exception as exc:
+                    last_problem = str(exc)
+
+            if submitted:
+                confirm_deadline = time.monotonic() + confirm_timeout / 1_000
+                while time.monotonic() < confirm_deadline:
+                    prompt = self._resolve_prompt(page, selectors)
+                    if self._submission_observed(
+                            page, prompt, selectors, previous_user_messages):
+                        self._mark_state("request_submitted", "Outgoing request confirmed")
+                        return
+                    page.wait_for_timeout(250)
+
+            prompt = self._resolve_prompt(page, selectors)
+            current = self._prompt_value(prompt)
             if not current.strip():
                 raise ProviderError(
                     "The request may have been submitted, but the outgoing message "
                     "could not be confirmed.")
-            break
-        raise ProviderError("The request was not submitted.")
+            if attempt < submit_attempts:
+                page.wait_for_timeout(min(500 * attempt, 2_000))
+                continue
+        detail = f" Last browser error: {last_problem}" if last_problem else ""
+        raise ProviderError(
+            f"The request was not submitted after {submit_attempts} bounded attempts.{detail}")
 
     @staticmethod
     def _attachment_readiness_script() -> str:
         return """
-            ([pendingSelector, names, expected]) => {
+            ([pendingSelector, readySelector, names]) => {
               const visible = node => {
                 const style = getComputedStyle(node);
                 const rect = node.getBoundingClientRect();
@@ -846,36 +1113,52 @@ class BrowserProvider(Provider):
               };
               const visibleNodes = selector => selector
                 ? [...document.querySelectorAll(selector)].filter(visible) : [];
-              const text = (document.body.innerText || '').toLocaleLowerCase();
-              const named = names.length === expected &&
-                names.every(name => text.includes(String(name).toLocaleLowerCase()));
-              const pending = visibleNodes(pendingSelector).length > 0;
-              return named && !pending;
+              const normalized = value => String(value || '').toLocaleLowerCase();
+              const bodyText = normalized(document.body.innerText);
+              const readyNodes = visibleNodes(readySelector);
+              const readyText = readyNodes.map(node => normalized(
+                node.innerText || node.textContent || node.getAttribute('aria-label')));
+              const filenameVisible = name => {
+                const expected = normalized(name);
+                return readyText.some(value => value.includes(expected)) ||
+                       bodyText.includes(expected);
+              };
+              const completed = value =>
+                value.includes('upload finished') || value.includes('upload complete') ||
+                value.includes('uploaded successfully');
+              const pending = visibleNodes(pendingSelector).some(node => {
+                const value = normalized(
+                  node.innerText || node.textContent || node.getAttribute('aria-label'));
+                return !completed(value);
+              });
+              return names.length > 0 && names.every(filenameVisible) && !pending;
             }
         """
 
     def _attachments_ready(self, page, names: list[str], selectors: dict[str, Any]) -> bool:
         return bool(page.evaluate(
             self._attachment_readiness_script(),
-            [selectors.get("upload_pending_selector"), names, len(names)],
+            [selectors.get("upload_pending_selector"),
+             selectors.get("attachment_ready_selector"), names],
         ))
 
     def _wait_for_attachments(self, page, file_input, paths: tuple[Path, ...] | list[Path],
                               selectors: dict[str, Any]) -> None:
-        """Wait until every selected file is attached and the UI is stably ready."""
-        timeout = int(self.config.get("timeout_ms", 300_000))
+        """Wait until every selected file is visibly attached and upload activity stops."""
+        timeout = min(int(self.config.get("timeout_ms", 300_000)), 60_000)
         names = [path.name for path in paths]
-        input_handle = file_input.element_handle(timeout=timeout)
-        page.wait_for_function(
-            "([field, count]) => field.files && field.files.length === count",
-            arg=[input_handle, len(names)], timeout=timeout)
+        args = [selectors.get("upload_pending_selector"),
+                selectors.get("attachment_ready_selector"), names]
 
-        pending_selector = selectors.get("upload_pending_selector")
-        args = [pending_selector, names, len(names)]
-        page.wait_for_function(self._attachment_readiness_script(), arg=args, timeout=timeout)
+        # Copilot consumes the selected files, then can clear or replace the hidden
+        # input. The visible attachment state is authoritative after set_input_files.
+        page.wait_for_function(
+            self._attachment_readiness_script(), arg=args, timeout=timeout)
         page.wait_for_timeout(int(self.config.get(
             "upload_settle_ms", 2_000 if self.name == "m365_copilot_browser" else 500)))
-        page.wait_for_function(self._attachment_readiness_script(), arg=args, timeout=timeout)
+        if not self._attachments_ready(page, names, selectors):
+            raise ProviderError(
+                "The attached files did not remain ready after the upload settle period.")
         self._mark_state("files_ready", f"{len(names)} attached files confirmed")
 
     def _enable_preferred_design(self, page, selectors: dict[str, Any]) -> None:
@@ -936,6 +1219,34 @@ class BrowserProvider(Provider):
         return found
 
     def _select_model(self, page, selectors: dict[str, Any], model: str) -> None:
+        """Select and confirm the preferred model with bounded UI recovery."""
+        attempts = max(2, min(int(self.config.get("model_selection_retries", 3)), 5))
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                self._select_model_once(page, selectors, model)
+                return
+            except ProviderError as exc:
+                last_error = exc
+                message = str(exc)
+                unavailable = "is no longer available" in message
+                ambiguous = "More than one model control" in message
+                if unavailable or ambiguous or attempt >= attempts:
+                    break
+                self._close_model_menu(page, 4)
+                page.wait_for_timeout(min(1_000 * attempt, 3_000))
+                try:
+                    page.reload(wait_until="domcontentloaded", timeout=min(
+                        int(self.config.get("timeout_ms", 300_000)), 60_000))
+                    page.wait_for_timeout(1_000)
+                except Exception:
+                    # A reload is recovery assistance only. The next attempt re-resolves controls.
+                    pass
+        raise ProviderError(
+            f"The preferred model {model!r} could not be confirmed after {attempts} bounded "
+            f"attempts. No request was sent. Last error: {last_error}") from last_error
+
+    def _select_model_once(self, page, selectors: dict[str, Any], model: str) -> None:
         picker_selector = selectors.get("model_picker_selector")
         option_selector = selectors.get("model_option_selector")
         if not picker_selector or not option_selector:
@@ -960,7 +1271,7 @@ class BrowserProvider(Provider):
                     observed = ""
                     while time.monotonic() < confirm_deadline:
                         try:
-                            picker = self._primary_model_picker(page, picker_selector)
+                            picker = self._wait_for_model_picker(page, picker_selector, timeout)
                             labels = self._model_control_labels(picker)
                             observed = next(
                                 (label for label in labels if label), observed)
@@ -988,7 +1299,7 @@ class BrowserProvider(Provider):
         for attempt in range(2):
             try:
                 self._close_model_menu(page, 4)
-                picker = self._primary_model_picker(page, picker_selector)
+                picker = self._wait_for_model_picker(page, picker_selector, timeout)
                 picker.click(timeout=timeout)
                 self._wait_for_visible_options(page, option_selector, timeout)
                 for label in path:
@@ -1034,6 +1345,21 @@ class BrowserProvider(Provider):
             if label and label.casefold() not in {item.casefold() for item in found}:
                 found.append(label)
         return found
+
+    def _wait_for_model_picker(self, page, selector: str, timeout: int):
+        """Wait for the client-rendered top-level model selector."""
+        deadline = time.monotonic() + min(timeout, 30_000) / 1_000
+        last_error: ProviderError | None = None
+        while time.monotonic() < deadline:
+            try:
+                return self._primary_model_picker(page, selector)
+            except ProviderError as exc:
+                if "More than one" in str(exc):
+                    raise
+                last_error = exc
+            page.wait_for_timeout(250)
+        raise ProviderError(
+            "The model control did not render within 30 seconds.") from last_error
 
     @staticmethod
     def _primary_model_picker(page, selector: str):
@@ -1082,6 +1408,136 @@ class BrowserProvider(Provider):
             "return style.visibility !== 'hidden' && style.display !== 'none' && "
             "rect.width > 0 && rect.height > 0; })",
             arg=selector, timeout=timeout)
+
+    @staticmethod
+    def _contract_problem(content: dict[str, Any], role: str) -> str:
+        """Return a concise role-contract defect, or an empty string when usable."""
+        if role == "scope":
+            # Scope discovery is workflow-managed. Empty or incomplete scope content must reach
+            # the engine so it can expand context, request final synthesis, or use its constrained
+            # deterministic fallback instead of exhausting chat-only contract retries.
+            return ""
+        if role == "implement":
+            files = content.get("files")
+            queries = content.get("context_queries")
+            changed = content.get("changed_files")
+            if isinstance(files, list) and files:
+                return ""
+            if isinstance(queries, list) and queries:
+                return ""
+            if isinstance(changed, list) and changed:
+                return ""
+            return "content must contain complete files, context_queries, or changed_files"
+        if role == "review":
+            decision = str(content.get("decision", "")).strip().casefold()
+            result = str(content.get("result", "")).strip().casefold()
+            approved = content.get("approved")
+            accepted = {
+                "approve", "approved", "changes_requested", "pass", "passed",
+                "success", "fail", "failed", "reject", "rejected",
+            }
+            if decision in accepted or result in accepted or isinstance(approved, bool):
+                return ""
+            return "content must contain decision, approved, or result"
+        return ""
+
+    def _repair_role_contract(self, page, prompt, selectors: dict[str, Any],
+                              request: ProviderRequest, parsed, raw: str,
+                              exchange_dir: Path, response_selector: str):
+        """Request bounded corrections for a valid envelope with an invalid role contract."""
+        attempts = max(0, min(int(self.config.get("contract_retries", 2)), 3))
+        for attempt in range(1, attempts + 1):
+            problem = self._contract_problem(parsed.content, request.role)
+            if not problem:
+                return parsed, raw, attempt - 1
+            repair = (
+                "Correct only the response contract. Return one complete JSON envelope and no "
+                "other text. Keep these exact identifiers: "
+                f"run_id={json.dumps(request.run_id)}, task_id={json.dumps(request.task_id)}, "
+                f"role={json.dumps(request.role)}, provider=\"assistant\". Contract defect: "
+                f"{problem}. Use the attached package and return the complete required content."
+            )
+            previous = self._visible_texts(page, response_selector)
+            self._submit(page, prompt, repair, selectors)
+            raw = self._wait_for_response_text(page, selectors, request, previous)
+            assert_no_secrets(raw, "browser contract repair response")
+            (exchange_dir / f"{request.role}-contract-repair-{attempt}.txt").write_text(
+                raw, encoding="utf-8")
+            parsed = parse_response(_extract_json(raw), request, self.name)
+        problem = self._contract_problem(parsed.content, request.role)
+        if problem:
+            raise ProviderError(
+                f"{request.role} response still violates its contract after {attempts} repair "
+                f"attempt(s): {problem}.")
+        return parsed, raw, attempts
+
+    def _inline_output_zip(self, content: dict[str, Any], request: ProviderRequest,
+                           exchange_id: str) -> Path | None:
+        """Build the implementation ZIP from validated inline complete-file content."""
+        files = content.get("files")
+        if not isinstance(files, list) or not files:
+            return None
+        task = request.payload.get("task", {})
+        allowed_files = task.get("allowed_files", [])
+        allowed = {str(path) for path in allowed_files}
+        entries: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for item in files:
+            if not isinstance(item, dict):
+                raise ProviderError("Inline implementation files must be objects.")
+            name = item.get("path")
+            body = item.get("content")
+            if not isinstance(name, str) or not isinstance(body, str):
+                raise ProviderError("Inline implementation files need string path and content values.")
+            path = Path(name)
+            if (path.is_absolute() or name != path.as_posix() or
+                    any(part in {"", ".", ".."} for part in path.parts)):
+                raise ProviderError(f"Inline implementation returned an unsafe path: {name}")
+            if name not in allowed:
+                # Copilot can correctly remove an accidental transport-style .txt suffix from a
+                # single source-file path, for example main.c.txt -> main.c. Permit only this
+                # narrow, auditable correction when project policy allows new files.
+                aliases = [approved for approved in allowed if approved == f"{name}.txt"]
+                allow_new = bool(request.payload.get("allow_new_files", True))
+                if len(allowed) == 1 and len(aliases) == 1 and allow_new:
+                    if isinstance(allowed_files, list):
+                        allowed_files.append(name)
+                    allowed.add(name)
+                    content.setdefault("path_corrections", []).append({
+                        "approved_path": aliases[0],
+                        "implementation_path": name,
+                        "reason": "removed_trailing_txt_suffix",
+                    })
+                else:
+                    raise ProviderError(
+                        f"Inline implementation returned an unapproved path: {name}")
+            if name in seen:
+                raise ProviderError(f"Inline implementation returned a duplicate path: {name}")
+            seen.add(name)
+            entries.append((name, body))
+        inline_paths = [name for name, _ in entries]
+        declared = content.get("changed_files")
+        if declared is None:
+            content["changed_files"] = list(inline_paths)
+        elif (not isinstance(declared, list)
+              or any(not isinstance(name, str) for name in declared)
+              or set(declared) != set(inline_paths)):
+            raise ProviderError(
+                "Inline implementation files do not match declared changed files.")
+        deleted = content.get("deleted_files")
+        if deleted is None:
+            content["deleted_files"] = []
+        elif not isinstance(deleted, list):
+            raise ProviderError("Inline implementation deleted_files must be a list.")
+
+        destination = self.evidence_dir / f"{exchange_id}-{request.task_id}-{request.role}-output.zip"
+        with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, body in entries:
+                archive.writestr(name, body.encode("utf-8"))
+        if not zipfile.is_zipfile(destination):
+            destination.unlink(missing_ok=True)
+            raise ProviderError("The inline implementation output is not a valid ZIP file.")
+        return destination
 
     def _download_output_zip(self, page, selectors: dict[str, Any],
                              request: ProviderRequest, exchange_id: str) -> Path:
@@ -1199,6 +1655,59 @@ class BrowserProvider(Provider):
         path.write_text(json.dumps(diagnostic, indent=2), encoding="utf-8")
 
 
+def _repair_unescaped_json_quotes(candidate: str) -> str:
+    """Escape prose quotes inside JSON strings without changing structural quotes."""
+    repaired: list[str] = []
+    in_string = False
+    escaped = False
+    length = len(candidate)
+    for index, char in enumerate(candidate):
+        if escaped:
+            repaired.append(char)
+            escaped = False
+            continue
+        if char == "\\" and in_string:
+            repaired.append(char)
+            escaped = True
+            continue
+        if char != '"':
+            repaired.append(char)
+            continue
+        if not in_string:
+            in_string = True
+            repaired.append(char)
+            continue
+        following = index + 1
+        while following < length and candidate[following].isspace():
+            following += 1
+        next_char = candidate[following] if following < length else ""
+        if next_char in {":", ",", "}", "]", ""}:
+            in_string = False
+            repaired.append(char)
+        else:
+            repaired.append('\\"')
+    return "".join(repaired)
+
+
+def _json_object_candidates(text: str) -> list[str]:
+    """Return likely envelope objects from a response transcript, newest first."""
+    starts = [match.start() for match in re.finditer(r'\{\s*"schema_version"', text)]
+    candidates: list[str] = []
+    for start in reversed(starts):
+        for end in range(len(text), start, -1):
+            if text[end - 1] != "}":
+                continue
+            candidate = text[start:end].strip()
+            repaired = _repair_unescaped_json_quotes(candidate)
+            try:
+                json.loads(repaired)
+            except json.JSONDecodeError:
+                continue
+            candidates.append(repaired)
+            break
+    return candidates
+
+
 def _extract_json(text: str) -> str:
     stripped = text.strip()
     fences = [match.start() for match in re.finditer(r"```", stripped)]
@@ -1213,12 +1722,14 @@ def _extract_json(text: str) -> str:
             if closing <= content_start:
                 continue
             candidate = stripped[content_start:closing].strip()
+            repaired = _repair_unescaped_json_quotes(candidate)
             try:
-                json.loads(candidate)
-                return candidate
+                json.loads(repaired)
+                return repaired
             except json.JSONDecodeError:
                 continue
-    return stripped
+    candidates = _json_object_candidates(stripped)
+    return candidates[0] if candidates else stripped
 
 
 def _configured_value(value: object) -> str:
@@ -1316,11 +1827,27 @@ PAGE_OBJECTS = {
     },
     "m365_copilot_browser": {
         "new_chat_name": "New chat", "prompt_role": "textbox",
+        "prompt_selector": (
+            'span[role="textbox"][aria-label="Message Copilot"], '
+            '[role="textbox"][aria-label*="Message Copilot" i], '
+            '[contenteditable="true"][aria-label*="Message Copilot" i]'
+        ),
         "sign_in_selector": (
             'a[href*="login.microsoftonline.com"], button:has-text("Sign in"), '
             'a:has-text("Sign in")'
         ),
         "attachment_selector": 'input[type="file"]',
+        "attachment_trigger_selector": (
+            'button[data-testid="chat-input-attach-button"], '
+            'button[aria-label="Add"], button[title="Add"]'
+        ),
+        "attachment_action_selector": (
+            '[role="menuitem"]:has-text("Upload"), '
+            '[role="menuitem"]:has-text("device"), '
+            '[role="menuitem"]:has-text("computer"), '
+            'button:has-text("Upload from this device"), '
+            'button:has-text("Upload file")'
+        ),
         "response_selector": (
             '[data-testid="copilot-response"], [data-testid*="response" i], '
             '[data-testid*="ai-message" i], [data-message-author-role="assistant"], '
