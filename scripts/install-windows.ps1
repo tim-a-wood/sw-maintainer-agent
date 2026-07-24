@@ -92,17 +92,25 @@ $venvMaintain = Join-Path $venvRoot "Scripts\maintain.exe"
 Write-Host "Installing the latest Maintain CLI..."
 & $venvPython -m pip install --disable-pip-version-check --upgrade pip
 Assert-NativeCommand -Action "Updating pip"
-& $venvPython -m pip install --disable-pip-version-check --upgrade $packageSource
+& $venvPython -m pip install --disable-pip-version-check --no-cache-dir `
+    --upgrade --force-reinstall $packageSource
 if ($LASTEXITCODE -ne 0) {
     Write-Host "The online update was unavailable. Installing from this folder..." -ForegroundColor Yellow
     Push-Location $repoRoot
     try {
-        & $venvPython -m pip install --disable-pip-version-check --upgrade ".[browser]"
+        & $venvPython -m pip install --disable-pip-version-check --no-cache-dir `
+            --upgrade --force-reinstall ".[browser]"
         Assert-NativeCommand -Action "Installing Maintain from the local folder"
     }
     finally {
         Pop-Location
     }
+}
+
+$installedVersion = (& $venvPython -m maintain --version | Out-String).Trim()
+Assert-NativeCommand -Action "Checking the installed Maintain runtime"
+if (-not $installedVersion) {
+    throw "The installed Maintain runtime did not report its version."
 }
 
 Write-Host "Preparing the browser used by Copilot and ChatGPT..."
@@ -140,6 +148,7 @@ $pinned = Try-PinTaskbar -ShortcutPath $startMenuShortcut
 
 Write-Host ""
 Write-Host "Installed: $installRoot" -ForegroundColor Green
+Write-Host "Runtime: $installedVersion" -ForegroundColor Green
 Write-Host "Desktop shortcut: $desktopShortcut" -ForegroundColor Green
 if ($pinned) {
     Write-Host "Taskbar shortcut: pinned" -ForegroundColor Green

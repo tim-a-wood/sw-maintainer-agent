@@ -16,6 +16,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
+from . import __version__
+
 
 THEME = Theme({
     "brand": "bold #F8FAFC",
@@ -76,6 +78,7 @@ class Presenter:
         if self.width < 62:
             title = Text("◆  ", style="accent")
             title.append("{ MAINTAIN }", style="brand")
+            title.append(f"  v{__version__}", style="muted")
             self.console.print(title)
             context = "  •  ".join(item for item in (project, provider) if item)
             if context:
@@ -87,7 +90,8 @@ class Presenter:
         grid.add_column(ratio=1)
         details = Text()
         details.append("SOFTWARE MAINTENANCE AGENT\n", style="muted")
-        details.append("{ MAINTAIN }\n", style="bold #F8FAFC")
+        details.append("{ MAINTAIN }", style="bold #F8FAFC")
+        details.append(f"  v{__version__}\n", style="muted")
         details.append("PLAN  >  BUILD  >  REVIEW  >  VERIFY\n", style="accent")
         context = "  •  ".join(item for item in (project or "Project not set up", provider) if item)
         details.append(context, style="label" if project else "warning")

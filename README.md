@@ -64,8 +64,10 @@ Menu shortcuts with the Maintain robot icon. It also asks Windows to pin the
 shortcut to the taskbar. Some company policies block automatic taskbar pinning;
 if that happens, the installer gives the single manual step required.
 
-Run the same script whenever you want to update. To remove the CLI and its
-shortcuts, double-click:
+Close any open Maintain window, then run the same script whenever you want to
+update. The installer force-installs the current release and prints the installed
+runtime version so an old copy cannot be mistaken for a successful update. To
+remove the CLI and its shortcuts, double-click:
 
 ```text
 uninstall-windows.cmd
@@ -269,7 +271,9 @@ contains a screenshot, state trail, and sanitized control inventory; it does not
 record cookies, tokens, message-field values, or general page text.
 After every model click, Maintain waits for the main model selector itself to show
 the preferred model. A matching item that remains visible in the open menu does
-not count, and an unchanged selector stops the exchange before files are sent.
+not count. Maintain checks the selector again immediately before Send, reselects
+the model if an upload reset it to `Auto`, and stops without sending if it changes
+again after the prompt is entered.
 Redirects to unapproved hosts stop before page recognition. If generation is
 interrupted, Maintain uses one visible **Continue generating** control. If the
 response still does not finish, it stops instead of sending a repair request

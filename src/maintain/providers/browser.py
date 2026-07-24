@@ -1024,6 +1024,10 @@ class BrowserProvider(Provider):
         """Submit after confirming the prompt, attachments, and nearby Send control."""
         timeout = int(self.config.get("timeout_ms", 300_000))
         confirm_timeout = int(self.config.get("submission_confirm_timeout_ms", 30_000))
+        selected_model = str(self.config.get("model") or "").strip()
+        if selected_model and not self._preferred_model_is_active(
+                page, selectors, selected_model):
+            self._select_model(page, selectors, selected_model)
         user_message_selector = selectors.get("user_message_selector")
         previous_user_messages = (page.locator(user_message_selector).count()
                                   if user_message_selector else 0)
@@ -1040,6 +1044,15 @@ class BrowserProvider(Provider):
         if expected_attachments and not self._attachments_ready(
                 page, expected_attachments, selectors):
             raise ProviderError("The attached files were not ready when Send was checked.")
+<<<<<<< HEAD
+=======
+        if selected_model and not self._preferred_model_is_active(
+                page, selectors, selected_model):
+            raise ProviderError(
+                "The preferred model changed before submission. No request was sent.")
+        if not self._control_enabled(send):
+            raise ProviderError("The Send control changed before submission.")
+>>>>>>> bd12c5566b0d3f7e2d6425e17813c87915963f52
 
         submit_attempts = max(2, min(int(self.config.get("submit_retries", 3)), 5))
         last_problem = ""
@@ -1293,6 +1306,21 @@ class BrowserProvider(Provider):
         self._close_model_menu(page, 4)
         raise ProviderError(
             f"The preferred model {model!r} is no longer available. Refresh the model list.")
+
+    def _preferred_model_is_active(
+            self, page, selectors: dict[str, Any], model: str) -> bool:
+        picker_selector = selectors.get("model_picker_selector")
+        if not picker_selector:
+            raise ProviderError(
+                "Model selection selectors are not configured for this browser provider.")
+        try:
+            picker = self._primary_model_picker(page, picker_selector)
+        except ProviderError as exc:
+            if "More than one" in str(exc):
+                raise
+            return False
+        return any(_model_matches(model, label)
+                   for label in self._model_control_labels(picker))
 
     def _open_model_path(self, page, picker_selector: str, submenu_selector: str | None,
                          option_selector: str, path: tuple[str, ...], timeout: int) -> bool:
