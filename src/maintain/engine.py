@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Callable
@@ -46,7 +47,10 @@ class WorkflowEngine:
         self.workspaces = WorkspaceManager(config.repository,
                                            config.runtime_root.parent / "workspaces",
                                            (".maintain.json",))
-        self.runner = CommandRunner(config.max_command_log_bytes)
+        self.runner = CommandRunner(
+            config.max_command_log_bytes,
+            source_repository=config.repository,
+        )
 
     def start(self, mode: str, request: str) -> RunRecord:
         if mode not in {"feature", "issue"}:
@@ -395,12 +399,7 @@ class WorkflowEngine:
         self.workspaces.preflight()
         from .workspace import git
         git(self.config.repository, "worktree", "list", "--porcelain")
-        for spec in self.config.commands:
-            executable = spec.argv[0]
-            if executable == "{python}":
-                continue
-            if not (Path(executable).is_file() or shutil.which(executable)):
-                raise PolicyError(f"Verification command is unavailable: {executable}")
+        self._preflight_commands()
         runtime = self.config.runtime_root
         runtime.mkdir(parents=True, exist_ok=True)
         if not os.access(runtime, os.R_OK | os.W_OK | os.X_OK):
@@ -416,10 +415,49 @@ class WorkflowEngine:
             "permissions", "disk_space", "audit",
         )}
 
+    def _preflight_commands(self) -> None:
+        """Fail before assistant work when a configured local command cannot start."""
+        for spec in self.config.commands:
+            executable = spec.argv[0]
+            if executable == "{python}":
+                executable = self.runner.python_executable
+            candidate = Path(executable).expanduser()
+            if not candidate.is_absolute():
+                candidate = (
+                    self.config.repository / spec.working_directory / candidate
+                )
+            if not (candidate.is_file() or shutil.which(executable)):
+                raise PolicyError(f"Verification command is unavailable: {executable}")
+            if (spec.argv[0] == "{python}" and len(spec.argv) >= 3
+                    and spec.argv[1:3] == ("-m", "pytest")):
+                try:
+                    available = subprocess.run(
+                        [
+                            executable,
+                            "-c",
+                            (
+                                "import importlib.util,sys;"
+                                "sys.exit(0 if importlib.util.find_spec('pytest') else 1)"
+                            ),
+                        ],
+                        cwd=self.config.repository,
+                        capture_output=True,
+                        check=False,
+                        timeout=15,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    raise PolicyError(
+                        f"The project Python environment could not be checked: {executable}") from exc
+                if available.returncode:
+                    raise PolicyError(
+                        "Pytest is not installed in the project Python environment "
+                        f"({executable}). Create or update the project .venv, then try again.")
+
     def _preflight(self, record: RunRecord, store: AuditStore) -> None:
         if RunState(record.state) is RunState.CREATED:
             self._move(record, store, RunState.PREFLIGHT)
         with self.presenter.progress("PREPARE", "Check the repository and assistant"):
+            self._preflight_commands()
             before_preflight = {
                 path.resolve() for path in store.artifacts.rglob("*") if path.is_file()
             }
@@ -1040,7 +1078,6 @@ class WorkflowEngine:
         if self.config.providers[profile_name].get("type") in {
                 "chatgpt_browser", "m365_copilot_browser"} and not capabilities.browser_automation:
             raise ProviderError(f"Provider {profile_name} does not declare browser automation.")
-        provider.preflight()
         if hasattr(provider, "set_status_callback"):
             provider.set_status_callback(self.presenter.complete)
         before_provider = {path.resolve() for path in store.artifacts.rglob("*") if path.is_file()}

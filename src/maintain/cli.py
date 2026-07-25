@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
+import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -276,7 +277,11 @@ def main(argv: list[str] | None = None) -> int:
                             f"{args.action.title()} is available only for browser providers.")
                     if args.action == "login":
                         provider.login()
-                        result = {"ready": True}
+                        if not hasattr(provider, "compatibility_check"):
+                            raise ConfigurationError(
+                                "This browser provider cannot verify the signed-in session.")
+                        result = provider.compatibility_check(
+                            require_selected_model=False)
                     elif args.action == "check":
                         if not hasattr(provider, "compatibility_check"):
                             raise ConfigurationError(
@@ -347,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     except MaintainError as exc:
         _show_error(args, str(exc), presenter)
         return exc.exit_code
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, EOFError):
         _show_error(args, "The current operation was cancelled.", presenter,
                     "Use View runs, then resume to continue saved work.")
         return 130
@@ -396,8 +401,17 @@ def _presenter_for(args: argparse.Namespace, config: ProjectConfig | None = None
 
 
 def _command_prefix(config: ProjectConfig) -> str:
-    return (f"maintain --repo {shlex.quote(str(config.repository))} "
-            f"--config {shlex.quote(str(config.path))}")
+    return _shell_command([
+        "maintain", "--repo", str(config.repository),
+        "--config", str(config.path),
+    ])
+
+
+def _shell_command(argv: list[str], *, windows: bool | None = None) -> str:
+    """Render a copyable command for the user's current command shell."""
+    if windows is None:
+        windows = sys.platform == "win32"
+    return subprocess.list2cmdline(argv) if windows else shlex.join(argv)
 
 
 def _summary(record, json_output: bool = False, presenter: Presenter | None = None,
@@ -500,7 +514,7 @@ def _home(args: argparse.Namespace) -> int:
             _provider_label(config) if config else "Setup required",
             len(values), configured=config is not None, setup_issue=config_error,
         )
-        choice = presenter.ask("Choose", "1").casefold()
+        choice = presenter.ask("Choose", "1" if config is not None else "S").casefold()
         if choice == "q":
             return 0
         if choice == "s":
@@ -869,17 +883,18 @@ def _interactive_assistant_settings(args: argparse.Namespace, config: ProjectCon
             _pause(presenter)
             return
     current = str(config.providers[profile].get("model") or "Not selected")
-    presenter.section("ASSISTANT", "Model preference", f"Current: {current}")
+    presenter.section("ASSISTANT", "Browser assistant", f"Current model: {current}")
     presenter.console.print()
-    presenter.menu_line("1", "Change model", "Use the saved model list")
-    presenter.menu_line("2", "Refresh and change", "Retrieve models from the browser")
-    presenter.menu_line("3", "Check compatibility", "Inspect the browser without sending")
+    presenter.menu_line("1", "Sign in or reconnect", "Verify the browser session")
+    presenter.menu_line("2", "Change model", "Use the saved model list")
+    presenter.menu_line("3", "Refresh and change", "Retrieve models from the browser")
+    presenter.menu_line("4", "Check compatibility", "Inspect the browser without sending")
     presenter.menu_line("b", "Back", "", quiet=True)
     choice = presenter.ask("Choose", "1").casefold()
     if choice == "b":
         return
-    if choice not in {"1", "2", "3"}:
-        presenter.error("Choose 1, 2, 3, or B.")
+    if choice not in {"1", "2", "3", "4"}:
+        presenter.error("Choose 1, 2, 3, 4, or B.")
         _pause(presenter)
         return
     command = ["--repo", str(config.repository)]
@@ -887,11 +902,13 @@ def _interactive_assistant_settings(args: argparse.Namespace, config: ProjectCon
         command.append("--no-animation")
     if args.no_color:
         command.append("--no-color")
-    if choice == "3":
+    if choice == "1":
+        command.extend(["provider", "login", profile])
+    elif choice == "4":
         command.extend(["provider", "check", profile])
     else:
         command.extend(["provider", "model", profile])
-        if choice == "2":
+        if choice == "3":
             command.append("--refresh")
     main(command)
     _pause(presenter)

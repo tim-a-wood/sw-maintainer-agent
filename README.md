@@ -52,6 +52,10 @@ browser profile.
 
 ### Windows
 
+Install [Python 3.11 or later](https://www.python.org/downloads/windows/) and
+[Git for Windows](https://git-scm.com/download/win) first. The installer checks
+both prerequisites before changing the private Maintain runtime.
+
 Download and extract this repository, then double-click:
 
 ```text
@@ -71,12 +75,33 @@ shortcuts, double-click:
 uninstall-windows.cmd
 ```
 
-Uninstall keeps run history, settings, and browser sign-in data under
+Uninstall keeps run history, settings, browser sign-in data, and runtime logs under
 `%USERPROFILE%\.maintain`.
+
+If installation or startup fails, the shortcut keeps the error visible. The
+installer and runtime also keep logs at:
+
+```text
+%LOCALAPPDATA%\Programs\Maintain\install.log
+%USERPROFILE%\.maintain\logs\maintain-runtime.log
+```
+
+Running the installer again repairs an unusable private Python environment. It
+does not remove run history, settings, or browser profiles.
+
+For a shareable support bundle, double-click `collect-maintain-diagnostics.cmd`.
+It creates `maintain-diagnostics.zip` in the current folder with Windows and
+PowerShell versions, command resolution, private-runtime versions, installed-file
+metadata, the install log, and up to 20 control-only browser failure or transport
+JSON files. It does not collect process command lines, prompts, responses,
+screenshots, `run.json`, or `audit.jsonl`. The bundle can still contain local
+paths, browser control labels, attachment filenames, and model names, so review
+it before sharing.
 
 ### Manual installation
 
-Clone this repository and create a dedicated virtual environment:
+On macOS or Linux, clone this repository and create a dedicated virtual
+environment:
 
 ```sh
 git clone https://github.com/tim-a-wood/sw-maintainer-agent.git
@@ -84,7 +109,7 @@ cd sw-maintainer-agent
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e '.[browser]'
+python -m pip install '.[browser]'
 python -m playwright install chromium
 maintain --version
 ```
@@ -93,13 +118,20 @@ If you do not need ChatGPT or Microsoft 365 Copilot browser automation, install
 without the browser extra:
 
 ```sh
-python -m pip install -e .
+python -m pip install .
 ```
 
-For a manual Windows installation, activate the environment with:
+On Windows PowerShell, use the Windows Python launcher and activation command:
 
 ```powershell
+git clone https://github.com/tim-a-wood/sw-maintainer-agent.git
+cd sw-maintainer-agent
+py -3 -m venv .venv
 .venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install '.[browser]'
+python -m playwright install chromium
+maintain --version
 ```
 
 ## Set up an existing project
@@ -169,15 +201,15 @@ when your organization needs an explicit visible-page check and you have stable
 selectors for those labels. Do not put passwords, tokens, cookies, or API keys
 in the configuration.
 
-### 4. Validate the setup
+### 4. Validate the project configuration
 
 ```sh
 maintain --repo /path/to/project config validate
 maintain --repo /path/to/project provider list
-maintain --repo /path/to/project doctor
 ```
 
-For the first browser-provider setup, open the controlled browser and sign in:
+For the first browser-provider setup, open the controlled browser and sign in
+before running browser readiness checks:
 
 ```sh
 maintain --repo /path/to/project provider login chatgpt
@@ -185,11 +217,13 @@ maintain --repo /path/to/project provider login chatgpt
 maintain --repo /path/to/project provider login m365
 ```
 
-Then verify the selected profile:
+Refresh the available models, select one, check the visible controls, and only
+then run the full readiness check:
 
 ```sh
-maintain --repo /path/to/project provider doctor chatgpt
+maintain --repo /path/to/project provider model chatgpt --refresh
 maintain --repo /path/to/project provider check chatgpt
+maintain --repo /path/to/project doctor
 ```
 
 Use the profile name shown by `maintain provider list` if you renamed it.

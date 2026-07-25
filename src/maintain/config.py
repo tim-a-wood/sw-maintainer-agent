@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .errors import ConfigurationError, PolicyError
@@ -59,6 +59,7 @@ class CommandSpec:
     paths: tuple[str, ...] = ()
     matlab: bool = False
     phase: str = "verify"
+    working_directory: str = "."
 
 
 @dataclass(frozen=True)
@@ -266,7 +267,7 @@ class ProjectConfig:
         for name, raw in command_data.items():
             raw = _object(raw, f"verification command {name}")
             _reject_unknown(raw, {"argv", "timeout_seconds", "paths", "matlab", "phase",
-                                  "working_directory", "environment_allowlist", "required", "network"},
+                                  "working_directory"},
                             f"verification command {name}")
             argv = raw.get("argv", []) if isinstance(raw, dict) else []
             if not argv or not all(isinstance(x, str) and x for x in argv):
@@ -277,6 +278,23 @@ class ProjectConfig:
             phase = str(raw.get("phase", "verify"))
             if phase not in {"verify", "feature", "issue", "reproduce"}:
                 raise ConfigurationError(f"Verification command {name!r} has an unknown phase.")
+            working_directory = str(raw.get("working_directory", ".")).strip()
+            working_path = PurePosixPath(working_directory)
+            if (not working_directory or "\\" in working_directory
+                    or working_path.is_absolute()
+                    or any(part in {"..", ".git", ".maintain"} for part in working_path.parts)):
+                raise ConfigurationError(
+                    f"Verification command {name!r} has an unsafe working_directory.")
+            source_working_directory = (root / Path(*working_path.parts)).resolve()
+            try:
+                source_working_directory.relative_to(root)
+            except ValueError as exc:
+                raise ConfigurationError(
+                    f"Verification command {name!r} working_directory escapes the repository."
+                ) from exc
+            if not source_working_directory.is_dir():
+                raise ConfigurationError(
+                    f"Verification command {name!r} working_directory does not exist.")
             commands.append(CommandSpec(
                 name=name,
                 argv=tuple(argv),
@@ -284,6 +302,7 @@ class ProjectConfig:
                 paths=tuple(_strings(raw.get("paths"))),
                 matlab=_boolean(raw.get("matlab"), f"Verification command {name}.matlab", False),
                 phase=phase,
+                working_directory=working_path.as_posix(),
             ))
         execution = _object(data.get("execution", {}), "execution")
         audit = _object(data.get("audit", {}), "audit")
@@ -400,10 +419,12 @@ def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
     elif provider == "m365-browser":
         selected = "m365"
         profiles = {selected: {"type": "m365_copilot_browser",
-                               "url": "https://m365.cloud.microsoft/chat",
-                               "browser": "chromium",
+                               "url": ("https://copilot.cloud.microsoft/"
+                                       "?internalredirect=M365Cloud&auth=2"),
+                               "browser": "msedge",
                                "profile_dir": "~/.maintain/browser/m365", "visible": True,
-                               "allowed_hosts": ["m365.cloud.microsoft"]}}
+                               "allowed_hosts": ["copilot.cloud.microsoft",
+                                                 "m365.cloud.microsoft"]}}
     else:
         selected = "codex"
         profiles = {selected: {"type": "codex_cli"}}

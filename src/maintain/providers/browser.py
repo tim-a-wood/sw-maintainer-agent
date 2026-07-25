@@ -478,6 +478,27 @@ class BrowserProvider(Provider):
             page.goto(destination.geturl(), wait_until="domcontentloaded",
                       timeout=min(int(self.config.get("timeout_ms", 300_000)), 60_000))
 
+    def _wait_for_empty_chat(self, page, selectors: dict[str, Any]) -> Any:
+        """Confirm that New chat did not leave us in a prior conversation."""
+        user_selector = selectors.get("user_message_selector")
+        if not user_selector:
+            raise ProviderError(
+                "The browser layout cannot confirm that a new conversation is empty.")
+        timeout = min(int(self.config.get("timeout_ms", 300_000)), 15_000)
+        deadline = time.monotonic() + timeout / 1_000
+        last_prompt = None
+        while time.monotonic() < deadline:
+            last_prompt = self._resolve_prompt(page, selectors)
+            visible_users = [
+                node for node in page.locator(user_selector).all() if node.is_visible()
+            ]
+            if not self._prompt_value(last_prompt).strip() and not visible_users:
+                self._mark_state("conversation_ready", "Empty conversation confirmed")
+                return last_prompt
+            page.wait_for_timeout(250)
+        raise ProviderError(
+            "New chat did not produce an empty conversation. No files were attached.")
+
     @staticmethod
     def _new_chat_penalty(control) -> int:
         href = str(control.get_attribute("href") or "")
@@ -669,6 +690,7 @@ class BrowserProvider(Provider):
                 stage = "start new chat"
                 self._new_chat(page, new_chat_name)
                 layout, prompt = self._recognize_page(page, selectors)
+                prompt = self._wait_for_empty_chat(page, selectors)
                 stage = "select model"
                 selected_model = str(self.config.get("model") or "").strip()
                 if selected_model:
@@ -1030,6 +1052,10 @@ class BrowserProvider(Provider):
         """Submit after confirming the prompt, attachments, and nearby Send control."""
         timeout = int(self.config.get("timeout_ms", 300_000))
         confirm_timeout = int(self.config.get("submission_confirm_timeout_ms", 30_000))
+        selected_model = str(self.config.get("model") or "").strip()
+        if selected_model and not self._preferred_model_is_active(
+                page, selectors, selected_model):
+            self._select_model(page, selectors, selected_model)
         user_message_selector = selectors.get("user_message_selector")
         previous_user_messages = (page.locator(user_message_selector).count()
                                   if user_message_selector else 0)
@@ -1046,6 +1072,10 @@ class BrowserProvider(Provider):
         if expected_attachments and not self._attachments_ready(
                 page, expected_attachments, selectors):
             raise ProviderError("The attached files were not ready when Send was checked.")
+        if selected_model and not self._preferred_model_is_active(
+                page, selectors, selected_model):
+            raise ProviderError(
+                "The preferred model changed before submission. No request was sent.")
 
         submit_attempts = max(2, min(int(self.config.get("submit_retries", 3)), 5))
         last_problem = ""
@@ -1299,6 +1329,21 @@ class BrowserProvider(Provider):
         self._close_model_menu(page, 4)
         raise ProviderError(
             f"The preferred model {model!r} is no longer available. Refresh the model list.")
+
+    def _preferred_model_is_active(
+            self, page, selectors: dict[str, Any], model: str) -> bool:
+        picker_selector = selectors.get("model_picker_selector")
+        if not picker_selector:
+            raise ProviderError(
+                "Model selection selectors are not configured for this browser provider.")
+        try:
+            picker = self._primary_model_picker(page, picker_selector)
+        except ProviderError as exc:
+            if "More than one" in str(exc):
+                raise
+            return False
+        return any(_model_matches(model, label)
+                   for label in self._model_control_labels(picker))
 
     def _open_model_path(self, page, picker_selector: str, submenu_selector: str | None,
                          option_selector: str, path: tuple[str, ...], timeout: int) -> bool:
@@ -1606,7 +1651,7 @@ class BrowserProvider(Provider):
         except Exception as screenshot_error:
             diagnostic["screenshot_error"] = str(screenshot_error)
         try:
-            diagnostic["url"] = page.url
+            diagnostic["url"] = _sanitized_browser_url(page.url)
             diagnostic["title"] = page.title()
             selectors = {**PAGE_OBJECTS.get(self.name, {}),
                          **self.config.get("selectors", {})}
@@ -1738,6 +1783,12 @@ def _extract_json(text: str) -> str:
 def _configured_value(value: object) -> str:
     shown = str(value or "").strip()
     return "" if shown.startswith("SET_") else shown
+
+
+def _sanitized_browser_url(value: str) -> str:
+    """Retain routing evidence without authentication hints or request identifiers."""
+    parsed = urlparse(value)
+    return parsed._replace(params="", query="", fragment="").geturl()
 
 
 def _model_label(value: str) -> str:
