@@ -696,10 +696,21 @@ class WorkflowEngine:
         paths = task["allowed_files"]
         files = {path: (Path(record.worktree) / path).read_text(encoding="utf-8")
                  for path in paths if (Path(record.worktree) / path).is_file()}
+        approved_path_aliases: dict[str, str] = {}
+        if self.config.allow_new_files and len(paths) == 1:
+            approved = str(paths[0])
+            if approved.endswith(".txt"):
+                corrected = approved[:-4]
+                corrected_target = self.config.repository / corrected
+                if corrected and not corrected_target.exists() and not corrected_target.is_symlink():
+                    approved_path_aliases[corrected] = approved
         payload = {"mode": record.mode, "request": record.request, "task": task,
                    "files": files, "new_files": [path for path in paths if path not in files],
                    "attempt": record.attempt,
-                   "prior_evidence": record.evidence}
+                   "prior_evidence": record.evidence,
+                   "allow_new_files": self.config.allow_new_files,
+                   "allow_deletes": self.config.allow_deletes,
+                   "approved_path_aliases": approved_path_aliases}
         patch_path = store.artifacts / f"{attempt_dir}/patch.diff"
         workspace_edited = False
         if patch_path.is_file():

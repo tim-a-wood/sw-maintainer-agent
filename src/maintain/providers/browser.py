@@ -607,9 +607,6 @@ class BrowserProvider(Provider):
                 self._start_journey()
                 self._open_page(page)
                 self._verify_session(page, selectors)
-                page.screenshot(path=str(self.evidence_dir /
-                                f"{self.name}-preflight-{time.time_ns()}.png"),
-                                full_page=True)
             except ProviderError:
                 raise
             except Exception as exc:
@@ -737,29 +734,39 @@ class BrowserProvider(Provider):
                 assert_no_secrets(raw, "browser response")
                 (exchange_dir / f"{request.role}-initial.txt").write_text(raw, encoding="utf-8")
                 repaired = False
-                try:
-                    stage = "validate response"
-                    parsed = parse_response(_extract_json(raw), request, self.name)
-                except ProviderError:
-                    repaired = True
-                    stage = "repair response"
-                    repair_message = (
-                        "Your last response did not match this request. Return only one complete "
-                        f"JSON envelope with schema_version={request.schema_version}, "
-                        f"run_id={json.dumps(request.run_id)}, "
-                        f"task_id={json.dumps(request.task_id)}, "
-                        f"role={json.dumps(request.role)}, provider=\"assistant\", and the "
-                        "correct content for the attached package. Do not reuse identifiers from "
-                        "an earlier chat or task."
-                    )
-                    previous_responses = self._visible_texts(page, response_selector)
-                    self._submit(page, prompt, repair_message, selectors)
-                    raw = self._wait_for_response_text(
-                        page, selectors, request, previous_responses)
-                    assert_no_secrets(raw, "browser repair response")
-                    (exchange_dir / f"{request.role}-repair.txt").write_text(
-                        raw, encoding="utf-8")
-                    parsed = parse_response(_extract_json(raw), request, self.name)
+                envelope_repairs = 0
+                max_envelope_repairs = max(1, min(int(
+                    self.config.get("envelope_retries", 2)), 3))
+                while True:
+                    try:
+                        stage = "validate response"
+                        parsed = parse_response(_extract_json(raw), request, self.name)
+                        break
+                    except ProviderError as exc:
+                        if envelope_repairs >= max_envelope_repairs:
+                            raise ProviderError(
+                                f"The response envelope remained invalid after "
+                                f"{envelope_repairs} bounded repair attempt(s): {exc}") from exc
+                        repaired = True
+                        envelope_repairs += 1
+                        stage = "repair response"
+                        repair_message = (
+                            "Correct only the response envelope. Return one complete JSON object and "
+                            "no other text. Use schema_version=1 and these exact values: "
+                            f"run_id={json.dumps(request.run_id)}, "
+                            f"task_id={json.dumps(request.task_id)}, "
+                            f"role={json.dumps(request.role)}, provider=\"assistant\". "
+                            f"Envelope correction attempt {envelope_repairs} of "
+                            f"{max_envelope_repairs}."
+                        )
+                        previous_responses = self._visible_texts(page, response_selector)
+                        self._submit(page, prompt, repair_message, selectors)
+                        raw = self._wait_for_response_text(
+                            page, selectors, request, previous_responses)
+                        assert_no_secrets(raw, "browser repair response")
+                        (exchange_dir / (
+                            f"{request.role}-envelope-repair-{envelope_repairs}.txt"
+                        )).write_text(raw, encoding="utf-8")
                 parsed, raw, contract_repairs = self._repair_role_contract(
                     page, prompt, selectors, request, parsed, raw,
                     exchange_dir, response_selector)
@@ -768,50 +775,46 @@ class BrowserProvider(Provider):
                     conversation_id=f"{self.name}-{exchange_dir.name}",
                 )
                 if request.role == "implement":
-                    output_zip = self._inline_output_zip(
-                        parsed.content, request, exchange_dir.name)
-                    queries = parsed.content.get("context_queries")
-                    if (output_zip is None and isinstance(queries, list) and queries):
+                    output_zip = self._inline_output_zip(parsed.content, request, exchange_dir.name)
+                    allowed = [str(path) for path in request.payload.get("task", {}).get("allowed_files", [])]
+                    implementation_repairs = 0
+                    max_repairs = max(2, min(int(self.config.get("implementation_content_retries", 3)), 5))
+                    while output_zip is None and implementation_repairs < max_repairs:
+                        download_selector = selectors.get("output_download_selector")
+                        downloadable = bool(download_selector and any(
+                            node.is_visible() for node in page.locator(download_selector).all()))
+                        if downloadable:
+                            break
+                        implementation_repairs += 1
                         stage = "repair implementation content"
-                        allowed = [
-                            str(path) for path in
-                            request.payload.get("task", {}).get("allowed_files", [])
-                        ]
                         implementation_repair = (
-                            "The supplied package is sufficient for this implementation. Do not "
-                            "return context_queries. Return only one complete JSON envelope for "
-                            f"run_id={json.dumps(request.run_id)}, "
-                            f"task_id={json.dumps(request.task_id)}, "
-                            f"role={json.dumps(request.role)}. In content.files, return the complete "
-                            "final text for every changed file. Use only these exact approved paths: "
-                            f"{json.dumps(allowed)}. Also return changed_files and deleted_files."
+                            "Return the implementation now. Do not request context or explain. Return only one "
+                            "complete JSON envelope with the exact current run_id, task_id, role, and "
+                            "provider=\"assistant\". content.files must contain path and complete final "
+                            "content for every changed file. Use only these approved paths, or remove only an "
+                            f"accidental trailing .txt suffix: {json.dumps(allowed)}. Return changed_files and "
+                            f"deleted_files. Correction attempt {implementation_repairs} of {max_repairs}."
                         )
-                        previous_responses = self._visible_texts(page, response_selector)
+                        previous = self._visible_texts(page, response_selector)
                         self._submit(page, prompt, implementation_repair, selectors)
-                        raw = self._wait_for_response_text(
-                            page, selectors, request, previous_responses)
+                        raw = self._wait_for_response_text(page, selectors, request, previous)
                         assert_no_secrets(raw, "browser implementation repair response")
-                        (exchange_dir / f"{request.role}-content-repair.txt").write_text(
-                            raw, encoding="utf-8")
+                        (exchange_dir / f"{request.role}-content-repair-{implementation_repairs}.txt").write_text(raw, encoding="utf-8")
                         parsed = parse_response(_extract_json(raw), request, self.name)
-                        parsed = replace(
-                            parsed,
-                            conversation_id=f"{self.name}-{exchange_dir.name}",
-                        )
-                        output_zip = self._inline_output_zip(
-                            parsed.content, request, exchange_dir.name)
+                        parsed = replace(parsed, conversation_id=f"{self.name}-{exchange_dir.name}")
+                        output_zip = self._inline_output_zip(parsed.content, request, exchange_dir.name)
                     if output_zip is None:
                         download_selector = selectors.get("output_download_selector")
                         downloadable = bool(download_selector and any(
                             node.is_visible() for node in page.locator(download_selector).all()))
                         if not downloadable:
                             raise ProviderError(
-                                "The implementation response contained neither complete inline "
-                                "files nor a downloadable output artifact.")
+                                "The implementation response contained neither complete inline files nor a "
+                                f"downloadable output artifact after {implementation_repairs} bounded repair attempt(s).")
                         stage = "download implementation"
-                        output_zip = self._download_output_zip(
-                            page, selectors, request, exchange_dir.name)
+                        output_zip = self._download_output_zip(page, selectors, request, exchange_dir.name)
                     parsed.content["_maintain_output_zip"] = output_zip.name
+                    parsed.content["_maintain_implementation_repairs"] = implementation_repairs
                 page.screenshot(path=str(exchange_dir / f"{request.role}.png"), full_page=True)
                 (exchange_dir / f"{request.role}.txt").write_text(raw, encoding="utf-8")
                 self._mark_state("response_saved", "Response and audit evidence saved")
@@ -823,7 +826,10 @@ class BrowserProvider(Provider):
                                 "conversation_id": parsed.conversation_id,
                                 "states": self._journey,
                                 "schema_repair": repaired,
+                                "envelope_repairs": envelope_repairs,
                                 "contract_repairs": contract_repairs,
+                                "implementation_repairs": (
+                                    implementation_repairs if request.role == "implement" else 0),
                                 "output_zip": (output_zip.name if request.role == "implement"
                                                else None)}),
                     encoding="utf-8")
@@ -1024,10 +1030,6 @@ class BrowserProvider(Provider):
         """Submit after confirming the prompt, attachments, and nearby Send control."""
         timeout = int(self.config.get("timeout_ms", 300_000))
         confirm_timeout = int(self.config.get("submission_confirm_timeout_ms", 30_000))
-        selected_model = str(self.config.get("model") or "").strip()
-        if selected_model and not self._preferred_model_is_active(
-                page, selectors, selected_model):
-            self._select_model(page, selectors, selected_model)
         user_message_selector = selectors.get("user_message_selector")
         previous_user_messages = (page.locator(user_message_selector).count()
                                   if user_message_selector else 0)
@@ -1044,15 +1046,6 @@ class BrowserProvider(Provider):
         if expected_attachments and not self._attachments_ready(
                 page, expected_attachments, selectors):
             raise ProviderError("The attached files were not ready when Send was checked.")
-<<<<<<< HEAD
-=======
-        if selected_model and not self._preferred_model_is_active(
-                page, selectors, selected_model):
-            raise ProviderError(
-                "The preferred model changed before submission. No request was sent.")
-        if not self._control_enabled(send):
-            raise ProviderError("The Send control changed before submission.")
->>>>>>> bd12c5566b0d3f7e2d6425e17813c87915963f52
 
         submit_attempts = max(2, min(int(self.config.get("submit_retries", 3)), 5))
         last_problem = ""
@@ -1307,21 +1300,6 @@ class BrowserProvider(Provider):
         raise ProviderError(
             f"The preferred model {model!r} is no longer available. Refresh the model list.")
 
-    def _preferred_model_is_active(
-            self, page, selectors: dict[str, Any], model: str) -> bool:
-        picker_selector = selectors.get("model_picker_selector")
-        if not picker_selector:
-            raise ProviderError(
-                "Model selection selectors are not configured for this browser provider.")
-        try:
-            picker = self._primary_model_picker(page, picker_selector)
-        except ProviderError as exc:
-            if "More than one" in str(exc):
-                raise
-            return False
-        return any(_model_matches(model, label)
-                   for label in self._model_control_labels(picker))
-
     def _open_model_path(self, page, picker_selector: str, submenu_selector: str | None,
                          option_selector: str, path: tuple[str, ...], timeout: int) -> bool:
         for attempt in range(2):
@@ -1446,16 +1424,11 @@ class BrowserProvider(Provider):
             # deterministic fallback instead of exhausting chat-only contract retries.
             return ""
         if role == "implement":
-            files = content.get("files")
-            queries = content.get("context_queries")
-            changed = content.get("changed_files")
-            if isinstance(files, list) and files:
-                return ""
-            if isinstance(queries, list) and queries:
-                return ""
-            if isinstance(changed, list) and changed:
-                return ""
-            return "content must contain complete files, context_queries, or changed_files"
+            # Implementation recovery is handled after envelope validation. Empty or alternate
+            # content must reach the bounded implementation-content retry loop, which can request
+            # complete files and assess downloadable artifacts. Do not consume generic contract
+            # retries before that role-specific recovery runs.
+            return ""
         if role == "review":
             decision = str(content.get("decision", "")).strip().casefold()
             result = str(content.get("result", "")).strip().casefold()
@@ -1525,14 +1498,16 @@ class BrowserProvider(Provider):
                 # Copilot can correctly remove an accidental transport-style .txt suffix from a
                 # single source-file path, for example main.c.txt -> main.c. Permit only this
                 # narrow, auditable correction when project policy allows new files.
-                aliases = [approved for approved in allowed if approved == f"{name}.txt"]
-                allow_new = bool(request.payload.get("allow_new_files", True))
-                if len(allowed) == 1 and len(aliases) == 1 and allow_new:
+                aliases = request.payload.get("approved_path_aliases", {})
+                approved_alias = aliases.get(name) if isinstance(aliases, dict) else None
+                allow_new = request.payload.get("allow_new_files") is True
+                if (len(allowed) == 1 and isinstance(approved_alias, str)
+                        and approved_alias in allowed and allow_new):
                     if isinstance(allowed_files, list):
                         allowed_files.append(name)
                     allowed.add(name)
                     content.setdefault("path_corrections", []).append({
-                        "approved_path": aliases[0],
+                        "approved_path": approved_alias,
                         "implementation_path": name,
                         "reason": "removed_trailing_txt_suffix",
                     })

@@ -1,0 +1,166 @@
+{
+  "files": [
+    {
+      "bytes": 490,
+      "path": "prompts/feature_implement.md",
+      "sha256": "4f14c94277bf0b4099f4d6eb59acaf82af5b59ecc702cb843164f3abbc33e194"
+    },
+    {
+      "bytes": 106,
+      "path": "prompts/feature_repair.md",
+      "sha256": "7ec70cfa5b60404ffd591a55b51da56edb819059f8efd51d28f0626bdf485aec"
+    },
+    {
+      "bytes": 277,
+      "path": "prompts/feature_review.md",
+      "sha256": "c91859e0f92faa11c861ddc142ed14b7a96e92bd256b87ef5fa80711e3cca2e7"
+    },
+    {
+      "bytes": 274,
+      "path": "prompts/feature_scope.md",
+      "sha256": "9e5ac3ca2bb06f150fcb85fec83f75d9206761ac52f87a2dc254eebe110f4c04"
+    },
+    {
+      "bytes": 161,
+      "path": "prompts/issue_analysis_review.md",
+      "sha256": "b0d187bcb6043373b7757831b6865f17e93cf6550e121253424d687bf997d965"
+    },
+    {
+      "bytes": 227,
+      "path": "prompts/issue_analyze.md",
+      "sha256": "452e71f580e6f87517bb959ff8385336fe5a4a3a23f863b2edcb041cc5efa43c"
+    },
+    {
+      "bytes": 490,
+      "path": "prompts/issue_implement.md",
+      "sha256": "4f14c94277bf0b4099f4d6eb59acaf82af5b59ecc702cb843164f3abbc33e194"
+    },
+    {
+      "bytes": 106,
+      "path": "prompts/issue_repair.md",
+      "sha256": "7ec70cfa5b60404ffd591a55b51da56edb819059f8efd51d28f0626bdf485aec"
+    },
+    {
+      "bytes": 277,
+      "path": "prompts/issue_review.md",
+      "sha256": "c91859e0f92faa11c861ddc142ed14b7a96e92bd256b87ef5fa80711e3cca2e7"
+    },
+    {
+      "bytes": 274,
+      "path": "prompts/issue_scope.md",
+      "sha256": "9e5ac3ca2bb06f150fcb85fec83f75d9206761ac52f87a2dc254eebe110f4c04"
+    },
+    {
+      "bytes": 36,
+      "path": "src/maintain/artifacts/__init__.py",
+      "sha256": "be543fdc5e94cdfa9883884bb37412c8215b4f1ead830e7a2d03cb8206a31560"
+    },
+    {
+      "bytes": 562,
+      "path": "src/maintain/artifacts/contracts.py",
+      "sha256": "99f749acb6b35fa967b0c1b89a4808b7adbcd77a285c1190f0bffab0260bee7c"
+    },
+    {
+      "bytes": 6435,
+      "path": "src/maintain/artifacts/implementation.py",
+      "sha256": "5ad27d7eb571d07cbdcb4eb6000d2b7cd3a58b76c0e86bf77686074bae83b0a1"
+    },
+    {
+      "bytes": 2010,
+      "path": "src/maintain/artifacts/markdown.py",
+      "sha256": "d3b118007632fe4bbc28b6c50038084d006b0d128c665fa5cb673834313fa4d1"
+    },
+    {
+      "bytes": 2893,
+      "path": "src/maintain/artifacts/review.py",
+      "sha256": "229aee31b27f42a118c7b6fef9f094391b75ed60796e4cfc9d960b70717533e0"
+    },
+    {
+      "bytes": 2092,
+      "path": "src/maintain/artifacts/validation.py",
+      "sha256": "918b409b3cc83a16474375542168f60a0cd563c31c911613f7c3ef38140fb156"
+    },
+    {
+      "bytes": 34,
+      "path": "src/maintain/copilot/__init__.py",
+      "sha256": "8d0c24963bea50054a6d75cf09ce7b31e66eae16f2618e840ad7f1ea706e2c7b"
+    },
+    {
+      "bytes": 9581,
+      "path": "src/maintain/copilot/browser.py",
+      "sha256": "539d41713c448eaf32159388d52b335133850a2f8111193e969746eb578aea55"
+    },
+    {
+      "bytes": 4719,
+      "path": "src/maintain/copilot/client.py",
+      "sha256": "5f51687ffc063bc8392d66c50b4e2b8bbc853ea21243b19e5032c051446831b4"
+    },
+    {
+      "bytes": 12651,
+      "path": "src/maintain/copilot/downloads.py",
+      "sha256": "db9232411c428cf724fd99ee0ca915e47b9d5214b75b6f0469f363f805a3bda9"
+    },
+    {
+      "bytes": 7124,
+      "path": "src/maintain/copilot/models.py",
+      "sha256": "2411d47513ab47582d646e60bf59688956bdef5d1a65b920c0c78769bf5fbcff"
+    },
+    {
+      "bytes": 3863,
+      "path": "src/maintain/copilot/package.py",
+      "sha256": "6a36f5d0ecd3d5995b852bd4f623387d531ca295fa1da15a38f096b1dad08566"
+    },
+    {
+      "bytes": 1329,
+      "path": "src/maintain/copilot/result.py",
+      "sha256": "2b7fd4ce22583a8fda2f4b96d008c739d6db8e87744ddc0ab0585c81a8b518cb"
+    },
+    {
+      "bytes": 37,
+      "path": "src/maintain/repository/__init__.py",
+      "sha256": "e77e3249ba4fe3960abef9097ca201a7bf8d353e1a15372edcebbe8da97a241a"
+    },
+    {
+      "bytes": 3871,
+      "path": "src/maintain/repository/pack.py",
+      "sha256": "d00e9f25413fce44f78ae5d503573504e2c1acd93c05dc275231c22ec360d004"
+    },
+    {
+      "bytes": 2844,
+      "path": "src/maintain/repository/workspace.py",
+      "sha256": "f62fe1cd8bb0ff60de92c9bbc0b0c55f389af0d6d997ab23ffbc7df129d22494"
+    },
+    {
+      "bytes": 39,
+      "path": "src/maintain/verification/__init__.py",
+      "sha256": "afca845a4922ab8b09c87161b2e59bb4ae40cbbfd369a2df05ab3fcb5f0f4bf1"
+    },
+    {
+      "bytes": 648,
+      "path": "src/maintain/verification/models.py",
+      "sha256": "0c72d03d4f8088f4f35a2de15e11e20540ff5f0b2408cc29fe7967675be4a40b"
+    },
+    {
+      "bytes": 1333,
+      "path": "src/maintain/verification/runner.py",
+      "sha256": "b95e262a5ed11a8a54406f3825d94e8d9668d6521ff9cb844243cb75dc5c80be"
+    },
+    {
+      "bytes": 36,
+      "path": "src/maintain/workflows/__init__.py",
+      "sha256": "3fc46c3be10aa245774be3de7db1755d1baa63f51aa82bb211a027066f221b4b"
+    },
+    {
+      "bytes": 1264,
+      "path": "src/maintain/workflows/state.py",
+      "sha256": "2a180b7b657c22f355fbf20c774f8dc7497f4b8960ada342b853e3721b2aeed1"
+    },
+    {
+      "bytes": 4868,
+      "path": "tests/test_artifact_interface.py",
+      "sha256": "9e868a9f3cb73362c8390cc71f8fb51a9b1ab77f45a2c450f1df9ad44546b886"
+    }
+  ],
+  "overlay_for": "maintain.zip",
+  "specification": "Maintain Copilot Artifact Interface Re-Architecture Specification Revision 3"
+}
