@@ -1,0 +1,101 @@
+name: Windows smoke
+
+on:
+  push:
+    branches:
+      - main
+      - "audit/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install test runtime
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade pip
+          python -m pip install --disable-pip-version-check ".[browser]" pytest
+
+      - name: Run active workflow tests
+        shell: pwsh
+        run: |
+          python -m pytest -q
+          maintain --version
+
+      - name: Exercise installer, update, launcher, and diagnostics
+        shell: pwsh
+        env:
+          MAINTAIN_PACKAGE_SOURCE: ".[browser]"
+        run: |
+          & .\scripts\install-windows.ps1
+          if (-not $?) { throw "The installer failed." }
+
+          $installedLauncher = Join-Path $env:LOCALAPPDATA "Programs\Maintain\Maintain.cmd"
+          & $installedLauncher --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Push-Location .\launchers
+          try {
+            & .\maintain.cmd --version
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          finally {
+            Pop-Location
+          }
+
+          $privatePython = Join-Path $env:LOCALAPPDATA `
+            "Programs\Maintain\venv\Scripts\python.exe"
+          [IO.File]::WriteAllBytes($privatePython, [byte[]]@())
+
+          & .\scripts\install-windows.ps1
+          if (-not $?) { throw "Repairing the private environment failed." }
+
+          & $installedLauncher --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & .\scripts\collect-maintain-diagnostics.ps1 `
+            -OutputPath (Join-Path $env:RUNNER_TEMP "maintain-diagnostics.zip")
+          if (-not $?) { throw "Diagnostic collection failed." }
+
+      - name: Collect failure evidence
+        if: failure()
+        shell: pwsh
+        run: |
+          try {
+            & .\scripts\collect-maintain-diagnostics.ps1 `
+              -OutputPath (Join-Path $env:RUNNER_TEMP "maintain-diagnostics.zip")
+          }
+          catch {
+            Write-Warning $_
+          }
+
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-smoke-evidence
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/maintain-diagnostics.zip
+
+      - name: Uninstall
+        if: always()
+        shell: pwsh
+        run: |
+          & .\scripts\uninstall-windows.ps1
+          if (-not $?) { throw "Uninstall failed." }
