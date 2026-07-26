@@ -82,7 +82,7 @@ class Presenter:
             self.console.print(title)
             context = "  •  ".join(item for item in (project, provider) if item)
             if context:
-                self.console.print(context, style="muted")
+                self.console.print(Text(context, style="muted"))
             self.console.print(Rule(style="line"))
             return
         grid = Table.grid(padding=(0, 2))
@@ -126,10 +126,10 @@ class Presenter:
 
     def section(self, kicker: str, title: str, detail: str = "") -> None:
         self.console.print()
-        self.console.print(kicker.upper(), style="accent")
-        self.console.print(title, style="brand")
+        self.console.print(Text(kicker.upper(), style="accent"))
+        self.console.print(Text(title, style="brand"))
         if detail:
-            self.console.print(detail, style="muted")
+            self.console.print(Text(detail, style="muted"))
         self.console.print(Rule(style="line"))
 
     def home(self, project: str = "", provider: str = "", saved_count: int = 0,
@@ -138,7 +138,7 @@ class Presenter:
         if setup_issue:
             self.console.print()
             self.console.print("!  PROJECT SETUP NEEDS ATTENTION", style="warning")
-            self.console.print(f"   {setup_issue}", style="muted")
+            self.console.print(Text(f"   {setup_issue}", style="muted"))
         self.console.print()
         self.console.print("WHAT DO YOU WANT TO DO?", style="brand")
         self.console.print()
@@ -213,7 +213,7 @@ class Presenter:
         heading = Text("●  ", style=tone)
         heading.append(label.upper(), style=tone)
         self.console.print(heading)
-        self.console.print(f"   {title}", style="brand")
+        self.console.print(Text(f"   {title}", style="brand"))
         if message:
             message_table = Table.grid(padding=(0, 1))
             message_table.add_column(width=1)
@@ -228,7 +228,10 @@ class Presenter:
             table.add_column(width=label_width, style="muted", no_wrap=True)
             table.add_column(style="label")
             for name, value in fact_rows:
-                table.add_row(name.upper(), value)
+                table.add_row(
+                    Text(name.upper(), style="muted"),
+                    Text(value, style="label"),
+                )
             self.console.print(table)
         action_rows = [item for item in actions if item]
         if action_rows:
@@ -258,13 +261,27 @@ class Presenter:
                           Text(shown, style=style))
         self.console.print(table)
 
-    def saved_runs(self, rows: Iterable[dict[str, str]], *, selectable: bool = False) -> None:
+    def saved_runs(
+            self, rows: Iterable[dict[str, str]], *, selectable: bool = False,
+            selection_purpose: str = "continue") -> None:
         items = list(rows)
+        inspecting = selectable and selection_purpose == "inspect"
         self.section(
-            "SAVED WORK" if selectable else "HISTORY",
-            "Work you can continue" if selectable else "Maintenance run history",
-            ("Select a numbered run to continue, or return to the main menu."
-             if selectable else "Results and audit status for this project."),
+            "HISTORY" if inspecting or not selectable else "SAVED WORK",
+            (
+                "Select a maintenance run"
+                if inspecting else
+                "Work you can continue"
+                if selectable else
+                "Maintenance run history"
+            ),
+            (
+                "Select a numbered run to inspect without changing it."
+                if inspecting else
+                "Select a numbered run to continue, or return to the main menu."
+                if selectable else
+                "Results and audit status for this project."
+            ),
         )
         if not items:
             self.console.print()
@@ -296,9 +313,35 @@ class Presenter:
             heading.append(shown_state.upper(), style=state_style)
             heading.append(f"   {item['mode'].upper()}", style="muted")
             self.console.print(heading)
-            self.console.print(f"   {item['request']}", style="label")
-            self.console.print(f"   {item['run_id']}", style="muted")
+            self.console.print(Text(f"   {item['request']}", style="label"))
+            self.console.print(Text(f"   {item['run_id']}", style="muted"))
             self.console.print()
+
+    def verification_results(self, rows: Iterable[dict[str, str]]) -> None:
+        """Show bounded command metadata without dumping potentially sensitive output."""
+        items = list(rows)
+        self.console.print()
+        self.console.print("LOCAL VERIFICATION", style="muted")
+        if not items:
+            self.console.print("No local verification results were saved.", style="muted")
+            return
+        table = Table(box=box.SIMPLE_HEAD, border_style="line", header_style="muted",
+                      pad_edge=False, expand=False)
+        table.add_column("TASK", max_width=22)
+        table.add_column("COMMAND", max_width=28)
+        table.add_column("RESULT", no_wrap=True)
+        table.add_column("EXIT", justify="right", no_wrap=True)
+        table.add_column("TIME", justify="right", no_wrap=True)
+        for item in items:
+            passed = item.get("result") == "Passed"
+            table.add_row(
+                Text(item.get("task", "")),
+                Text(item.get("name", "")),
+                Text(item.get("result", ""), style="success" if passed else "danger"),
+                Text(item.get("exit_code", "")),
+                Text(item.get("duration", "")),
+            )
+        self.console.print(table)
 
     def provider_assignments(self, rows: Iterable[tuple[str, str, str]]) -> None:
         self.section("ASSISTANTS", "Workflow assignments",
@@ -310,7 +353,11 @@ class Presenter:
         table.add_column("PROFILE", width=20)
         table.add_column("PROVIDER")
         for role, profile, kind in rows:
-            table.add_row(role.title(), profile, kind.replace("_", " ").title())
+            table.add_row(
+                Text(role.title()),
+                Text(profile),
+                Text(kind.replace("_", " ").title()),
+            )
         self.console.print(table)
 
     def error(self, message: str, hint: str = "") -> None:
@@ -352,6 +399,9 @@ class QuietPresenter:
         pass
 
     def saved_runs(self, *args, **kwargs) -> None:
+        pass
+
+    def verification_results(self, *args, **kwargs) -> None:
         pass
 
     def complete(self, label: str, message: str) -> None:

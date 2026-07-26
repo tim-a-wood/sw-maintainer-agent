@@ -395,11 +395,11 @@ class WorkflowEngine:
 
     def doctor(self) -> dict[str, str]:
         """Verify local operational readiness without creating a maintenance run."""
+        self._preflight_commands()
         self._preflight_roles()
         self.workspaces.preflight()
         from .workspace import git
         git(self.config.repository, "worktree", "list", "--porcelain")
-        self._preflight_commands()
         runtime = self.config.runtime_root
         runtime.mkdir(parents=True, exist_ok=True)
         if not os.access(runtime, os.R_OK | os.W_OK | os.X_OK):
@@ -417,6 +417,11 @@ class WorkflowEngine:
 
     def _preflight_commands(self) -> None:
         """Fail before assistant work when a configured local command cannot start."""
+        if not self.config.commands:
+            raise PolicyError(
+                "No local verification command is configured. Add at least one trusted "
+                "project check before starting work."
+            )
         for spec in self.config.commands:
             executable = spec.argv[0]
             if executable == "{python}":
@@ -492,7 +497,7 @@ class WorkflowEngine:
             snapshot = store.write_artifact("configuration.json", self.config.path.read_bytes())
             self._move(record, store, RunState.WORKSPACE_READY,
                        artifacts=[snapshot, *preflight_artifacts])
-        self.presenter.complete("PREPARE", "Repository and assistant are ready")
+        self.presenter.complete("PREPARE", "Preflight checks passed")
 
     def _scope(self, record: RunRecord, store: AuditStore) -> None:
         if RunState(record.state) is RunState.WORKSPACE_READY:

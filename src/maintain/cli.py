@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
-import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -16,6 +15,7 @@ from .audit import AuditStore, atomic_write, cleanup_runs
 from .config import CONFIG_NAME, ProjectConfig, default_config, find_config
 from .engine import WorkflowEngine
 from .errors import ConfigurationError, DeliveryError, MaintainError
+from .models import RunRecord, RunState
 from .presenter import Presenter
 from .presenter import QuietPresenter
 from .repository_memory import remember_repository, repository_for_cli
@@ -185,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 _summary(record, presenter=presenter, command_prefix=_command_prefix(config))
                 presenter.gates(gates)
+                presenter.verification_results(_verification_rows(record))
         elif args.command == "audit":
             if args.action == "cleanup":
                 removed = cleanup_runs(
@@ -238,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
                 presenter.console.print_json(json.dumps(shown, indent=2))
         elif args.command == "config":
             if args.action == "show":
-                shown = json.loads(config.path.read_text())
+                shown = json.loads(config.path.read_text(encoding="utf-8"))
                 if args.json_output:
                     print(json.dumps(shown, sort_keys=True))
                 else:
@@ -295,14 +296,40 @@ def main(argv: list[str] | None = None) -> int:
                         facts = []
                         if result.get("layout"):
                             facts.append(("Layout", str(result["layout"])))
-                        if result.get("model"):
+                        if result.get("model_available") is False:
+                            facts.append((
+                                "Model",
+                                f"{result.get('configured_model') or 'Configured model'} is unavailable",
+                            ))
+                        elif result.get("model"):
                             facts.append(("Model", str(result["model"])))
+                        if args.action == "login":
+                            label = "Session verified"
+                            title = f"The {name} sign-in and required browser controls were verified."
+                            actions = (
+                                [
+                                    "Refresh the model list before starting work: "
+                                    + _shell_command([
+                                        "maintain", "--repo", str(config.repository),
+                                        "--config", str(config.path),
+                                        "provider", "model", name, "--refresh",
+                                    ])
+                                ]
+                                if result.get("model_available") is False else []
+                            )
+                            tone = "warning" if actions else "success"
+                        elif args.action == "check":
+                            label = "Compatible"
+                            title = f"The {name} browser controls and model are compatible."
+                            actions = []
+                            tone = "success"
+                        else:
+                            label = "Preflight passed"
+                            title = f"The {name} provider preflight completed."
+                            actions = []
+                            tone = "success"
                         presenter.outcome(
-                            "Compatible" if args.action == "check" else "Ready",
-                            (f"The {name} browser is compatible."
-                             if args.action == "check"
-                             else f"The {name} provider is ready."),
-                            facts=facts, tone="success")
+                            label, title, facts=facts, actions=actions, tone=tone)
                 if args.json_output:
                     print(json.dumps(readiness, sort_keys=True))
         elif args.command == "workspace":
@@ -344,10 +371,32 @@ def main(argv: list[str] | None = None) -> int:
             if args.json_output:
                 print(json.dumps(checks, sort_keys=True))
             else:
+                command_count = len(config.commands)
+                diff_only = _diff_only_verification(config)
+                facts = [
+                    ("Repository",
+                     "Configuration, Git, worktrees, storage, and audit checks passed"),
+                    ("Assistant preflight", "Configured provider checks passed"),
+                    (
+                        "Verification setup",
+                        f"{command_count} command{'s' if command_count != 1 else ''} configured; "
+                        "executables found; not run",
+                    ),
+                ]
+                if diff_only:
+                    facts.append((
+                        "Coverage",
+                        "Diff formatting only; no project test command was detected",
+                    ))
                 presenter.outcome(
-                    "Ready", "Maintain can start verified work.",
-                    facts=[(name.replace("_", " "), result.title())
-                           for name, result in checks.items()], tone="success")
+                    "Preflight passed", "Maintain can start a maintenance run.",
+                    "No project verification commands were run.",
+                    facts=facts,
+                    actions=(
+                        ["Configure a project test command before relying on behavioral verification."]
+                        if diff_only else []
+                    ),
+                    tone="success")
         return 0
     except MaintainError as exc:
         _show_error(args, str(exc), presenter)
@@ -362,11 +411,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _load(config: ProjectConfig, run_id: str):
-    from .models import RunRecord
     path = AuditStore(config.runtime_root, run_id).run_dir / "run.json"
     if not path.is_file():
         raise ConfigurationError(f"Run does not exist: {run_id}")
-    record = RunRecord.from_dict(json.loads(path.read_text()))
+    record = RunRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
     if Path(record.repository).resolve() != config.repository.resolve():
         raise ConfigurationError("The run belongs to a different project.")
     return record
@@ -376,14 +424,28 @@ def _run_values(config: ProjectConfig) -> list[dict]:
     values: list[dict] = []
     if not config.runtime_root.exists():
         return values
-    for path in sorted(config.runtime_root.glob("*/run.json"), reverse=True):
+    valid_states = {str(state) for state in RunState}
+    for path in config.runtime_root.glob("*/run.json"):
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-            if Path(str(value.get("repository", ""))).resolve() == config.repository.resolve():
-                values.append(value)
+            required = ("run_id", "state", "mode", "request", "repository")
+            if (not isinstance(value, dict)
+                    or any(not isinstance(value.get(key), str) or not value[key]
+                           for key in required)
+                    or value["state"] not in valid_states
+                    or Path(value["repository"]).resolve() != config.repository.resolve()):
+                continue
+            values.append(value)
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-    return values
+    return sorted(
+        values,
+        key=lambda value: (
+            str(value.get("updated_at") or value.get("created_at") or ""),
+            str(value["run_id"]),
+        ),
+        reverse=True,
+    )
 
 
 def _continuable_values(config: ProjectConfig) -> list[dict]:
@@ -408,10 +470,106 @@ def _command_prefix(config: ProjectConfig) -> str:
 
 
 def _shell_command(argv: list[str], *, windows: bool | None = None) -> str:
-    """Render a copyable command for the user's current command shell."""
+    """Render a copyable POSIX-shell or Windows PowerShell command."""
     if windows is None:
         windows = sys.platform == "win32"
-    return subprocess.list2cmdline(argv) if windows else shlex.join(argv)
+    if windows:
+        return "& " + " ".join(
+            "'" + value.replace("'", "''") + "'" for value in argv)
+    return shlex.join(argv)
+
+
+def _diff_only_verification(config: ProjectConfig) -> bool:
+    """Identify the safe fallback that checks formatting but no project behavior."""
+    return (
+        len(config.commands) == 1
+        and config.commands[0].argv == ("git", "diff", "--check")
+    )
+
+
+def _verification_rows(record: RunRecord) -> list[dict[str, str]]:
+    """Return compact, deduplicated local-command evidence for display."""
+    groups: list[tuple[str, object]] = []
+    completed = record.evidence.get("completed_tasks", [])
+    if isinstance(completed, list):
+        for item in completed:
+            if isinstance(item, dict):
+                groups.append((str(item.get("task_id") or "Task"), item.get("tests", {})))
+    current_task = "Current task"
+    if record.tasks and 0 <= record.task_index < len(record.tasks):
+        current_task = str(record.tasks[record.task_index].get("id") or current_task)
+    groups.append((current_task, record.evidence.get("tests", {})))
+
+    rows: list[dict[str, str]] = []
+    seen: set[tuple[object, ...]] = set()
+    for task_id, tests in groups:
+        if not isinstance(tests, dict):
+            continue
+        commands = tests.get("commands", [])
+        if not isinstance(commands, list):
+            continue
+        for result in commands:
+            if not isinstance(result, dict):
+                continue
+            signature = (
+                task_id,
+                result.get("name"),
+                result.get("exit_code"),
+                result.get("output_sha256"),
+                result.get("duration_seconds"),
+            )
+            if signature in seen:
+                continue
+            seen.add(signature)
+            exit_code = result.get("exit_code")
+            duration = result.get("duration_seconds")
+            try:
+                shown_duration = f"{float(duration):.1f}s"
+            except (TypeError, ValueError):
+                shown_duration = ""
+            rows.append({
+                "task": task_id,
+                "name": str(result.get("name") or "Unnamed command"),
+                "result": "Passed" if exit_code == 0 else "Failed",
+                "exit_code": "" if exit_code is None else str(exit_code),
+                "duration": shown_duration,
+            })
+    return rows
+
+
+def _recovery_guidance(record: RunRecord) -> str:
+    """Explain the smallest safe action before an interactive retry."""
+    if record.evidence.get("pause_reason") == "repair_limit":
+        return (
+            "Review the saved diff and failed checks. Continuing allows one more "
+            "automated repair cycle."
+        )
+    error = record.error.casefold()
+    if any(token in error for token in (
+            "browser", "sign in", "signed in", "model", "assistant", "provider")):
+        return (
+            "Use Assistant settings to sign in or reconnect and check compatibility, "
+            "then return to this run."
+        )
+    if any(token in error for token in (
+            "pytest", "verification command", "project python", "timed out", "matlab")):
+        return (
+            "Run the affected verification command in the project environment and "
+            "correct its dependencies or configuration before continuing."
+        )
+    if "disk space" in error:
+        return "Free disk space, then return to this saved run."
+    return (
+        "Resolve the issue shown above outside Maintain. The saved workspace and "
+        "evidence will be reused."
+    )
+
+
+def _display_timestamp(value: str) -> str:
+    try:
+        return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    except ValueError:
+        return value
 
 
 def _summary(record, json_output: bool = False, presenter: Presenter | None = None,
@@ -422,11 +580,13 @@ def _summary(record, json_output: bool = False, presenter: Presenter | None = No
     presenter = presenter or Presenter(animate=False)
     changed = record.evidence.get("changed_files", [])
     review = record.evidence.get("review", {})
-    checks = record.evidence.get("tests", {}).get("commands", [])
+    checks = _verification_rows(record)
     facts = [("Run", record.run_id)]
     elapsed = _elapsed(record.created_at, record.updated_at)
     if elapsed:
         facts.append(("Elapsed", elapsed))
+    if record.updated_at:
+        facts.append(("Updated", _display_timestamp(record.updated_at)))
     if record.tasks:
         completed = len(record.evidence.get("completed_tasks", []))
         facts.append(("Tasks", f"{completed} of {len(record.tasks)} complete"))
@@ -440,7 +600,7 @@ def _summary(record, json_output: bool = False, presenter: Presenter | None = No
         facts.append(("Review", "Approved" if decision == "approve"
                       else decision.replace("_", " ").title()))
     if checks:
-        passed = sum(item.get("exit_code") == 0 for item in checks)
+        passed = sum(item["result"] == "Passed" for item in checks)
         facts.append(("Checks", f"{passed} of {len(checks)} passed"))
     if record.branch:
         facts.append(("Branch", record.branch))
@@ -470,18 +630,28 @@ def _summary(record, json_output: bool = False, presenter: Presenter | None = No
             "Delivered",
             (f"The verified change is now on {integrated}." if integrated
              else "The verified commit is ready on its maintenance branch."),
-            facts=[*facts, ("Commit", commit), ("Updated", integrated)], tone="success",
+            facts=[*facts, ("Commit", commit), ("Integrated into", integrated)], tone="success",
         )
     elif state == "cancelled":
         presenter.outcome("Cancelled", "The run stopped and its evidence was saved.",
                           facts=facts, tone="muted")
     elif state in {"needs_human", "needs_human_delivery"}:
-        actions = (["Return to the menu and choose Continue saved work after you fix this item."]
-                   if interactive else
-                   [f"Fix the item above, then continue: {command_prefix} resume {record.run_id}",
-                    f"View the saved evidence: {command_prefix} status {record.run_id}"])
+        guidance = _recovery_guidance(record)
+        actions = (
+            [guidance, "Retry only after completing the required action."]
+            if interactive else
+            [
+                guidance,
+                f"Continue when resolved: {command_prefix} resume {record.run_id}",
+                f"View the saved evidence: {command_prefix} status {record.run_id}",
+            ]
+        )
         presenter.outcome(
-            "Action needed", "This run is paused.", record.error, facts,
+            "Action needed", "This run is paused until the issue is resolved.",
+            record.error or (
+                "No detailed error was saved. Review the run evidence before retrying."
+            ),
+            facts,
             actions,
             tone="warning",
         )
@@ -556,25 +726,9 @@ def _home(args: argparse.Namespace) -> int:
             if selected is None:
                 continue
             record = _load(config, selected)
-            if record.state in {"awaiting_acceptance", "accepted"}:
-                _summary(record, presenter=presenter, interactive=True)
-                _interactive_run(engine, record, presenter)
-            elif record.state == "needs_human_delivery":
-                _summary(record, presenter=presenter, interactive=True)
-                _interactive_delivery(engine, record, presenter)
-            elif record.state in {"delivered", "failed", "cancelled"}:
-                _summary(record, presenter=presenter, interactive=True)
-                _pause(presenter)
-            else:
-                record = engine.resume(record.run_id)
-                _summary(record, presenter=presenter, interactive=True)
-                _interactive_run(engine, record, presenter)
+            _continue_saved_run(engine, record, presenter)
             continue
-        rows = [{key: str(value.get(key, ""))
-                 for key in ("run_id", "state", "mode", "request")}
-                for value in _run_values(config)]
-        presenter.saved_runs(rows, selectable=False)
-        _pause(presenter)
+        _interactive_history(engine, config, presenter)
 
 
 def _interactive_setup(args: argparse.Namespace, presenter: Presenter) -> int:
@@ -632,25 +786,164 @@ def _interactive_setup(args: argparse.Namespace, presenter: Presenter) -> int:
     return main(model_args)
 
 
-def _choose_run(config: ProjectConfig, presenter: Presenter) -> str | None:
-    values = _continuable_values(config)
+def _choose_run(
+        config: ProjectConfig, presenter: Presenter, *, history: bool = False) -> str | None:
+    values = _run_values(config) if history else _continuable_values(config)
     if not values:
-        presenter.outcome("Saved work", "There are no runs to continue.", tone="muted")
+        presenter.outcome(
+            "History" if history else "Saved work",
+            "There are no saved runs." if history else "There are no runs to continue.",
+            tone="muted",
+        )
         _pause(presenter)
         return None
     rows = [{**{key: str(value.get(key, ""))
                 for key in ("run_id", "state", "mode", "request")},
              "index": str(index)} for index, value in enumerate(values, 1)]
-    presenter.saved_runs(rows, selectable=True)
+    presenter.saved_runs(
+        rows, selectable=True, selection_purpose="inspect" if history else "continue")
     while True:
-        choice = presenter.ask("Choose a run", "1").casefold()
+        choice = presenter.ask("Choose a run to inspect" if history else "Choose a run", "1")
+        choice = choice.casefold()
         if choice in {"b", "q"}:
             return None
         try:
-            return rows[int(choice) - 1]["run_id"]
+            index = int(choice)
+            if not 1 <= index <= len(rows):
+                raise IndexError
+            return rows[index - 1]["run_id"]
         except (ValueError, IndexError):
             presenter.console.print("Choose a listed run number or B to go back.",
                                     style="warning")
+
+
+def _continue_saved_run(
+        engine: WorkflowEngine, record: RunRecord, presenter: Presenter, *,
+        show_summary: bool = True) -> RunRecord:
+    """Continue only after the user sees the saved state and explicitly chooses it."""
+    if record.state in {"awaiting_acceptance", "accepted"}:
+        if show_summary:
+            _summary(record, presenter=presenter, interactive=True)
+        _interactive_run(engine, record, presenter)
+        return record
+    if record.state == "needs_human":
+        return _interactive_resume(
+            engine, record, presenter, show_summary=show_summary)
+    if record.state == "needs_human_delivery":
+        if show_summary:
+            _summary(record, presenter=presenter, interactive=True)
+        _interactive_delivery(engine, record, presenter)
+        return record
+    if record.state in {"delivered", "failed", "cancelled"}:
+        if show_summary:
+            _summary(record, presenter=presenter, interactive=True)
+        _pause(presenter)
+        return record
+    try:
+        resumed = engine.resume(record.run_id)
+    except MaintainError as exc:
+        presenter.error(str(exc), "The run remains saved; review its status before retrying.")
+        _pause(presenter)
+        return record
+    _summary(resumed, presenter=presenter, interactive=True)
+    if resumed.state in {"awaiting_acceptance", "accepted"}:
+        _interactive_run(engine, resumed, presenter)
+    else:
+        _pause(presenter)
+    return resumed
+
+
+def _interactive_resume(
+        engine: WorkflowEngine, record: RunRecord, presenter: Presenter, *,
+        show_summary: bool = True) -> RunRecord:
+    """Show a paused run and require confirmation before provider preflight or mutation."""
+    if show_summary:
+        _summary(record, presenter=presenter, interactive=True)
+    presenter.console.print()
+    repair_cycle = record.evidence.get("pause_reason") == "repair_limit"
+    prompt = (
+        "Start another automated repair cycle now?"
+        if repair_cycle else
+        "Have you completed the required action?"
+    )
+    while True:
+        choice = presenter.ask(prompt, "N").casefold()
+        if choice in {"", "n", "no", "b"}:
+            return record
+        if choice in {"y", "yes"}:
+            break
+        presenter.console.print("Choose Y to try again or N to keep the run saved.",
+                                style="warning")
+    try:
+        resumed = engine.resume(record.run_id)
+    except MaintainError as exc:
+        presenter.error(str(exc), "The run remains saved; resolve the issue before retrying.")
+        _pause(presenter)
+        return record
+    _summary(resumed, presenter=presenter, interactive=True)
+    if resumed.state in {"awaiting_acceptance", "accepted"}:
+        _interactive_run(engine, resumed, presenter)
+    elif resumed.state == "needs_human_delivery":
+        _interactive_delivery(engine, resumed, presenter)
+    else:
+        _pause(presenter)
+    return resumed
+
+
+def _interactive_history(
+        engine: WorkflowEngine, config: ProjectConfig, presenter: Presenter) -> None:
+    """Let users inspect every saved run without changing it merely by selecting it."""
+    while True:
+        selected = _choose_run(config, presenter, history=True)
+        if selected is None:
+            return
+        try:
+            record = _load(config, selected)
+            presenter.section(
+                "RUN DETAILS",
+                record.request,
+                f"{record.mode.title()} · {record.state.replace('_', ' ').title()}",
+            )
+            _summary(record, presenter=presenter, interactive=True)
+            presenter.console.print()
+            presenter.console.print("LAST ERROR", style="muted")
+            presenter.console.print(
+                record.error or "None saved.",
+                style="warning" if record.error else "muted",
+                markup=False,
+            )
+            presenter.gates(engine.gate_status(record))
+            presenter.verification_results(_verification_rows(record))
+            presenter.console.print()
+            presenter.console.print("SAVED EVIDENCE", style="muted")
+            presenter.console.print(
+                str(AuditStore(config.runtime_root, record.run_id).run_dir),
+                style="label",
+                markup=False,
+            )
+        except (MaintainError, OSError, ValueError) as exc:
+            presenter.error(str(exc), "This saved run could not be inspected.")
+            _pause(presenter)
+            continue
+
+        presenter.console.print()
+        continuable = record.state not in {"delivered", "failed", "cancelled"}
+        if continuable:
+            presenter.menu_line("c", "Continue this run", "Explicitly resume or finish it")
+        presenter.menu_line("b", "Back to history", "", quiet=True)
+        while True:
+            choice = presenter.ask("Choose", "B").casefold()
+            if choice == "b":
+                break
+            if choice == "c" and continuable:
+                _continue_saved_run(
+                    engine, record, presenter, show_summary=False)
+                return
+            presenter.console.print(
+                "Choose C to continue this run or B to return."
+                if continuable else "Choose B to return.",
+                style="warning",
+            )
 
 
 def _interactive_run(engine: WorkflowEngine, record, presenter: Presenter) -> None:
@@ -726,10 +1019,10 @@ def _interactive_delivery(engine: WorkflowEngine, record, presenter: Presenter) 
     presenter.console.print()
     presenter.console.print("FINISH THE BRANCH UPDATE", style="brand")
     presenter.console.print()
-    presenter.menu_line("1", "Try the branch update again", "Default")
+    presenter.menu_line("1", "I fixed the branch issue; try again", "")
     presenter.menu_line("2", "Keep the verified branch only", "Finish without updating")
     presenter.menu_line("b", "Keep it saved", "Return to the menu", quiet=True)
-    choice = presenter.ask("Choose", "1").casefold()
+    choice = presenter.ask("Choose", "B").casefold()
     if choice == "b":
         return
     try:

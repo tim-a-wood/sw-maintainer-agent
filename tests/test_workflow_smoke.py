@@ -155,20 +155,21 @@ def test_m365_setup_uses_edge_and_the_supported_entrypoint(tmp_path: Path) -> No
     }
 
 
-def test_windows_follow_up_commands_use_cmd_quoting() -> None:
+def test_windows_follow_up_commands_use_powershell_literal_quoting() -> None:
     rendered = _shell_command(
         [
             "maintain",
             "--repo",
-            r"C:\Users\Tim Wood\Project",
+            r"C:\repo&tools\[x64]\O'Brien %NAME%",
             "--config",
-            r"C:\Users\Tim Wood\Project\.maintain.json",
+            r"C:\repo&tools\[x64]\O'Brien %NAME%\.maintain.json",
         ],
         windows=True,
     )
 
-    assert r'"C:\Users\Tim Wood\Project"' in rendered
-    assert "'C:\\Users\\Tim Wood\\Project'" not in rendered
+    assert rendered.startswith("& 'maintain' '--repo' ")
+    assert r"'C:\repo&tools\[x64]\O''Brien %NAME%'" in rendered
+    assert r"'C:\repo&tools\[x64]\O''Brien %NAME%\.maintain.json'" in rendered
 
 
 def test_browser_diagnostics_remove_authentication_query_data() -> None:

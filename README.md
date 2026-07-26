@@ -134,6 +134,8 @@ python -m playwright install chromium
 maintain --version
 ```
 
+Follow-up commands displayed by Maintain on Windows use PowerShell syntax.
+
 ## Set up an existing project
 
 The tool keeps its source and audit data separate from the project that it
@@ -218,13 +220,18 @@ maintain --repo /path/to/project provider login m365
 ```
 
 Refresh the available models, select one, check the visible controls, and only
-then run the full readiness check:
+then run the local preflight:
 
 ```sh
 maintain --repo /path/to/project provider model chatgpt --refresh
 maintain --repo /path/to/project provider check chatgpt
 maintain --repo /path/to/project doctor
 ```
+
+`doctor` checks the repository, provider preflight, configured command
+executables, storage, and audit path. It does not run the project's verification
+commands. Its report calls out when the detected coverage is only
+`git diff --check` and no project test command was found.
 
 Use the profile name shown by `maintain provider list` if you renamed it.
 The compatibility check finds the message, attachment, Send, and model controls
@@ -330,6 +337,13 @@ maintain --repo /path/to/project evidence RUN_ID
 maintain --repo /path/to/project audit verify RUN_ID
 maintain --repo /path/to/project audit export RUN_ID --output run-audit.zip
 ```
+
+In the interactive interface, **View history** lets you select any run without
+changing it. The detail view shows the original request, state, last error,
+evidence gates, and compact local-command results without dumping command output.
+Continuing is a separate explicit action. For an **Action needed** run, Maintain
+shows the saved error and corrective guidance first, then asks for confirmation
+before it reopens an assistant or changes the saved state.
 
 Audit data is stored outside the target repository under `~/.maintain/runs` by
 default. On Windows this is `%USERPROFILE%\.maintain\runs`. Browser exchanges are

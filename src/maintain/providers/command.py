@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import os
+import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict
 from pathlib import Path
 
 from maintain.errors import ProviderError
 from maintain.models import ProviderCapabilities, ProviderRequest, ProviderResponse
+from maintain.runner import _prepare_command
 
 from .base import Provider
 
@@ -39,11 +43,29 @@ class CommandProvider(Provider):
     def __init__(self, name: str, argv: list[str], timeout_seconds: int = 900) -> None:
         self.name, self.argv, self.timeout_seconds = name, argv, timeout_seconds
 
+    def preflight(self) -> None:
+        self._launch_plan()
+
+    def _launch_plan(self):
+        if not self.argv or shutil.which(self.argv[0]) is None:
+            executable = self.argv[0] if self.argv else "(missing)"
+            raise ProviderError(
+                f"{self.name} command executable is unavailable: {executable}")
+        return _prepare_command(tuple(self.argv), os.environ)
+
     def exchange(self, request: ProviderRequest) -> ProviderResponse:
+        plan = self._launch_plan()
         try:
-            result = subprocess.run(self.argv, input=json.dumps(asdict(request)), text=True,
-                                    capture_output=True, timeout=self.timeout_seconds,
-                                    shell=False, check=False)
+            result = subprocess.run(
+                plan.popen_args,
+                executable=plan.executable,
+                input=json.dumps(asdict(request)),
+                text=True,
+                capture_output=True,
+                timeout=self.timeout_seconds,
+                shell=False,
+                check=False,
+            )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ProviderError(f"{self.name} could not run: {exc}") from exc
         if result.returncode:
@@ -56,6 +78,26 @@ class FileExchangeProvider(Provider):
 
     def __init__(self, name: str, exchange_dir: Path, timeout_seconds: int = 3600) -> None:
         self.name, self.exchange_dir, self.timeout_seconds = name, exchange_dir, timeout_seconds
+
+    def preflight(self) -> None:
+        probe: Path | None = None
+        try:
+            self.exchange_dir.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                    mode="wb", prefix=".maintain-preflight-", suffix=".tmp",
+                    dir=self.exchange_dir, delete=False) as temporary:
+                probe = Path(temporary.name)
+                temporary.write(b"Maintain file-exchange preflight.\n")
+            probe.unlink()
+        except OSError as exc:
+            if probe is not None:
+                try:
+                    probe.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise ProviderError(
+                f"{self.name} exchange directory is not writable: "
+                f"{self.exchange_dir}") from exc
 
     def exchange(self, request: ProviderRequest) -> ProviderResponse:
         self.exchange_dir.mkdir(parents=True, exist_ok=True)
