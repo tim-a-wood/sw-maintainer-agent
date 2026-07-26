@@ -123,13 +123,14 @@ def _task_markdown(
     )
     zip_output = (
         "Create and attach one downloadable ZIP file named `maintain-output.zip`. At the ZIP "
-        "root, include every added or modified file at its exact authorized repository-relative "
-        "path. Do not add a wrapper directory, manifest, notes, patches, excerpts, placeholders, "
-        "or deleted files to the ZIP. Also return one complete JSON envelope in the chat. Set "
-        "`content.files` to an empty list; do not duplicate or base64-encode file contents in "
-        "the JSON. Put approved deletions in `content.deleted_files`. Set "
-        "`content.changed_files` to exactly the union of ZIP file paths and deleted paths, with "
-        "no duplicates. Finish creating the downloadable ZIP before completing the chat response."
+        "root, include `IMPLEMENTATION.toml` plus every complete added or modified file under "
+        "`files/` at its exact authorized repository-relative path. Do not add a wrapper "
+        "directory, notes, patches, excerpts, placeholders, or undeclared files. The TOML manifest "
+        "must use the exact run, task, and role values shown below, list added or modified paths in "
+        "`files`, and list approved deletions in `deleted_files`. For issue work it must also "
+        "contain `root_cause_statement` and `root_cause_evidence_paths`; feature work must omit "
+        "those fields. Finish creating the downloadable ZIP, then reply only `Maintain output "
+        "ready.` Do not return JSON, source code, a patch, or manifest content in the chat."
     )
     output = (
         zip_output if request.role == "implement" and implementation_transport == "zip"
@@ -147,17 +148,21 @@ def _task_markdown(
         ),
         "implement": (
             (
-                "`content.files` must be an empty list because complete added and modified files "
-                "belong in `maintain-output.zip`. `content.deleted_files` must contain only "
-                "authorized paths and must not overlap ZIP members. "
+                "`IMPLEMENTATION.toml` must list only authorized paths. `files` and "
+                "`deleted_files` must not overlap. Every path in `files` must have exactly one "
+                "matching complete member under `files/`. "
                 if implementation_transport == "zip" else
                 "Every `content.files` item must contain exactly one authorized "
                 "repository-relative `path` and its complete final string `content`. "
                 "`content.deleted_files` must contain only authorized paths and must not overlap "
                 "`content.files`. "
             )
-            + "Issue work must also return `content.root_cause.statement` and code-grounded "
-            "`content.root_cause.evidence_paths`; feature work must omit `root_cause`."
+            + (
+                "Issue work must include a code-grounded root cause in the manifest."
+                if implementation_transport == "zip" else
+                "Issue work must also return `content.root_cause.statement` and code-grounded "
+                "`content.root_cause.evidence_paths`; feature work must omit `root_cause`."
+            )
         ),
         "review": (
             "Return `content.decision` as `approve` or `changes_requested`. Return "
@@ -204,6 +209,17 @@ def _task_markdown(
         "conversation_id": "assigned-by-maintain",
         "content": examples.get(request.role, {"summary": "Concise factual result"}),
     }
+    zip_manifest = {
+        "schema_version": 1,
+        "run_id": request.run_id,
+        "task_id": request.task_id,
+        "role": request.role,
+        "files": ["exact/repository/path"],
+        "deleted_files": [],
+    }
+    if request.role == "implement" and request.payload.get("mode") == "issue":
+        zip_manifest["root_cause_statement"] = "Code-grounded root cause."
+        zip_manifest["root_cause_evidence_paths"] = ["exact/repository/path"]
     attached_context = (
         f"Read `{code_name}` for the complete focused code context and its file index. "
         f"Read `{manifest_name}` for exact identifiers, hashes, task data, and evidence. "
@@ -227,6 +243,18 @@ def _task_markdown(
             "did. Use only the package attachments and this one reference URL. Do not use "
             "other internet tools."
         )
+    example = (
+        "```toml\n"
+        + "\n".join(
+            f"{key} = {json.dumps(value, ensure_ascii=False)}"
+            for key, value in zip_manifest.items()
+        )
+        + "\n```\n"
+        if request.role == "implement" and implementation_transport == "zip" else
+        "```json\n"
+        f"{json.dumps(envelope, ensure_ascii=False, indent=2)}\n"
+        "```\n"
+    )
     return (
         "# Maintenance task\n\n"
         f"- Run: `{request.run_id}`\n"
@@ -238,9 +266,7 @@ def _task_markdown(
         f"{attached_context}\n\n"
         "## Required output\n\n"
         f"{output}\n\n{role_contract}\n\n"
-        "```json\n"
-        f"{json.dumps(envelope, ensure_ascii=False, indent=2)}\n"
-        "```\n"
+        f"{example}"
     )
 
 

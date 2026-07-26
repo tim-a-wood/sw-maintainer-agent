@@ -109,12 +109,13 @@ def test_m365_implementation_task_uses_downloadable_zip_contract(
     task = package.paths[0].read_text(encoding="utf-8")
 
     assert "maintain-output.zip" in task
-    assert "Do not add a wrapper directory" in task
-    assert "`content.files` to an empty list" in task
-    assert "do not duplicate or base64-encode file contents" in task
-    assert '"files": []' in task
-    assert '"changed_files": [' in task
-    assert '"exact/repository/path"' in task
+    assert "IMPLEMENTATION.toml" in task
+    assert "`files/`" in task
+    assert "reply only `Maintain output ready.`" in task
+    assert "Do not return JSON" in task
+    assert "```json" not in task
+    assert 'files = ["exact/repository/path"]' in task
+    assert f'run_id = "{_request().run_id}"' in task
 
 
 def test_browser_implementation_transport_defaults_by_provider(tmp_path: Path) -> None:
@@ -206,13 +207,28 @@ def test_inline_complete_files_round_trip_to_zip(tmp_path: Path) -> None:
         assert archive.read("main.c").decode() == content["files"][0]["content"]
 
 
-def test_downloaded_zip_paths_are_derived_from_the_artifact(tmp_path: Path) -> None:
+def test_downloaded_zip_manifest_is_validated_and_synthesizes_content(
+        tmp_path: Path) -> None:
     output = tmp_path / "maintain-output.zip"
     with zipfile.ZipFile(output, "w") as archive:
-        archive.writestr("src/main.c", "int main(void) { return 0; }\n")
-        archive.mkdir("empty/")
+        archive.writestr(
+            "IMPLEMENTATION.toml",
+            (
+                "schema_version = 1\n"
+                f'run_id = "{_request().run_id}"\n'
+                f'task_id = "{_request().task_id}"\n'
+                'role = "implement"\n'
+                'files = ["main.c"]\n'
+                "deleted_files = []\n"
+            ),
+        )
+        archive.writestr("files/main.c", "int main(void) { return 0; }\n")
 
-    assert BrowserProvider._output_zip_paths(output) == ["src/main.c"]
+    assert BrowserProvider._zip_artifact_content(output, _request()) == {
+        "files": [],
+        "changed_files": ["main.c"],
+        "deleted_files": [],
+    }
 
 
 def test_inline_deletion_only_response_creates_an_empty_zip(tmp_path: Path) -> None:
@@ -406,7 +422,18 @@ class DownloadedZipBrowserProtocolProvider(Provider):
             output.parent.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 archive.writestr(
-                    "main.c",
+                    "IMPLEMENTATION.toml",
+                    (
+                        "schema_version = 1\n"
+                        f'run_id = "{request.run_id}"\n'
+                        f'task_id = "{request.task_id}"\n'
+                        f'role = "{request.role}"\n'
+                        'files = ["main.c"]\n'
+                        "deleted_files = []\n"
+                    ),
+                )
+                archive.writestr(
+                    "files/main.c",
                     (
                         "#include <stdio.h>\n\n"
                         "int main(void) {\n"
@@ -415,12 +442,8 @@ class DownloadedZipBrowserProtocolProvider(Provider):
                         "}\n"
                     ),
                 )
-            content = {
-                "files": [],
-                "changed_files": BrowserProvider._output_zip_paths(output),
-                "deleted_files": [],
-                "_maintain_output_zip": name,
-            }
+            content = BrowserProvider._zip_artifact_content(output, request)
+            content["_maintain_output_zip"] = name
         elif request.role == "review":
             content = {"decision": "approve", "findings": []}
         else:  # pragma: no cover

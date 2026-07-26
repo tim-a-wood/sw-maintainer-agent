@@ -1,9 +1,9 @@
 {
   "files": [
     {
-      "bytes": 714,
+      "bytes": 536,
       "path": "prompts/feature_implement.md",
-      "sha256": "17e597ead8b006371fb04329c3981403979bbd7d88527aa56cee3293e28b87d9"
+      "sha256": "944c22f164f6c2781e1fed8b1117e520776e3b6b2cbed376f4b5dbc4486fb1e9"
     },
     {
       "bytes": 414,
@@ -31,9 +31,9 @@
       "sha256": "3abde59a71d7d90d4ec9e36ac4fa0e00a5411f543cd0bb98d3097dc8aaa0fe6d"
     },
     {
-      "bytes": 812,
+      "bytes": 613,
       "path": "prompts/issue_implement.md",
-      "sha256": "e4c1b40fd51d3e0e189a9c5dd19d7889a835cda2b37b9d1bd9fa30383fad6033"
+      "sha256": "94b763d10a19a2eb3c522257c8abdd6e8518ba9a5696ceeb029ec22a521728b8"
     },
     {
       "bytes": 510,

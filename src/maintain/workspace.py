@@ -6,6 +6,7 @@ import fnmatch
 import os
 import subprocess
 import tempfile
+import tomllib
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -173,18 +174,64 @@ class WorkspaceManager:
         total = 0
         try:
             with zipfile.ZipFile(archive) as bundle:
-                for item in bundle.infolist():
+                archive_items = [
+                    item for item in bundle.infolist() if not item.is_dir()]
+                archive_names = [item.filename for item in archive_items]
+                if len(archive_names) != len(set(archive_names)):
+                    raise PolicyError(
+                        "The implementation ZIP contains a duplicate member.")
+                structured = "IMPLEMENTATION.toml" in archive_names
+                declared_files: set[str] | None = None
+                if structured:
+                    manifest_info = bundle.getinfo("IMPLEMENTATION.toml")
+                    if manifest_info.flag_bits & 0x1:
+                        raise PolicyError(
+                            "The implementation ZIP contains an encrypted manifest.")
+                    if manifest_info.file_size > 65_536:
+                        raise PolicyError(
+                            "The implementation ZIP manifest exceeds 64 KiB.")
+                    try:
+                        manifest = tomllib.loads(
+                            bundle.read(manifest_info).decode("utf-8"))
+                    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+                        raise PolicyError(
+                            "The implementation ZIP manifest is invalid TOML.") from exc
+                    manifest_files = manifest.get("files")
+                    if (not isinstance(manifest_files, list)
+                            or any(not isinstance(path, str)
+                                   for path in manifest_files)
+                            or len(manifest_files) != len(set(manifest_files))):
+                        raise PolicyError(
+                            "The implementation ZIP manifest files are invalid.")
+                    declared_files = set(manifest_files)
+                    expected_names = {
+                        "IMPLEMENTATION.toml",
+                        *(f"files/{path}" for path in declared_files),
+                    }
+                    if set(archive_names) != expected_names:
+                        raise PolicyError(
+                            "The implementation ZIP members do not match its manifest.")
+                for item in archive_items:
+                    if structured and item.filename == "IMPLEMENTATION.toml":
+                        continue
                     if item.is_dir():
                         continue
                     if item.flag_bits & 0x1:
                         raise PolicyError("The implementation ZIP contains an encrypted file.")
                     if "\\" in item.filename:
                         raise PolicyError("The implementation ZIP contains a non-portable path.")
-                    relative = PurePosixPath(item.filename)
+                    member_name = (
+                        item.filename.removeprefix("files/")
+                        if structured else item.filename
+                    )
+                    relative = PurePosixPath(member_name)
                     if (relative.is_absolute() or not relative.parts or
                             any(part in {"", ".", ".."} for part in relative.parts)):
                         raise PolicyError("The implementation ZIP contains an unsafe path.")
                     path = relative.as_posix()
+                    if declared_files is not None and path not in declared_files:
+                        raise PolicyError(
+                            "The implementation ZIP contains an undeclared file.")
                     if path not in allowed_paths:
                         raise PolicyError(
                             f"The implementation ZIP contains a file outside the task: {path}")

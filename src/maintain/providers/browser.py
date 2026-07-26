@@ -7,16 +7,17 @@ import hashlib
 import os
 import re
 import time
+import tomllib
 import zipfile
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
 from maintain.errors import ConfigurationError, ProviderError
 from maintain.exchange_package import build_exchange_package
-from maintain.models import ProviderCapabilities, ProviderRequest
+from maintain.models import ProviderCapabilities, ProviderRequest, ProviderResponse
 from maintain.locking import FileLock
 from maintain.references import (
     CopilotReference,
@@ -802,21 +803,25 @@ class BrowserProvider(Provider):
                         f"This request is run_id={request.run_id}, task_id={request.task_id}, "
                         f"role={request.role}. Read all {len(package.paths)} attached package "
                         "files. Start with TASK.md, then use the indexed CODEBASE.md and "
-                        f"MANIFEST.json. Package SHA-256: {digest}. Return an envelope with these "
-                        "exact run_id, task_id, and role values. Follow the output instructions "
-                        "exactly."
+                        f"MANIFEST.json. Package SHA-256: {digest}. Follow the output instructions "
+                        "in TASK.md exactly."
                     )
                     if request.role == "implement":
                         if self._implementation_transport() == "zip":
                             message += (
-                                " Create and attach maintain-output.zip, then return the small JSON "
-                                "envelope specified by TASK.md. Do not put source contents in chat."
+                                " Create and attach maintain-output.zip, then reply only "
+                                "\"Maintain output ready.\" Do not put JSON, source code, patches, "
+                                "or manifest content in chat."
                             )
                         else:
                             message += (
                                 " Return the complete implementation inline in the JSON envelope as "
                                 "specified by TASK.md. Do not create or attach a downloadable artifact."
                             )
+                    else:
+                        message += (
+                            " Return an envelope with the exact run_id, task_id, and role values."
+                        )
                     if reference_line:
                         message += "\n\n" + reference_line
                     transport = "attachment"
@@ -855,6 +860,24 @@ class BrowserProvider(Provider):
                     page, selectors, request, previous_responses)
                 assert_no_secrets(raw, "browser response")
                 (exchange_dir / f"{request.role}-initial.txt").write_text(raw, encoding="utf-8")
+                if (request.role == "implement"
+                        and self._implementation_transport() == "zip"):
+                    return self._complete_zip_implementation(
+                        page=page,
+                        prompt=prompt,
+                        selectors=selectors,
+                        request=request,
+                        raw=raw,
+                        exchange_dir=exchange_dir,
+                        response_selector=response_selector,
+                        transport=transport,
+                        digest=digest,
+                        package_bytes=package_bytes,
+                        attachment_names=attachment_names,
+                        reference=reference,
+                        layout=layout,
+                        selected_model=selected_model,
+                    )
                 repaired = False
                 envelope_repairs = 0
                 max_envelope_repairs = max(1, min(int(
@@ -1101,6 +1124,12 @@ class BrowserProvider(Provider):
                 if candidate != latest:
                     latest = candidate
                     latest_at = time.monotonic()
+                if (request.role == "implement"
+                        and self._implementation_transport() == "zip"
+                        and self._downloadable_output_visible(page, selectors)):
+                    self._mark_state(
+                        "response_complete", "Downloadable implementation received")
+                    return candidate
                 try:
                     envelope = json.loads(_extract_json(candidate))
                 except json.JSONDecodeError:
@@ -1154,6 +1183,12 @@ class BrowserProvider(Provider):
                 and all(isinstance(path, str) for path in changed)
                 and set(changed) == set(deleted)):
             return True
+        selector = selectors.get("output_download_selector")
+        return bool(selector and any(
+            node.is_visible() for node in page.locator(selector).all()))
+
+    @staticmethod
+    def _downloadable_output_visible(page, selectors: dict[str, Any]) -> bool:
         selector = selectors.get("output_download_selector")
         return bool(selector and any(
             node.is_visible() for node in page.locator(selector).all()))
@@ -1832,6 +1867,202 @@ class BrowserProvider(Provider):
             destination.unlink(missing_ok=True)
             raise ProviderError("The implementation output is not a valid ZIP file.")
         return destination
+
+    def _complete_zip_implementation(
+            self, *, page, prompt, selectors: dict[str, Any],
+            request: ProviderRequest, raw: str, exchange_dir: Path,
+            response_selector: str, transport: str, digest: str,
+            package_bytes: int, attachment_names: list[str],
+            reference: CopilotReference | None, layout: BrowserLayout,
+            selected_model: str) -> ProviderResponse:
+        """Download a self-describing implementation ZIP without parsing chat JSON."""
+        max_repairs = max(
+            2, min(int(self.config.get("implementation_content_retries", 3)), 5))
+        implementation_repairs = 0
+        last_defect = ""
+        while True:
+            try:
+                output_zip = self._download_output_zip(
+                    page, selectors, request, exchange_dir.name)
+                content = self._zip_artifact_content(output_zip, request)
+                break
+            except (OSError, ValueError, ProviderError, zipfile.BadZipFile) as exc:
+                last_defect = str(exc)
+                if implementation_repairs >= max_repairs:
+                    raise ProviderError(
+                        "The downloadable implementation ZIP remained invalid after "
+                        f"{implementation_repairs} bounded repair attempt(s): "
+                        f"{last_defect}") from exc
+                implementation_repairs += 1
+                repair = (
+                    "Replace the implementation artifact with one corrected downloadable ZIP "
+                    "named maintain-output.zip. Follow the attached TASK.md ZIP layout exactly: "
+                    "IMPLEMENTATION.toml at the root and complete declared repository files under "
+                    "files/. Use the exact run_id, task_id, and role from TASK.md. Do not put JSON, "
+                    "TOML, source code, a patch, or an explanation in chat. After the corrected ZIP "
+                    "is downloadable, reply only \"Maintain output ready.\" "
+                    f"Previous artifact defect: {last_defect}. Correction attempt "
+                    f"{implementation_repairs} of {max_repairs}."
+                )
+                previous = self._visible_texts(page, response_selector)
+                self._submit(page, prompt, repair, selectors)
+                raw = self._wait_for_response_text(
+                    page, selectors, request, previous)
+                assert_no_secrets(raw, "browser implementation repair response")
+                (exchange_dir / (
+                    f"{request.role}-content-repair-{implementation_repairs}.txt"
+                )).write_text(raw, encoding="utf-8")
+
+        content["_maintain_output_zip"] = output_zip.name
+        content["_maintain_implementation_repairs"] = implementation_repairs
+        parsed = ProviderResponse(
+            schema_version=request.schema_version,
+            run_id=request.run_id,
+            task_id=request.task_id,
+            role=request.role,
+            content=content,
+            provider=self.name,
+            conversation_id=f"{self.name}-{exchange_dir.name}",
+        )
+        page.screenshot(
+            path=str(exchange_dir / f"{request.role}.png"), full_page=True)
+        (exchange_dir / f"{request.role}.txt").write_text(raw, encoding="utf-8")
+        self._mark_state("response_saved", "Response and audit evidence saved")
+        (exchange_dir / f"{request.role}-transport.json").write_text(
+            json.dumps({
+                "transport": transport,
+                "sha256": digest,
+                "bytes": package_bytes,
+                "attachments": attachment_names,
+                "reference": (
+                    reference.to_dict() if reference is not None else None),
+                "layout": layout.name,
+                "model": selected_model or None,
+                "conversation_id": parsed.conversation_id,
+                "states": self._journey,
+                "schema_repair": False,
+                "envelope_repairs": 0,
+                "contract_repairs": 0,
+                "implementation_repairs": implementation_repairs,
+                "output_zip": output_zip.name,
+                "artifact_manifest": "IMPLEMENTATION.toml",
+            }),
+            encoding="utf-8",
+        )
+        return parsed
+
+    @staticmethod
+    def _zip_artifact_content(
+            archive: Path, request: ProviderRequest) -> dict[str, Any]:
+        """Validate ZIP metadata and synthesize Maintain's internal response content."""
+        with zipfile.ZipFile(archive) as bundle:
+            infos = [item for item in bundle.infolist() if not item.is_dir()]
+            names = [item.filename for item in infos]
+            if len(names) != len(set(names)):
+                raise ProviderError(
+                    "The implementation ZIP contains duplicate members.")
+            if "IMPLEMENTATION.toml" not in names:
+                raise ProviderError(
+                    "The implementation ZIP is missing IMPLEMENTATION.toml.")
+            manifest_info = bundle.getinfo("IMPLEMENTATION.toml")
+            if manifest_info.flag_bits & 0x1:
+                raise ProviderError(
+                    "The implementation ZIP manifest is encrypted.")
+            if manifest_info.file_size > 65_536:
+                raise ProviderError(
+                    "The implementation ZIP manifest exceeds 64 KiB.")
+            try:
+                manifest = tomllib.loads(
+                    bundle.read(manifest_info).decode("utf-8"))
+            except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+                raise ProviderError(
+                    "The implementation ZIP manifest is invalid TOML.") from exc
+
+        expected_keys = {
+            "schema_version", "run_id", "task_id", "role", "files",
+            "deleted_files", "root_cause_statement",
+            "root_cause_evidence_paths",
+        }
+        unknown = set(manifest) - expected_keys
+        if unknown:
+            raise ProviderError(
+                f"The implementation ZIP manifest has an unknown field: "
+                f"{sorted(unknown)[0]}")
+        if manifest.get("schema_version") != 1:
+            raise ProviderError(
+                "The implementation ZIP manifest has an invalid schema_version.")
+        for field, expected in (
+                ("run_id", request.run_id),
+                ("task_id", request.task_id),
+                ("role", request.role)):
+            if manifest.get(field) != expected:
+                raise ProviderError(
+                    f"The implementation ZIP manifest has the wrong {field}.")
+
+        def paths(field: str) -> list[str]:
+            values = manifest.get(field)
+            if (not isinstance(values, list)
+                    or any(not isinstance(value, str) for value in values)
+                    or len(values) != len(set(values))):
+                raise ProviderError(
+                    f"The implementation ZIP manifest {field} must be a unique path list.")
+            return values
+
+        files = paths("files")
+        deleted = paths("deleted_files")
+        if not files and not deleted:
+            raise ProviderError(
+                "The implementation ZIP manifest declares no changes.")
+        overlap = set(files) & set(deleted)
+        if overlap:
+            raise ProviderError(
+                f"The implementation ZIP cannot replace and delete the same path: "
+                f"{sorted(overlap)[0]}")
+        allowed = {
+            str(path)
+            for path in request.payload.get("task", {}).get("allowed_files", [])
+        }
+        for path in [*files, *deleted]:
+            relative = PurePosixPath(path)
+            if (relative.is_absolute() or "\\" in path or not relative.parts
+                    or any(part in {"", ".", ".."} for part in relative.parts)):
+                raise ProviderError(
+                    f"The implementation ZIP manifest contains an unsafe path: {path}")
+            if path not in allowed:
+                raise ProviderError(
+                    f"The implementation ZIP manifest contains an unapproved path: {path}")
+        expected_members = {
+            "IMPLEMENTATION.toml",
+            *(f"files/{path}" for path in files),
+        }
+        if set(names) != expected_members:
+            missing = expected_members - set(names)
+            extra = set(names) - expected_members
+            defect = (
+                f"missing {sorted(missing)[0]}" if missing
+                else f"undeclared member {sorted(extra)[0]}")
+            raise ProviderError(
+                f"The implementation ZIP layout is invalid: {defect}.")
+
+        content: dict[str, Any] = {
+            "files": [],
+            "changed_files": [*files, *deleted],
+            "deleted_files": deleted,
+        }
+        if request.payload.get("mode") == "issue":
+            statement = manifest.get("root_cause_statement")
+            evidence = manifest.get("root_cause_evidence_paths")
+            if (not isinstance(statement, str) or not statement.strip()
+                    or not isinstance(evidence, list) or not evidence
+                    or any(not isinstance(path, str) for path in evidence)
+                    or any(path not in allowed for path in evidence)):
+                raise ProviderError(
+                    "The implementation ZIP manifest has an invalid issue root cause.")
+            content["root_cause"] = {
+                "statement": statement.strip(),
+                "evidence_paths": evidence,
+            }
+        return content
 
     @staticmethod
     def _output_zip_paths(archive: Path) -> list[str]:
