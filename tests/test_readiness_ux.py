@@ -188,5 +188,10 @@ def test_provider_login_reports_session_and_unavailable_model_action(
     assert "SESSION VERIFIED" in output
     assert "Retired Model is unavailable" in output
     assert "Refresh the model list before starting work:" in output
-    assert "provider model chatgpt --refresh" in output
+    expected_command = cli._shell_command([
+        "maintain", "--repo", str(repository),
+        "--config", str(repository / ".maintain.json"),
+        "provider", "model", "chatgpt", "--refresh",
+    ])
+    assert expected_command in output
     assert "provider is ready" not in output.casefold()

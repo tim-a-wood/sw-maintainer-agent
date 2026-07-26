@@ -240,7 +240,9 @@ class Presenter:
             for item in action_rows:
                 line = Text("→  ", style="accent")
                 line.append(item)
-                self.console.print(line)
+                # Let the terminal wrap naturally so copied commands do not gain
+                # hard newlines or spaces inside long paths.
+                self.console.print(line, soft_wrap=True)
         self.console.print(Rule(style="line"))
 
     def gates(self, values: dict[str, str]) -> None:
