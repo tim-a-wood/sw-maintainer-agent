@@ -29,13 +29,19 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check --upgrade pip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           python -m pip install --disable-pip-version-check ".[browser]" pytest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run active workflow tests
         shell: pwsh
         run: |
           python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           maintain --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Exercise installer, update, launcher, and diagnostics
         shell: pwsh
