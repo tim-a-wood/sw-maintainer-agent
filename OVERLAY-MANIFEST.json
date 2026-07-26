@@ -1,54 +1,54 @@
 {
   "files": [
     {
-      "bytes": 490,
+      "bytes": 677,
       "path": "prompts/feature_implement.md",
-      "sha256": "4f14c94277bf0b4099f4d6eb59acaf82af5b59ecc702cb843164f3abbc33e194"
+      "sha256": "e4d22a40fcebd875bee8a81e238873dcf73d7d430bc9ff406b8add08e53a8959"
     },
     {
-      "bytes": 106,
+      "bytes": 414,
       "path": "prompts/feature_repair.md",
-      "sha256": "7ec70cfa5b60404ffd591a55b51da56edb819059f8efd51d28f0626bdf485aec"
+      "sha256": "8b2bebbb600bc065ae4641940f5bf1238ff87d2d790d26b87bdba3b357d3c57a"
     },
     {
-      "bytes": 277,
+      "bytes": 499,
       "path": "prompts/feature_review.md",
-      "sha256": "c91859e0f92faa11c861ddc142ed14b7a96e92bd256b87ef5fa80711e3cca2e7"
+      "sha256": "f5c5f5f4af0bca1fe92aa2c69b2fc9f0f8aa3db31f757bd702b4696271e2f9f5"
     },
     {
-      "bytes": 274,
+      "bytes": 755,
       "path": "prompts/feature_scope.md",
-      "sha256": "9e5ac3ca2bb06f150fcb85fec83f75d9206761ac52f87a2dc254eebe110f4c04"
+      "sha256": "f5aa8306da40fdcd23218f42c565c01dc6ce15334d374a365aea607d2e835d8f"
     },
     {
-      "bytes": 161,
+      "bytes": 574,
       "path": "prompts/issue_analysis_review.md",
-      "sha256": "b0d187bcb6043373b7757831b6865f17e93cf6550e121253424d687bf997d965"
+      "sha256": "01eca68eb11c7f6fd29c2b4f3021125b8d0b143f853e3bb3944c6006915cc5a6"
     },
     {
-      "bytes": 227,
+      "bytes": 588,
       "path": "prompts/issue_analyze.md",
-      "sha256": "452e71f580e6f87517bb959ff8385336fe5a4a3a23f863b2edcb041cc5efa43c"
+      "sha256": "3abde59a71d7d90d4ec9e36ac4fa0e00a5411f543cd0bb98d3097dc8aaa0fe6d"
     },
     {
-      "bytes": 490,
+      "bytes": 727,
       "path": "prompts/issue_implement.md",
-      "sha256": "4f14c94277bf0b4099f4d6eb59acaf82af5b59ecc702cb843164f3abbc33e194"
+      "sha256": "7a79d9dfa353c35a55bc69ee2a770c56897507b4f6b35817228ea9a61b8fa2bb"
     },
     {
-      "bytes": 106,
+      "bytes": 510,
       "path": "prompts/issue_repair.md",
-      "sha256": "7ec70cfa5b60404ffd591a55b51da56edb819059f8efd51d28f0626bdf485aec"
+      "sha256": "1b46e225902c20537b88c217081de74a1dfd9d4441d086eae747b7ac52bea044"
     },
     {
-      "bytes": 277,
+      "bytes": 520,
       "path": "prompts/issue_review.md",
-      "sha256": "c91859e0f92faa11c861ddc142ed14b7a96e92bd256b87ef5fa80711e3cca2e7"
+      "sha256": "4e0f6a2c8fde2659ababf40eb05456c2d7d8c5fb8aba4d04c488102a8d73b7c3"
     },
     {
-      "bytes": 274,
+      "bytes": 769,
       "path": "prompts/issue_scope.md",
-      "sha256": "9e5ac3ca2bb06f150fcb85fec83f75d9206761ac52f87a2dc254eebe110f4c04"
+      "sha256": "895cc7f803926c7dec8065ced5070e7c94cac3ccaf1da5147eb5aa41ff831cbc"
     },
     {
       "bytes": 36,

@@ -14,10 +14,15 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
-from maintain.errors import ProviderError
+from maintain.errors import ConfigurationError, ProviderError
 from maintain.exchange_package import build_exchange_package
 from maintain.models import ProviderCapabilities, ProviderRequest
 from maintain.locking import FileLock
+from maintain.references import (
+    CopilotReference,
+    reference_submission_line,
+    verify_reference,
+)
 from maintain.security import assert_no_secrets
 
 from .base import Provider
@@ -26,6 +31,7 @@ from .command import parse_response
 
 M365_ENTRY_URL = "https://copilot.cloud.microsoft/?internalredirect=M365Cloud&auth=2"
 M365_APPROVED_HOSTS = {"copilot.cloud.microsoft", "m365.cloud.microsoft"}
+COMPATIBILITY_DRAFT = "Maintain compatibility check. This text will not be sent."
 
 
 @dataclass(frozen=True)
@@ -50,15 +56,29 @@ class BrowserProvider(Provider):
         self._status_callback: Callable[[str, str], None] | None = None
         self._expected_attachments: list[str] = []
         self._layout_name = ""
+        self._reference_material: CopilotReference | None = None
 
     def set_status_callback(self, callback: Callable[[str, str], None]) -> None:
         self._status_callback = callback
+
+    def set_reference_material(self, reference: CopilotReference | None) -> None:
+        """Use one prepared reference for subsequent browser exchanges."""
+        if reference is not None and not isinstance(reference, CopilotReference):
+            raise ProviderError("Browser reference material must be prepared by Maintain.")
+        self._reference_material = reference
+
+    @staticmethod
+    def _verify_reference_material(reference: CopilotReference) -> None:
+        try:
+            verify_reference(reference)
+        except ConfigurationError as exc:
+            raise ProviderError(f"The prepared Copilot reference is unavailable: {exc}") from exc
 
     def _start_journey(self) -> None:
         self._journey = []
         self._expected_attachments = []
         self._layout_name = ""
-        self._mark_state("opening", "Open the configured assistant")
+        self._mark_state("opening", "Open the assistant")
 
     def _mark_state(self, state: str, detail: str = "") -> None:
         if self._journey and self._journey[-1]["state"] == state:
@@ -69,12 +89,12 @@ class BrowserProvider(Provider):
             "at": datetime.now(timezone.utc).isoformat(),
         })
         shown = {
-            "page_ready": ("BROWSER", "Assistant page is ready"),
-            "model_confirmed": ("MODEL", "Preferred model confirmed"),
-            "files_ready": ("ATTACH", "Package files are ready"),
-            "request_submitted": ("SEND", "Request submitted"),
-            "response_complete": ("RESPONSE", "Assistant response received"),
-            "response_saved": ("SAVE", "Exchange evidence saved"),
+            "page_ready": ("BROWSER", "The assistant chat page is ready"),
+            "model_confirmed": ("MODEL", "The assistant model is ready"),
+            "files_ready": ("ATTACH", "Attached the project files for this step"),
+            "request_submitted": ("SEND", "Sent the request to the assistant"),
+            "response_complete": ("RESPONSE", "The assistant completed its response"),
+            "response_saved": ("SAVE", "Saved the response and evidence"),
         }.get(state)
         if shown and self._status_callback:
             self._status_callback(*shown)
@@ -382,25 +402,41 @@ class BrowserProvider(Provider):
         """Set text on the live M365 editable node, not its role=textbox wrapper."""
         timeout = min(int(self.config.get("timeout_ms", 300_000)), 30_000)
         expected = self._normalize_prompt_text(value)
-        target = prompt.locator(
-            'xpath=self::*[self::textarea or self::input or @contenteditable="true"] | '
-            './/*[self::textarea or self::input or @contenteditable="true"]'
-        ).first
-        if not target.count():
-            target = prompt
-        target.click(timeout=timeout)
-        try:
-            target.fill(value, timeout=timeout)
-        except Exception:
-            try:
-                target.press("Control+A", timeout=5_000)
-                target.press("Backspace", timeout=5_000)
-            except Exception:
-                pass
-            if value:
-                page.keyboard.insert_text(value)
-        deadline = time.monotonic() + min(timeout, 5_000) / 1_000
+        deadline = time.monotonic() + timeout / 1_000
         while time.monotonic() < deadline:
+            prompt = self._resolve_prompt(
+                page, {**PAGE_OBJECTS.get(self.name, {}),
+                       **self.config.get("selectors", {})})
+            if prompt.evaluate(
+                    "field => field.matches('textarea, input, [contenteditable=\"true\"]')"):
+                target = prompt
+            else:
+                candidates = prompt.locator(
+                    'textarea, input, [contenteditable="true"]').all()
+                visible = [candidate for candidate in candidates if candidate.is_visible()]
+                if len(visible) != 1:
+                    page.wait_for_timeout(100)
+                    continue
+                target = visible[0]
+            try:
+                # ChatGPT can replace its fallback textarea with a rich editor between
+                # resolution and click. A short action timeout lets us reacquire that
+                # live editor instead of waiting on the stale hidden textarea.
+                target.click(timeout=min(timeout, 3_000))
+            except Exception:
+                page.wait_for_timeout(100)
+                continue
+            try:
+                target.fill(value, timeout=min(timeout, 5_000))
+            except Exception:
+                try:
+                    target.press("Control+A", timeout=3_000)
+                    target.press("Backspace", timeout=3_000)
+                    if value:
+                        page.keyboard.insert_text(value)
+                except Exception:
+                    page.wait_for_timeout(100)
+                    continue
             live_prompt = self._resolve_prompt(page, {
                 **PAGE_OBJECTS.get(self.name, {}), **self.config.get("selectors", {})})
             if self._prompt_value(live_prompt) == expected:
@@ -410,8 +446,18 @@ class BrowserProvider(Provider):
 
     def _check_send_control(self, page, prompt, selectors: dict[str, Any]) -> bool:
         """Expose a dynamic Send button with an unsent draft, then clear it."""
-        draft = "Maintain compatibility check. This text will not be sent."
-        if self._prompt_value(prompt).strip():
+        draft = COMPATIBILITY_DRAFT
+        # Model-menu inspection can replace the ChatGPT composer. Never inspect a
+        # stale fallback textarea that is no longer the visible message field.
+        prompt = self._resolve_prompt(page, selectors)
+        existing = self._prompt_value(prompt)
+        if existing == self._normalize_prompt_text(draft):
+            # A prior interrupted compatibility check can be restored by the UI
+            # when its fallback textarea becomes the rich editor. This exact
+            # Maintain-owned probe is safe to clear; preserve every other draft.
+            self._set_prompt_text(page, prompt, "")
+            prompt = self._resolve_prompt(page, selectors)
+        elif existing.strip():
             raise ProviderError(
                 "The message field contains a draft. Clear it before compatibility checking.")
         try:
@@ -492,7 +538,16 @@ class BrowserProvider(Provider):
             visible_users = [
                 node for node in page.locator(user_selector).all() if node.is_visible()
             ]
-            if not self._prompt_value(last_prompt).strip() and not visible_users:
+            prompt_value = self._prompt_value(last_prompt)
+            if (prompt_value == self._normalize_prompt_text(COMPATIBILITY_DRAFT)
+                    and not visible_users):
+                # ChatGPT can restore Maintain's unsent compatibility probe after
+                # New chat even though the compatibility check cleared it. Remove
+                # only this exact tool-owned draft; never clear arbitrary user text.
+                self._set_prompt_text(page, last_prompt, "")
+                last_prompt = self._resolve_prompt(page, selectors)
+                prompt_value = self._prompt_value(last_prompt)
+            if not prompt_value.strip() and not visible_users:
                 self._mark_state("conversation_ready", "Empty conversation confirmed")
                 return last_prompt
             page.wait_for_timeout(250)
@@ -670,6 +725,7 @@ class BrowserProvider(Provider):
     def exchange(self, request: ProviderRequest):
         from playwright.sync_api import sync_playwright
 
+        reference = self._reference_material
         self.evidence_dir.mkdir(parents=True, exist_ok=True)
         selectors = {**PAGE_OBJECTS.get(self.name, {}), **self.config.get("selectors", {})}
         response_selector = selectors.get("response_selector")
@@ -683,6 +739,10 @@ class BrowserProvider(Provider):
             stage = "open assistant"
             self._start_journey()
             try:
+                if reference is not None:
+                    stage = "verify reference"
+                    self._verify_reference_material(reference)
+                    stage = "open assistant"
                 self._open_page(page)
                 self._verify_session(page, selectors)
                 self._enable_preferred_design(page, selectors)
@@ -699,7 +759,12 @@ class BrowserProvider(Provider):
                     "model_confirmed",
                     selected_model or "Use the account default model")
                 serialized = json.dumps(asdict(request), ensure_ascii=False, separators=(",", ":"))
-                digest = hashlib.sha256(serialized.encode()).hexdigest()
+                reference_line = reference_submission_line(reference)
+                digest_input = (
+                    serialized if not reference_line
+                    else serialized + "\n\n" + reference_line
+                )
+                digest = hashlib.sha256(digest_input.encode()).hexdigest()
                 exchange_dir = self._new_exchange_dir(digest)
                 attachment_selector = selectors.get("attachment_selector")
                 transport = "text"
@@ -707,12 +772,19 @@ class BrowserProvider(Provider):
                 package_bytes = len(serialized.encode())
                 if attachment_selector:
                     stage = "attach package files"
-                    package = build_exchange_package(request, exchange_dir / "packages")
-                    if len(package.paths) > 3:
-                        raise ProviderError("A browser exchange can attach no more than three files.")
+                    try:
+                        package = build_exchange_package(
+                            request, exchange_dir / "packages", reference=reference)
+                    except ConfigurationError as exc:
+                        raise ProviderError(
+                            f"The prepared Copilot reference is unavailable: {exc}") from exc
+                    if len(package.paths) > 4:
+                        raise ProviderError("A browser exchange can attach no more than four files.")
                     self._expected_attachments = [path.name for path in package.paths]
                     self._mark_state("attaching", f"Attach {len(package.paths)} package files")
                     self._attach_files(page, prompt, package.paths, selectors)
+                    if reference is not None:
+                        self._verify_reference_material(reference)
                     digest = package.sha256
                     package_bytes = package.bytes
                     attachment_names = list(self._expected_attachments)
@@ -724,8 +796,18 @@ class BrowserProvider(Provider):
                         "exact run_id, task_id, and role values. Follow the output instructions "
                         "exactly."
                     )
+                    if request.role == "implement":
+                        message += (
+                            " Return the complete implementation inline in the JSON envelope as "
+                            "specified by TASK.md. Do not create or attach a downloadable artifact."
+                        )
+                    if reference_line:
+                        message += "\n\n" + reference_line
                     transport = "attachment"
                 else:
+                    if reference is not None and reference.kind == "file":
+                        raise ProviderError(
+                            "A local Copilot reference requires browser file upload support.")
                     chunks = make_chunks(serialized, int(self.config.get("max_chunk_chars", 12000)))
                     if len(chunks) == 1:
                         message = request.instructions + "\n\n" + chunks[0]
@@ -745,6 +827,8 @@ class BrowserProvider(Provider):
                         message = (f"{request.instructions}\nAll {len(chunks)} chunks are complete. "
                                    f"Package SHA-256: {digest}. Return the required envelope.")
                         transport = "chunks"
+                    if reference_line:
+                        message += "\n\n" + reference_line
                 previous_responses = self._visible_texts(page, response_selector)
                 stage = "submit request"
                 self._submit(
@@ -797,7 +881,13 @@ class BrowserProvider(Provider):
                     conversation_id=f"{self.name}-{exchange_dir.name}",
                 )
                 if request.role == "implement":
-                    output_zip = self._inline_output_zip(parsed.content, request, exchange_dir.name)
+                    implementation_defect = ""
+                    try:
+                        output_zip = self._inline_output_zip(
+                            parsed.content, request, exchange_dir.name)
+                    except ProviderError as exc:
+                        output_zip = None
+                        implementation_defect = str(exc)
                     allowed = [str(path) for path in request.payload.get("task", {}).get("allowed_files", [])]
                     implementation_repairs = 0
                     max_repairs = max(2, min(int(self.config.get("implementation_content_retries", 3)), 5))
@@ -810,12 +900,25 @@ class BrowserProvider(Provider):
                         implementation_repairs += 1
                         stage = "repair implementation content"
                         implementation_repair = (
-                            "Return the implementation now. Do not request context or explain. Return only one "
-                            "complete JSON envelope with the exact current run_id, task_id, role, and "
-                            "provider=\"assistant\". content.files must contain path and complete final "
-                            "content for every changed file. Use only these approved paths, or remove only an "
-                            f"accidental trailing .txt suffix: {json.dumps(allowed)}. Return changed_files and "
-                            f"deleted_files. Correction attempt {implementation_repairs} of {max_repairs}."
+                            "Correct the implementation response now. Return only one complete JSON "
+                            "object and no Markdown or explanation. Use "
+                            f"schema_version={request.schema_version}, "
+                            f"run_id={json.dumps(request.run_id)}, "
+                            f"task_id={json.dumps(request.task_id)}, "
+                            f"role={json.dumps(request.role)}, provider=\"assistant\", and a string "
+                            "conversation_id. content.files must be a list of objects with string "
+                            "path and complete final string content for every added or modified file. "
+                            "content.deleted_files must be a list of deleted paths. content.changed_files "
+                            "must equal exactly the union of files paths and deleted_files. Do not return "
+                            "a patch, excerpt, placeholder, fenced block, or downloadable artifact. Use "
+                            "only these approved paths, except the single explicitly approved trailing "
+                            f".txt correction when applicable: {json.dumps(allowed)}. "
+                            + (
+                                f"Previous defect: {implementation_defect}. "
+                                if implementation_defect else
+                                "Previous defect: complete inline files were missing. "
+                            )
+                            + f"Correction attempt {implementation_repairs} of {max_repairs}."
                         )
                         previous = self._visible_texts(page, response_selector)
                         self._submit(page, prompt, implementation_repair, selectors)
@@ -824,7 +927,13 @@ class BrowserProvider(Provider):
                         (exchange_dir / f"{request.role}-content-repair-{implementation_repairs}.txt").write_text(raw, encoding="utf-8")
                         parsed = parse_response(_extract_json(raw), request, self.name)
                         parsed = replace(parsed, conversation_id=f"{self.name}-{exchange_dir.name}")
-                        output_zip = self._inline_output_zip(parsed.content, request, exchange_dir.name)
+                        try:
+                            output_zip = self._inline_output_zip(
+                                parsed.content, request, exchange_dir.name)
+                            implementation_defect = ""
+                        except ProviderError as exc:
+                            output_zip = None
+                            implementation_defect = str(exc)
                     if output_zip is None:
                         download_selector = selectors.get("output_download_selector")
                         downloadable = bool(download_selector and any(
@@ -832,7 +941,9 @@ class BrowserProvider(Provider):
                         if not downloadable:
                             raise ProviderError(
                                 "The implementation response contained neither complete inline files nor a "
-                                f"downloadable output artifact after {implementation_repairs} bounded repair attempt(s).")
+                                f"downloadable output artifact after {implementation_repairs} bounded "
+                                f"repair attempt(s). Last defect: "
+                                f"{implementation_defect or 'complete inline files were missing'}.")
                         stage = "download implementation"
                         output_zip = self._download_output_zip(page, selectors, request, exchange_dir.name)
                     parsed.content["_maintain_output_zip"] = output_zip.name
@@ -843,6 +954,8 @@ class BrowserProvider(Provider):
                 (exchange_dir / f"{request.role}-transport.json").write_text(
                     json.dumps({"transport": transport, "sha256": digest,
                                 "bytes": package_bytes, "attachments": attachment_names,
+                                "reference": (
+                                    reference.to_dict() if reference is not None else None),
                                 "layout": layout.name,
                                 "model": selected_model or None,
                                 "conversation_id": parsed.conversation_id,
@@ -1521,11 +1634,37 @@ class BrowserProvider(Provider):
                            exchange_id: str) -> Path | None:
         """Build the implementation ZIP from validated inline complete-file content."""
         files = content.get("files")
-        if not isinstance(files, list) or not files:
+        if files is None:
             return None
+        if not isinstance(files, list):
+            raise ProviderError("Inline implementation files must be a list.")
         task = request.payload.get("task", {})
         allowed_files = task.get("allowed_files", [])
         allowed = {str(path) for path in allowed_files}
+        deleted = content.get("deleted_files")
+        if deleted is None:
+            deleted = []
+            content["deleted_files"] = deleted
+        if (not isinstance(deleted, list)
+                or any(not isinstance(name, str) for name in deleted)
+                or len(set(deleted)) != len(deleted)):
+            raise ProviderError(
+                "Inline implementation deleted_files must be a unique list of paths.")
+        if not files and not deleted:
+            return None
+
+        deleted_paths: list[str] = []
+        for name in deleted:
+            path = Path(name)
+            if (path.is_absolute() or name != path.as_posix() or
+                    any(part in {"", ".", ".."} for part in path.parts)):
+                raise ProviderError(
+                    f"Inline implementation returned an unsafe deleted path: {name}")
+            if name not in allowed:
+                raise ProviderError(
+                    f"Inline implementation returned an unapproved deleted path: {name}")
+            deleted_paths.append(name)
+
         entries: list[tuple[str, str]] = []
         seen: set[str] = set()
         for item in files:
@@ -1564,20 +1703,24 @@ class BrowserProvider(Provider):
             seen.add(name)
             entries.append((name, body))
         inline_paths = [name for name, _ in entries]
+        overlap = set(inline_paths) & set(deleted_paths)
+        if overlap:
+            raise ProviderError(
+                f"Inline implementation cannot replace and delete the same path: "
+                f"{sorted(overlap)[0]}")
+        expected_paths = [*inline_paths, *deleted_paths]
         declared = content.get("changed_files")
         if declared is None:
-            content["changed_files"] = list(inline_paths)
+            content["changed_files"] = list(expected_paths)
         elif (not isinstance(declared, list)
               or any(not isinstance(name, str) for name in declared)
-              or set(declared) != set(inline_paths)):
+              or len(set(declared)) != len(declared)
+              or set(declared) != set(expected_paths)):
             raise ProviderError(
-                "Inline implementation files do not match declared changed files.")
-        deleted = content.get("deleted_files")
-        if deleted is None:
-            content["deleted_files"] = []
-        elif not isinstance(deleted, list):
-            raise ProviderError("Inline implementation deleted_files must be a list.")
+                "Inline implementation changed_files must equal the union of files and "
+                "deleted_files.")
 
+        self.evidence_dir.mkdir(parents=True, exist_ok=True)
         destination = self.evidence_dir / f"{exchange_id}-{request.task_id}-{request.role}-output.zip"
         with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for name, body in entries:

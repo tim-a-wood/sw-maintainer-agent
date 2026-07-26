@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
@@ -13,7 +14,7 @@ from maintain.cli import _shell_command
 from maintain.config import ProjectConfig, default_config
 from maintain.engine import WorkflowEngine
 from maintain.models import ProviderRequest, ProviderResponse
-from maintain.presenter import QuietPresenter
+from maintain.presenter import Presenter, QuietPresenter
 from maintain.providers.base import Provider
 from maintain.providers.browser import _sanitized_browser_url
 
@@ -118,9 +119,10 @@ def test_active_workflow_reaches_delivery_and_updates_source_branch(tmp_path: Pa
     config = ProjectConfig.load(config_path)
 
     provider = ScriptedProvider()
+    report = io.StringIO()
     engine = WorkflowEngine(
         config,
-        QuietPresenter(),
+        Presenter(stream=report, animate=False, no_color=True, width=96),
         provider_builder=lambda *_args, **_kwargs: provider,
     )
 
@@ -140,6 +142,15 @@ def test_active_workflow_reaches_delivery_and_updates_source_branch(tmp_path: Pa
     assert (repository / "app.py").read_text(encoding="utf-8") == 'VALUE = "after"\n'
     assert _git(repository, "log", "-1", "--format=%s").startswith("maintain:")
     assert AuditStore(runtime_root, record.run_id).verify()["events"] > 0
+    rendered = report.getvalue()
+    assert "○  PREPARE    Prepare the project and assistant" in rendered
+    assert "○  PLAN       Ask the configured assistant to plan the change" in rendered
+    assert "○  CHANGE     Ask the configured assistant to create the change" in rendered
+    assert "○  REVIEW     Ask the configured assistant to review the change" in rendered
+    assert "✓  CHECK      The behavior check passed" in rendered
+    assert "✓  TEST       All local checks passed" in rendered
+    assert "✓  DELIVER    Created the verified commit" in rendered
+    assert "context expanding" not in rendered.casefold()
 
 
 def test_m365_setup_uses_edge_and_the_supported_entrypoint(tmp_path: Path) -> None:

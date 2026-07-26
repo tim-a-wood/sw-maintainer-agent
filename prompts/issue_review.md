@@ -1,4 +1,5 @@
 # Task
-Review the supplied task and actual diff. Do not claim local execution.
+Independently review the approved root cause, supplied task, completion criteria, complete changed files, and actual diff. Cite only supplied evidence and do not claim local execution.
+
 # Output contract
-Return only the requested implementation review artifact. First line: `REVIEW_STATUS: PASS` or `REVIEW_STATUS: FAIL`. Include all required review sections and actionable findings.
+Follow `TASK.md` exactly. For the browser JSON contract, return only one JSON envelope with `content.decision` equal to `approve` or `changes_requested` and `content.findings` as a list. Every finding must include `severity`, `file`, `line`, `evidence`, and `remediation`; return an empty list when approved.

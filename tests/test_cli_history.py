@@ -250,14 +250,13 @@ def test_selectable_history_shows_details_and_back_does_not_resume(tmp_path: Pat
 
     output = presenter.stream.getvalue()
     normalized = output.casefold()
-    assert "Select a numbered run to inspect without changing it." in output
+    assert "Select a run number to view it. This action does not change the run." in output
     assert record.request in output
-    assert "Feature · Needs Human" in output
+    assert "NEEDS YOUR ACTION" in output
     assert record.error in output
-    assert "configuration" in normalized
-    assert "local commands" in normalized
-    assert "audit chain" in normalized
-    assert "local verification" in normalized
+    assert "project configuration" in normalized
+    assert "local checks" in normalized
+    assert "saved evidence" in normalized
     assert "unit tests [windows]" in output
     assert "Pytest [windows]" in output
     assert "SAVED EVIDENCE" in output

@@ -16,9 +16,22 @@ from .config import CONFIG_NAME, ProjectConfig, default_config, find_config
 from .engine import WorkflowEngine
 from .errors import ConfigurationError, DeliveryError, MaintainError
 from .models import RunRecord, RunState
-from .presenter import Presenter
+from .presenter import Presenter, run_state_label
 from .presenter import QuietPresenter
-from .repository_memory import remember_repository, repository_for_cli
+from .project_creation import create_project
+from .references import validate_reference
+from .repository_memory import (
+    default_reference_for,
+    forget_repository,
+    load_last_repository,
+    load_recent_projects,
+    remember_repository,
+    repository_for_cli,
+    repository_root,
+    select_file,
+    select_folder,
+    set_default_reference,
+)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -39,6 +52,42 @@ def parser() -> argparse.ArgumentParser:
     for name in ("feature", "issue"):
         item = commands.add_parser(name, help=f"Start a verified {name} workflow")
         item.add_argument("request", nargs="+", help="Required outcome or issue report")
+        reference_choice = item.add_mutually_exclusive_group()
+        reference_choice.add_argument(
+            "--reference",
+            help="One local file or HTTPS link to provide directly to Microsoft 365 Copilot",
+        )
+        reference_choice.add_argument(
+            "--no-reference",
+            action="store_true",
+            help="Skip this project's saved default reference for this run",
+        )
+        item.add_argument(
+            "--save-reference",
+            action="store_true",
+            help="Use --reference as this project's default for future runs",
+        )
+    project = commands.add_parser("project", help="List, switch, add, forget, or create projects")
+    project.add_argument(
+        "action",
+        choices=["list", "open", "add", "forget", "new"],
+        nargs="?",
+        default="list",
+    )
+    project.add_argument("value", nargs="?", help="Project path, name, or list number")
+    project.add_argument(
+        "--provider",
+        choices=["codex", "file-exchange", "chatgpt-browser", "m365-browser"],
+        default="m365-browser",
+    )
+    project.add_argument("--name", help="Display name for a new project")
+    project.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        default=argparse.SUPPRESS,
+        help="Write machine-readable output",
+    )
     resume = commands.add_parser("resume", help="Resume a saved workflow")
     resume.add_argument("run_id")
     accept = commands.add_parser("accept", help="Accept an unchanged verified workflow")
@@ -87,11 +136,28 @@ def parser() -> argparse.ArgumentParser:
 
 
 def _config(args: argparse.Namespace) -> ProjectConfig:
-    path = Path(args.config).expanduser() if args.config else find_config(Path(args.repo))
+    repository = Path(args.repo).expanduser().resolve()
+    path = Path(args.config).expanduser() if args.config else None
+    if path is None:
+        entry = next(
+            (
+                project for project in load_recent_projects()
+                if project.path.resolve() == repository
+            ),
+            None,
+        )
+        if (
+            entry is not None
+            and entry.config_path is not None
+            and entry.config_path.is_file()
+        ):
+            path = entry.config_path
+    if path is None:
+        path = find_config(repository)
     if path is None:
         raise ConfigurationError(f"No {CONFIG_NAME} was found. Run maintain init.")
     config = ProjectConfig.load(path)
-    remember_repository(config.repository)
+    remember_repository(config.repository, config_path=config.path)
     return config
 
 
@@ -99,11 +165,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     presenter = None
     try:
+        if args.command == "project":
+            return _project_command(args)
         if args.command != "init":
             if args.repo is None and args.config:
                 args.repo = str(Path(args.config).expanduser().resolve().parent)
-            args.repo = str(repository_for_cli(
-                args.repo, interactive=sys.stdin.isatty() and not args.json_output))
+            if args.command is None and args.repo is None and load_last_repository() is None:
+                if not sys.stdin.isatty() or args.json_output:
+                    raise ConfigurationError(
+                        "No project has been selected. Use maintain project new PATH, "
+                        "maintain project open PATH, or launch Maintain interactively."
+                    )
+                args.repo = ""
+            else:
+                args.repo = str(repository_for_cli(
+                    args.repo, interactive=sys.stdin.isatty() and not args.json_output))
         if args.command is None:
             return _home(args)
         if args.command == "init":
@@ -135,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({"created": str(path), "provider": args.provider}, sort_keys=True))
             else:
                 print(f"Created {path}")
-            remember_repository(repository)
+            remember_repository(repository, config_path=path)
             return 0
         if args.command == "config" and args.action in {"upgrade", "migrate"}:
             from .migration import migrate_v1
@@ -154,8 +230,25 @@ def main(argv: list[str] | None = None) -> int:
         engine = WorkflowEngine(config, presenter)
         if args.command in {"feature", "issue"}:
             request = " ".join(args.request)
+            saved_reference = default_reference_for(config.repository)
+            uses_copilot = _uses_m365_copilot(config)
+            reference = (
+                args.reference
+                or (saved_reference if uses_copilot and not args.no_reference else None)
+            )
+            if args.save_reference and not args.reference:
+                raise ConfigurationError("--save-reference requires --reference.")
+            if args.reference and not uses_copilot:
+                raise ConfigurationError(
+                    "Copilot references require a Microsoft 365 Copilot provider.")
+            if reference:
+                reference = validate_reference(reference).source
+            if args.save_reference:
+                set_default_reference(config.repository, reference)
+            elif args.reference is None and reference and reference != saved_reference:
+                set_default_reference(config.repository, reference)
             presenter.run_header(args.command, request, config.name, _provider_label(config))
-            record = engine.start(args.command, request)
+            record = engine.start(args.command, request, reference=reference)
             _summary(record, args.json_output, presenter, command_prefix=_command_prefix(config))
         elif args.command == "resume":
             record = engine.resume(args.run_id)
@@ -304,11 +397,11 @@ def main(argv: list[str] | None = None) -> int:
                         elif result.get("model"):
                             facts.append(("Model", str(result["model"])))
                         if args.action == "login":
-                            label = "Session verified"
-                            title = f"The {name} sign-in and required browser controls were verified."
+                            label = "Sign-in ready"
+                            title = f"{name} is signed in. The browser controls are ready."
                             actions = (
                                 [
-                                    "Refresh the model list before starting work: "
+                                    "Update the model list before you start work: "
                                     + _shell_command([
                                         "maintain", "--repo", str(config.repository),
                                         "--config", str(config.path),
@@ -319,13 +412,13 @@ def main(argv: list[str] | None = None) -> int:
                             )
                             tone = "warning" if actions else "success"
                         elif args.action == "check":
-                            label = "Compatible"
-                            title = f"The {name} browser controls and model are compatible."
+                            label = "Browser ready"
+                            title = f"The {name} browser and model are ready."
                             actions = []
                             tone = "success"
                         else:
-                            label = "Preflight passed"
-                            title = f"The {name} provider preflight completed."
+                            label = "Assistant ready"
+                            title = f"{name} is ready."
                             actions = []
                             tone = "success"
                         presenter.outcome(
@@ -374,26 +467,27 @@ def main(argv: list[str] | None = None) -> int:
                 command_count = len(config.commands)
                 diff_only = _diff_only_verification(config)
                 facts = [
-                    ("Repository",
-                     "Configuration, Git, worktrees, storage, and audit checks passed"),
-                    ("Assistant preflight", "Configured provider checks passed"),
+                    ("Project setup",
+                     "The configuration, Git, workspace, storage, and audit checks passed"),
+                    ("Assistant", "The assistant connection checks passed"),
                     (
-                        "Verification setup",
-                        f"{command_count} command{'s' if command_count != 1 else ''} configured; "
-                        "executables found; not run",
+                        "Check setup",
+                        f"Maintain found {command_count} configured "
+                        f"check{'s' if command_count != 1 else ''}. "
+                        "Maintain did not run them",
                     ),
                 ]
                 if diff_only:
                     facts.append((
                         "Coverage",
-                        "Diff formatting only; no project test command was detected",
+                        "Maintain found only a diff-format check. It did not find project tests",
                     ))
                 presenter.outcome(
-                    "Preflight passed", "Maintain can start a maintenance run.",
-                    "No project verification commands were run.",
+                    "Ready to start", "Maintain can start this change.",
+                    "Maintain did not run the project checks.",
                     facts=facts,
                     actions=(
-                        ["Configure a project test command before relying on behavioral verification."]
+                        ["Add a project test before you use these results to verify behavior."]
                         if diff_only else []
                     ),
                     tone="success")
@@ -408,6 +502,182 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         _show_error(args, str(exc), presenter)
         return 1
+
+
+def _project_command(args: argparse.Namespace) -> int:
+    """Handle project registry actions without requiring an active repository."""
+
+    action = args.action
+    projects = load_recent_projects()
+    if action == "list":
+        active = load_last_repository()
+        rows = [
+            _project_row(entry, index, active=active)
+            for index, entry in enumerate(projects, 1)
+        ]
+        if args.json_output:
+            print(json.dumps(rows, sort_keys=True))
+        else:
+            presenter = _presenter_for(args)
+            presenter.section("PROJECTS", "Recent Maintain projects")
+            presenter.console.print()
+            if not rows:
+                presenter.console.print(
+                    "No projects are saved yet. Create one with `maintain project new PATH`.",
+                    style="muted",
+                )
+            for row in rows:
+                presenter.menu_line(
+                    row["index"],
+                    row["name"],
+                    f"{'Active · ' if row['active'] else ''}{row['status']} · {row['path']}",
+                )
+        return 0
+
+    if action == "new":
+        destination_value = args.value
+        if not destination_value:
+            if args.json_output or not sys.stdin.isatty():
+                raise ConfigurationError("The new action requires a project path.")
+            destination_value = _presenter_for(args).ask("New project folder")
+        if not destination_value:
+            raise ConfigurationError("The new project path cannot be empty.")
+        created = create_project(
+            Path(destination_value), provider=args.provider, name=args.name)
+        remember_repository(created.repository, config_path=created.config_path)
+        result = {
+            "action": "new",
+            "project": str(created.repository),
+            "config": str(created.config_path),
+            "provider": args.provider,
+        }
+        _project_result(args, "Project created", result)
+        return 0
+
+    value = args.value or args.repo
+    entry = _resolve_project(value, projects, require_registered=action == "forget")
+    if action == "forget":
+        if not forget_repository(entry.path):
+            raise ConfigurationError(f"Project is not remembered: {entry.path}")
+        _project_result(args, "Project forgotten", {
+            "action": "forget",
+            "project": str(entry.path),
+        })
+        return 0
+
+    root = repository_root(entry.path)
+    if root is None:
+        raise ConfigurationError(f"Not a Git repository: {entry.path}")
+    config_path = _project_config_path(args, root, entry)
+    if config_path is not None:
+        loaded = ProjectConfig.load(config_path)
+        if loaded.repository.resolve() != root.resolve():
+            raise ConfigurationError(
+                f"The project configuration belongs to {loaded.repository}, not {root}.")
+    remember_repository(root, config_path=config_path)
+    _project_result(args, "Project selected", {
+        "action": action,
+        "project": str(root),
+        "config": str(config_path) if config_path else None,
+        "configured": config_path is not None,
+    })
+    return 0
+
+
+def _project_row(
+        entry, index: int, *, active: Path | None = None) -> dict[str, object]:
+    if not entry.exists:
+        status = "Missing"
+    elif not entry.valid:
+        status = "Not a Git repository"
+    elif not entry.configured:
+        status = "Setup required"
+    else:
+        try:
+            config_path = entry.config_path or entry.path / CONFIG_NAME
+            ProjectConfig.load(config_path)
+            status = "Ready"
+        except (MaintainError, OSError, ValueError):
+            status = "Setup needs attention"
+    return {
+        "index": str(index),
+        "name": entry.name,
+        "path": str(entry.path),
+        "status": status,
+        "last_opened_at": entry.last_opened_at,
+        "configured": entry.configured,
+        "default_reference": entry.default_reference,
+        "active": active is not None and entry.path.resolve() == active.resolve(),
+    }
+
+
+def _resolve_project(value, projects, *, require_registered: bool):
+    if not value:
+        raise ConfigurationError("Specify a project path, name, or list number.")
+    shown = str(value).strip()
+    if not shown:
+        raise ConfigurationError("Specify a project path, name, or list number.")
+    if shown.isdigit():
+        index = int(shown)
+        if not 1 <= index <= len(projects):
+            raise ConfigurationError("Choose a project number shown by maintain project list.")
+        return projects[index - 1]
+
+    path_candidate = Path(shown).expanduser().resolve()
+    path_matches = [
+        entry for entry in projects if entry.path.resolve() == path_candidate
+    ]
+    if path_matches:
+        return path_matches[0]
+    name_matches = [
+        entry for entry in projects if entry.name.casefold() == shown.casefold()
+    ]
+    if len(name_matches) == 1:
+        return name_matches[0]
+    if len(name_matches) > 1:
+        raise ConfigurationError(
+            "More than one remembered project has that name; use its path or list number.")
+    if require_registered:
+        raise ConfigurationError(f"Project is not remembered: {shown}")
+
+    root = repository_root(path_candidate)
+    if root is None:
+        raise ConfigurationError(f"Not a Git repository: {shown}")
+    from .repository_memory import ProjectEntry
+    return ProjectEntry(
+        path=root,
+        name=root.name,
+        last_opened_at="",
+        config_path=None,
+        exists=True,
+        valid=True,
+        configured=(root / CONFIG_NAME).is_file(),
+    )
+
+
+def _project_config_path(args: argparse.Namespace, repository: Path, entry) -> Path | None:
+    if args.config:
+        candidate = Path(args.config).expanduser().resolve()
+    elif entry.config_path and entry.config_path.is_file():
+        candidate = entry.config_path
+    elif (repository / CONFIG_NAME).is_file():
+        candidate = repository / CONFIG_NAME
+    else:
+        return None
+    return candidate.resolve()
+
+
+def _project_result(args: argparse.Namespace, title: str, result: dict[str, object]) -> None:
+    if args.json_output:
+        print(json.dumps(result, sort_keys=True))
+        return
+    facts = [
+        ("Project", str(result["project"])),
+    ]
+    if result.get("config"):
+        facts.append(("Configuration", str(result["config"])))
+    presenter = _presenter_for(args)
+    presenter.outcome(title, title + ".", facts=facts, tone="success")
 
 
 def _load(config: ProjectConfig, run_id: str):
@@ -541,27 +811,26 @@ def _recovery_guidance(record: RunRecord) -> str:
     """Explain the smallest safe action before an interactive retry."""
     if record.evidence.get("pause_reason") == "repair_limit":
         return (
-            "Review the saved diff and failed checks. Continuing allows one more "
-            "automated repair cycle."
+            "Review the saved diff and failed checks. If you continue, Maintain will "
+            "try one more automatic repair."
         )
     error = record.error.casefold()
     if any(token in error for token in (
             "browser", "sign in", "signed in", "model", "assistant", "provider")):
         return (
-            "Use Assistant settings to sign in or reconnect and check compatibility, "
-            "then return to this run."
+            "Open Assistant settings. Sign in or reconnect. Do the compatibility "
+            "check. Then return to this run."
         )
     if any(token in error for token in (
             "pytest", "verification command", "project python", "timed out", "matlab")):
         return (
-            "Run the affected verification command in the project environment and "
-            "correct its dependencies or configuration before continuing."
+            "Run the failed check in the project environment. Correct its dependencies "
+            "or configuration. Then continue this run."
         )
     if "disk space" in error:
-        return "Free disk space, then return to this saved run."
+        return "Make more disk space. Then return to this run."
     return (
-        "Resolve the issue shown above outside Maintain. The saved workspace and "
-        "evidence will be reused."
+        "Correct the error shown above. Maintain will use the saved workspace and evidence."
     )
 
 
@@ -602,23 +871,31 @@ def _summary(record, json_output: bool = False, presenter: Presenter | None = No
     if checks:
         passed = sum(item["result"] == "Passed" for item in checks)
         facts.append(("Checks", f"{passed} of {len(checks)} passed"))
+    reference = record.evidence.get("copilot_reference")
+    if isinstance(reference, dict) and reference.get("name"):
+        facts.append((
+            "Copilot reference",
+            str(reference["name"]) + (
+                " (link)" if reference.get("kind") == "url" else " (attached file)"
+            ),
+        ))
     if record.branch:
         facts.append(("Branch", record.branch))
 
     state = record.state
     if state == "awaiting_acceptance":
         presenter.outcome(
-            "Review ready", "The change is implemented, reviewed, and tested.",
+            "Ready for review", "The change passed the review and all local checks.",
             facts=facts,
             actions=[] if interactive else [
                 f"Review the change: {command_prefix} diff {record.run_id}",
-                f"Accept it: {command_prefix} accept {record.run_id}",
+                f"Approve the change: {command_prefix} accept {record.run_id}",
             ],
             tone="accent",
         )
     elif state == "accepted":
         presenter.outcome(
-            "Accepted", "The verified change is approved.", facts=facts,
+            "Approved", "You approved the verified change.", facts=facts,
             actions=[] if interactive else [
                 f"Create the commit: {command_prefix} deliver {record.run_id}"
             ],
@@ -628,40 +905,58 @@ def _summary(record, json_output: bool = False, presenter: Presenter | None = No
         integrated = record.evidence.get("delivery", {}).get("integrated_branch", "")
         presenter.outcome(
             "Delivered",
-            (f"The verified change is now on {integrated}." if integrated
-             else "The verified commit is ready on its maintenance branch."),
+            (f"Maintain added the verified change to {integrated}." if integrated
+             else "Maintain created the verified commit on its maintenance branch."),
             facts=[*facts, ("Commit", commit), ("Integrated into", integrated)], tone="success",
         )
     elif state == "cancelled":
-        presenter.outcome("Cancelled", "The run stopped and its evidence was saved.",
+        presenter.outcome("Cancelled", "Maintain stopped the run and saved its evidence.",
                           facts=facts, tone="muted")
     elif state in {"needs_human", "needs_human_delivery"}:
         guidance = _recovery_guidance(record)
         actions = (
-            [guidance, "Retry only after completing the required action."]
+            [guidance, "Do not try again until you complete this action."]
             if interactive else
             [
                 guidance,
-                f"Continue when resolved: {command_prefix} resume {record.run_id}",
-                f"View the saved evidence: {command_prefix} status {record.run_id}",
+                f"Continue after you correct the error: {command_prefix} resume {record.run_id}",
+                f"View the run details: {command_prefix} status {record.run_id}",
             ]
         )
         presenter.outcome(
-            "Action needed", "This run is paused until the issue is resolved.",
+            "Action needed", "Maintain needs your action before it can continue.",
             record.error or (
-                "No detailed error was saved. Review the run evidence before retrying."
+                "Maintain did not save error details. Review the run evidence before you try again."
             ),
             facts,
             actions,
             tone="warning",
         )
     elif state == "failed":
-        presenter.outcome("Stopped", "Maintain could not complete this run.",
+        presenter.outcome("Stopped", "Maintain stopped this run before completion.",
                           record.error, facts,
-                          [f"View the saved evidence: {command_prefix} status {record.run_id}"],
+                          [f"View the run details: {command_prefix} status {record.run_id}"],
                           tone="danger")
     else:
-        presenter.outcome("Saved", f"The run is {state.replace('_', ' ')}.",
+        state_messages = {
+            "created": "Maintain has not started this run.",
+            "preparing": "Maintain is preparing the project and assistant.",
+            "workspace_ready": "Maintain is ready to plan the change.",
+            "context_expanding": "Maintain is finding the project files for this change.",
+            "scoping": "Maintain is planning the change.",
+            "tasks_ready": "The change plan is ready.",
+            "implementing": "Maintain is creating the change.",
+            "implemented": "Maintain is ready to review the change.",
+            "reviewing": "Maintain is reviewing the change.",
+            "changes_requested": "The review found changes to make.",
+            "repairing": "Maintain is correcting the change.",
+            "testing": "Maintain is running the local checks.",
+            "test_failed": "A local check failed.",
+            "verified": "The change passed all local checks.",
+            "delivering": "Maintain is creating the verified commit.",
+        }
+        presenter.outcome("Saved", state_messages.get(
+            state, "Maintain saved the run at its current step."),
                           record.error, facts, tone="accent")
 
 
@@ -669,6 +964,12 @@ def _home(args: argparse.Namespace) -> int:
     if not sys.stdin.isatty():
         print("Choose feature, issue, resume, runs, or doctor.", file=sys.stderr)
         return 2
+    if not args.repo:
+        presenter = _presenter_for(args)
+        selected = _interactive_project_picker(args, presenter, initial=True)
+        if selected is None:
+            return 0
+        args.repo = str(selected)
     while True:
         config_error = ""
         try:
@@ -683,10 +984,25 @@ def _home(args: argparse.Namespace) -> int:
             config.name if config else "",
             _provider_label(config) if config else "Setup required",
             len(values), configured=config is not None, setup_issue=config_error,
+            repository=str(Path(args.repo).expanduser().resolve()),
+            branch=_current_branch(Path(args.repo)),
+            assistant_settings=_uses_browser_assistant(config) if config else False,
         )
         choice = presenter.ask("Choose", "1" if config is not None else "S").casefold()
         if choice == "q":
             return 0
+        if choice == "p":
+            selected = _interactive_project_picker(args, presenter)
+            if selected is not None:
+                args.repo = str(selected)
+                args.config = None
+            continue
+        if choice == "n":
+            selected = _interactive_create_project(args, presenter)
+            if selected is not None:
+                args.repo = str(selected)
+                args.config = None
+            continue
         if choice == "s":
             if config is not None:
                 presenter.error("This project is already set up.")
@@ -696,8 +1012,12 @@ def _home(args: argparse.Namespace) -> int:
                 continue
             _pause(presenter)
             continue
-        if choice not in {"1", "2", "3", "4", "5"}:
-            presenter.error("Choose 1, 2, 3, 4, 5, S, or Q.")
+        available_choices = {"1", "2", "3", "4"}
+        if config is not None and _uses_browser_assistant(config):
+            available_choices.add("5")
+        if choice not in available_choices:
+            shown = "1, 2, 3, 4, 5" if "5" in available_choices else "1, 2, 3, 4"
+            presenter.error(f"Choose {shown}, P, N, S, or Q.")
             continue
         if config is None:
             presenter.error("Set up this project before starting work.",
@@ -716,8 +1036,9 @@ def _home(args: argparse.Namespace) -> int:
                 presenter.error("Describe the required outcome before starting.")
                 _pause(presenter)
                 continue
+            reference = _interactive_copilot_reference(config, presenter)
             presenter.run_header(mode, request, config.name, _provider_label(config))
-            record = engine.start(mode, request)
+            record = engine.start(mode, request, reference=reference)
             _summary(record, presenter=presenter, interactive=True)
             _interactive_run(engine, record, presenter)
             continue
@@ -729,6 +1050,215 @@ def _home(args: argparse.Namespace) -> int:
             _continue_saved_run(engine, record, presenter)
             continue
         _interactive_history(engine, config, presenter)
+
+
+def _interactive_project_picker(
+        args: argparse.Namespace, presenter: Presenter, *, initial: bool = False) -> Path | None:
+    """Choose, browse, create, or forget a recent project."""
+
+    while True:
+        projects = load_recent_projects()
+        active = load_last_repository()
+        presenter.section(
+            "PROJECTS",
+            "Choose a project" if projects else "Start your first project",
+            "The most recently opened project is listed first." if projects else "",
+        )
+        presenter.console.print()
+        for index, entry in enumerate(projects, 1):
+            row = _project_row(entry, index, active=active)
+            reference = " · Reference saved" if entry.default_reference else ""
+            active_label = "Active · " if row["active"] else ""
+            presenter.menu_line(
+                str(index), entry.name,
+                f"{active_label}{row['status']} · {entry.path}{reference}",
+            )
+        if projects:
+            presenter.console.print()
+        presenter.menu_line("b", "Browse for an existing project", "Add a Git repository")
+        presenter.menu_line("n", "Create a new project", "Start from a blank repository")
+        if projects:
+            presenter.menu_line("f", "Forget a project", "Remove it from this list")
+        presenter.menu_line(
+            "q" if initial else "x",
+            "Quit" if initial else "Back",
+            "",
+            quiet=True,
+        )
+        default = "1" if projects else "N"
+        choice = presenter.ask("Choose", default).casefold()
+        if (initial and choice == "q") or (not initial and choice in {"x", "q"}):
+            return None
+        if choice == "n":
+            created = _interactive_create_project(args, presenter)
+            if created is not None:
+                return created
+            continue
+        if choice == "b":
+            selected = select_folder("Select an existing Git project", allow_new=False)
+            if selected is None:
+                continue
+            root = repository_root(selected)
+            if root is None:
+                presenter.error(
+                    "That folder is not inside a Git repository.",
+                    "Choose an existing Git project or create a new one.",
+                )
+                continue
+            config_path = root / CONFIG_NAME if (root / CONFIG_NAME).is_file() else None
+            remember_repository(root, config_path=config_path)
+            return root
+        if choice == "f" and projects:
+            selected = presenter.ask("Project number to forget")
+            try:
+                index = int(selected)
+                if not 1 <= index <= len(projects):
+                    raise IndexError
+            except (ValueError, IndexError):
+                presenter.error("Choose a listed project number.")
+                continue
+            forgotten = projects[index - 1]
+            forget_repository(forgotten.path)
+            presenter.complete("PROJECT", f"Forgot {forgotten.name}")
+            continue
+        try:
+            index = int(choice)
+            if not 1 <= index <= len(projects):
+                raise IndexError
+            selected = projects[index - 1]
+        except (ValueError, IndexError):
+            presenter.error("Choose a listed project, B, N, or F.")
+            continue
+        if not selected.valid:
+            presenter.error(
+                f"{selected.path} is not an available Git repository.",
+                "Choose F to forget it, or browse to its new location.",
+            )
+            continue
+        remember_repository(selected.path, config_path=selected.config_path)
+        return selected.path
+
+
+def _interactive_create_project(
+        args: argparse.Namespace, presenter: Presenter) -> Path | None:
+    presenter.section(
+        "NEW PROJECT",
+        "Create a blank Maintain project",
+        "This creates a Git repository, README, and Maintain configuration.",
+    )
+    presenter.console.print()
+    name = presenter.ask("Project name")
+    if not name:
+        return None
+    active = Path(args.repo).expanduser().resolve() if args.repo else None
+    parent = active.parent if active is not None else Path.cwd()
+    destination = presenter.ask("Project folder", str(parent / name))
+    if not destination:
+        return None
+    presenter.console.print()
+    presenter.menu_line("1", "Microsoft 365 Copilot", "Recommended for this workflow")
+    presenter.menu_line("2", "ChatGPT", "Browser automation")
+    presenter.menu_line("3", "Codex", "Local CLI")
+    presenter.menu_line("4", "File exchange", "Manual assistant handoff")
+    presenter.menu_line("b", "Back", "", quiet=True)
+    choice = presenter.ask("Assistant", "1").casefold()
+    if choice == "b":
+        return None
+    provider = {
+        "1": "m365-browser",
+        "2": "chatgpt-browser",
+        "3": "codex",
+        "4": "file-exchange",
+    }.get(choice)
+    if provider is None:
+        presenter.error("Choose 1, 2, 3, 4, or B.")
+        return None
+    try:
+        created = create_project(Path(destination), provider=provider, name=name)
+    except MaintainError as exc:
+        presenter.error(str(exc), "Choose a new, empty project path and try again.")
+        _pause(presenter)
+        return None
+    remember_repository(created.repository, config_path=created.config_path)
+    presenter.outcome(
+        "Project created",
+        f"{name} is ready to use.",
+        facts=[
+            ("Folder", str(created.repository)),
+            ("Branch", "main"),
+            ("Assistant", provider.replace("-", " ").title()),
+        ],
+        actions=["Use Assistant settings if this is your first browser sign-in."],
+        tone="success",
+    )
+    _pause(presenter)
+    return created.repository
+
+
+def _interactive_copilot_reference(
+        config: ProjectConfig, presenter: Presenter) -> str | None:
+    if not _uses_m365_copilot(config):
+        return None
+    saved = default_reference_for(config.repository) or ""
+    presenter.console.print()
+    presenter.console.print("OPTIONAL COPILOT REFERENCE", style="brand")
+    presenter.console.print(
+        "Provide one local file or HTTPS link as read-only background material.",
+        style="muted",
+    )
+    while True:
+        reference = presenter.ask(
+            "Reference (- for none, B to browse, CLEAR to forget)", saved)
+        if reference == "-":
+            return None
+        if reference.casefold() == "clear":
+            set_default_reference(config.repository, None)
+            saved = ""
+            presenter.complete("REFERENCE", "Cleared the project default")
+            continue
+        if reference.casefold() == "b":
+            selected = select_file("Select a Copilot reference file")
+            if selected is None:
+                return None
+            reference = str(selected)
+        if not reference:
+            return None
+        try:
+            validated = validate_reference(reference)
+        except MaintainError as exc:
+            presenter.error(str(exc), "Choose one readable file up to 10 MB or an HTTPS link.")
+            continue
+        normalized = validated.source
+        if reference == saved and normalized != saved:
+            set_default_reference(config.repository, normalized)
+        elif normalized != saved:
+            keep = presenter.ask("Use this as the default for this project?", "N").casefold()
+            if keep in {"y", "yes"}:
+                set_default_reference(config.repository, normalized)
+        return normalized
+
+
+def _uses_m365_copilot(config: ProjectConfig) -> bool:
+    return any(
+        config.providers.get(profile, {}).get("type") == "m365_copilot_browser"
+        for profile in set(config.roles.values())
+    )
+
+
+def _uses_browser_assistant(config: ProjectConfig) -> bool:
+    return any(
+        config.providers.get(profile, {}).get("type")
+        in {"chatgpt_browser", "m365_copilot_browser"}
+        for profile in set(config.roles.values())
+    )
+
+
+def _current_branch(repository: Path) -> str:
+    root = repository_root(repository)
+    if root is None:
+        return ""
+    from .workspace import git
+    return git(root, "branch", "--show-current", check=False) or "detached HEAD"
 
 
 def _interactive_setup(args: argparse.Namespace, presenter: Presenter) -> int:
@@ -862,7 +1392,7 @@ def _interactive_resume(
     presenter.console.print()
     repair_cycle = record.evidence.get("pause_reason") == "repair_limit"
     prompt = (
-        "Start another automated repair cycle now?"
+        "Start one more automatic repair now?"
         if repair_cycle else
         "Have you completed the required action?"
     )
@@ -872,12 +1402,12 @@ def _interactive_resume(
             return record
         if choice in {"y", "yes"}:
             break
-        presenter.console.print("Choose Y to try again or N to keep the run saved.",
+        presenter.console.print("Select Y to try again. Select N to keep the run.",
                                 style="warning")
     try:
         resumed = engine.resume(record.run_id)
     except MaintainError as exc:
-        presenter.error(str(exc), "The run remains saved; resolve the issue before retrying.")
+        presenter.error(str(exc), "Maintain saved the run. Correct the error before you try again.")
         _pause(presenter)
         return record
     _summary(resumed, presenter=presenter, interactive=True)
@@ -902,7 +1432,7 @@ def _interactive_history(
             presenter.section(
                 "RUN DETAILS",
                 record.request,
-                f"{record.mode.title()} · {record.state.replace('_', ' ').title()}",
+                f"{record.mode.title()} · {run_state_label(record.state)}",
             )
             _summary(record, presenter=presenter, interactive=True)
             presenter.console.print()
@@ -997,15 +1527,18 @@ def _interactive_run(engine: WorkflowEngine, record, presenter: Presenter) -> No
                 presenter.error("Choose 1, 4, or B.")
                 continue
             update_source = choice == "1"
-        presenter.complete("ACCEPT", "Verified change accepted")
+        presenter.complete("APPROVE", "You approved the verified change")
         try:
             record = engine.deliver(record.run_id)
             source_branch = str(record.evidence.get("source_branch", ""))
             if update_source and source_branch:
                 record = engine.integrate(record.run_id, source_branch, confirmed=True)
-                presenter.complete("UPDATE", f"Updated {source_branch}")
+                presenter.complete("UPDATE", f"Added the change to {source_branch}")
             elif update_source:
-                presenter.failed("UPDATE", "Source checkout has no branch; kept the verified branch")
+                presenter.failed(
+                    "UPDATE",
+                    "The source checkout has no branch. Maintain kept the verified branch",
+                )
         except MaintainError as exc:
             presenter.error(str(exc))
             _pause(presenter)
@@ -1031,10 +1564,10 @@ def _interactive_delivery(engine: WorkflowEngine, record, presenter: Presenter) 
             if not source_branch:
                 raise DeliveryError("The source checkout has no recorded branch.")
             record = engine.integrate(record.run_id, source_branch, confirmed=True)
-            presenter.complete("UPDATE", f"Updated {source_branch}")
+            presenter.complete("UPDATE", f"Added the change to {source_branch}")
         elif choice == "2":
             record = engine.keep_delivered_branch(record.run_id)
-            presenter.complete("DELIVER", "Kept the verified maintenance branch")
+            presenter.complete("DELIVER", "Kept the verified change on its maintenance branch")
         else:
             presenter.error("Choose 1, 2, or B.")
             _pause(presenter)

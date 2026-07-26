@@ -52,6 +52,30 @@ ROBOT_PALETTE = {
 }
 
 
+def run_state_label(state: str) -> str:
+    """Translate a stored workflow state into a short user-facing label."""
+    return {
+        "created": "Preparing",
+        "preparing": "Preparing",
+        "workspace_ready": "Planning",
+        "context_expanding": "Planning",
+        "scoping": "Planning",
+        "tasks_ready": "Plan ready",
+        "implementing": "Creating change",
+        "implemented": "Reviewing",
+        "reviewing": "Reviewing",
+        "changes_requested": "Changes needed",
+        "repairing": "Correcting change",
+        "testing": "Running checks",
+        "test_failed": "Check failed",
+        "verified": "Checks passed",
+        "awaiting_acceptance": "Ready for review",
+        "needs_human": "Needs your action",
+        "needs_human_delivery": "Needs your action",
+        "delivering": "Creating commit",
+    }.get(state, state.replace("_", " ").title())
+
+
 class Presenter:
     def __init__(self, stream=None, animate: bool = True, width: int | None = None,
                  no_color: bool = False, max_width: int = 96,
@@ -133,8 +157,17 @@ class Presenter:
         self.console.print(Rule(style="line"))
 
     def home(self, project: str = "", provider: str = "", saved_count: int = 0,
-             configured: bool = True, setup_issue: str = "") -> None:
+             configured: bool = True, setup_issue: str = "",
+             repository: str = "", branch: str = "",
+             assistant_settings: bool | None = None) -> None:
         self.brand(project, provider)
+        if repository:
+            self.console.print()
+            location = Text("PROJECT  ", style="muted")
+            location.append(repository, style="label")
+            if branch:
+                location.append(f"  ·  {branch}", style="muted")
+            self.console.print(location)
         if setup_issue:
             self.console.print()
             self.console.print("!  PROJECT SETUP NEEDS ATTENTION", style="warning")
@@ -148,8 +181,11 @@ class Presenter:
         count = f"{saved_count} saved" if saved_count else "No saved work"
         self.menu_line("3", "Continue saved work", count)
         self.menu_line("4", "View history", "Runs, results, and status")
-        if configured:
+        if configured and assistant_settings is not False:
             self.menu_line("5", "Assistant settings", "Sign-in, model, and compatibility")
+        self.console.print()
+        self.menu_line("p", "Switch project", "Choose from recent projects or browse")
+        self.menu_line("n", "Create a new project", "Start with a blank Git project")
         if not configured:
             self.console.print()
             setup_label = "Repair project setup" if setup_issue else "Set up this project"
@@ -259,7 +295,18 @@ class Presenter:
                 icon, style, shown = "–", "muted", "Not required"
             else:
                 icon, style, shown = "○", "warning", value.replace("_", " ").title()
-            table.add_row(Text(icon, style=style), name.replace("_", " ").title(),
+            shown_name = {
+                "configuration": "Project configuration",
+                "workspace": "Change workspace",
+                "diff_policy": "Allowed changes",
+                "review": "Assistant review",
+                "local_commands": "Local checks",
+                "tree_binding": "Verified files",
+                "audit_chain": "Saved evidence",
+                "accepted_tree": "Approved files",
+                "delivery": "Commit",
+            }.get(name, name.replace("_", " ").title())
+            table.add_row(Text(icon, style=style), shown_name,
                           Text(shown, style=style))
         self.console.print(table)
 
@@ -271,18 +318,18 @@ class Presenter:
         self.section(
             "HISTORY" if inspecting or not selectable else "SAVED WORK",
             (
-                "Select a maintenance run"
+                "Select a run"
                 if inspecting else
                 "Work you can continue"
                 if selectable else
-                "Maintenance run history"
+                "Run history"
             ),
             (
-                "Select a numbered run to inspect without changing it."
+                "Select a run number to view it. This action does not change the run."
                 if inspecting else
-                "Select a numbered run to continue, or return to the main menu."
+                "Select a run number to continue it. Or return to the main menu."
                 if selectable else
-                "Results and audit status for this project."
+                "Results and saved evidence for this project."
             ),
         )
         if not items:
@@ -292,12 +339,7 @@ class Presenter:
         self.console.print()
         for item in items:
             state = item["state"]
-            shown_state = {
-                "awaiting_acceptance": "Review ready",
-                "needs_human": "Action needed",
-                "needs_human_delivery": "Action needed",
-                "tasks_ready": "Plan ready",
-            }.get(state, state.replace("_", " ").title())
+            shown_state = run_state_label(state)
             if state in {"delivered", "accepted", "awaiting_acceptance"}:
                 state_style = "success" if state != "awaiting_acceptance" else "accent"
             elif state in {"needs_human", "needs_human_delivery"}:
@@ -323,9 +365,9 @@ class Presenter:
         """Show bounded command metadata without dumping potentially sensitive output."""
         items = list(rows)
         self.console.print()
-        self.console.print("LOCAL VERIFICATION", style="muted")
+        self.console.print("LOCAL CHECKS", style="muted")
         if not items:
-            self.console.print("No local verification results were saved.", style="muted")
+            self.console.print("Maintain did not save local check results.", style="muted")
             return
         table = Table(box=box.SIMPLE_HEAD, border_style="line", header_style="muted",
                       pad_edge=False, expand=False)

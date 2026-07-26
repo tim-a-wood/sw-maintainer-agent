@@ -104,12 +104,12 @@ def test_human_doctor_output_separates_preflight_categories_and_execution(
 
     assert result == 0
     output = " ".join(capsys.readouterr().out.split())
-    assert "PREFLIGHT PASSED" in output
-    assert "Maintain can start a maintenance run." in output
-    assert "No project verification commands were run." in output
-    assert "REPOSITORY" in output
-    assert "ASSISTANT PREFLIGHT" in output
-    assert "VERIFICATION SETUP" in output
+    assert "READY TO START" in output
+    assert "Maintain can start this change." in output
+    assert "Maintain did not run the project checks." in output
+    assert "PROJECT SETUP" in output
+    assert "ASSISTANT" in output
+    assert "CHECK SETUP" in output
     assert "verified work" not in output.casefold()
 
 
@@ -131,8 +131,8 @@ def test_human_doctor_warns_when_coverage_is_diff_only(
     assert result == 0
     output = " ".join(capsys.readouterr().out.split())
     assert "COVERAGE" in output
-    assert "Diff formatting only; no project test command was detected" in output
-    assert "Configure a project test command before relying on behavioral verification." in output
+    assert "Maintain found only a diff-format check. It did not find project tests" in output
+    assert "Add a project test before you use these results to verify behavior." in output
 
 
 def test_provider_login_reports_session_and_unavailable_model_action(
@@ -185,9 +185,9 @@ def test_provider_login_reports_session_and_unavailable_model_action(
     assert provider.login_calls == 1
     assert provider.require_selected_model == [False]
     output = " ".join(capsys.readouterr().out.split())
-    assert "SESSION VERIFIED" in output
+    assert "SIGN-IN READY" in output
     assert "Retired Model is unavailable" in output
-    assert "Refresh the model list before starting work:" in output
+    assert "Update the model list before you start work:" in output
     expected_command = cli._shell_command([
         "maintain", "--repo", str(repository),
         "--config", str(repository / ".maintain.json"),

@@ -133,7 +133,7 @@ def test_interactive_recovery_invalid_answer_reprompts_without_resuming() -> Non
     assert len(prompts) == 2
     assert any(
         event["kind"] == "print"
-        and "Choose Y to try again or N to keep the run saved." in str(event["text"])
+        and "Select Y to try again. Select N to keep the run." in str(event["text"])
         for event in presenter.events
     )
 
@@ -147,11 +147,11 @@ def test_repair_limit_explains_and_confirms_another_cycle() -> None:
 
     outcome = next(event for event in presenter.events if event["kind"] == "outcome")
     assert any(
-        "Continuing allows one more automated repair cycle." in action
+        "Maintain will try one more automatic repair." in action
         for action in outcome["actions"]
     )
     prompt = next(event for event in presenter.events if event["kind"] == "ask")
-    assert prompt["label"] == "Start another automated repair cycle now?"
+    assert prompt["label"] == "Start one more automatic repair now?"
     assert prompt["default"] == "N"
     assert engine.resume_calls == []
 
@@ -175,9 +175,23 @@ def test_saved_error_and_guidance_appear_before_confirmation_prompt() -> None:
     assert outcome_index < prompt_index
     assert outcome["message"] == record.error
     assert any(
-        "Run the affected verification command" in action
+        "Run the failed check in the project environment." in action
         for action in outcome["actions"]
     )
+
+
+def test_saved_summary_translates_internal_state_into_current_step() -> None:
+    record = _paused_record()
+    record.state = "context_expanding"
+    record.error = ""
+    presenter = _RecordingPresenter([])
+
+    cli._summary(record, presenter=presenter)
+
+    outcome = next(event for event in presenter.events if event["kind"] == "outcome")
+    assert outcome["title"] == "Maintain is finding the project files for this change."
+    assert "context expanding" not in str(outcome).casefold()
+    assert len(str(outcome["title"]).split()) <= 20
 
 
 def test_direct_resume_command_is_explicit_and_never_prompts(

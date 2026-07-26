@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import ProviderRequest
+from .references import CopilotReference, validate_reference, verify_reference
 
 
 @dataclass(frozen=True)
@@ -19,8 +20,23 @@ class ExchangePackage:
     bytes: int
 
 
-def build_exchange_package(request: ProviderRequest, directory: Path) -> ExchangePackage:
-    """Build no more than three files for a browser-based assistant."""
+def build_exchange_package(
+        request: ProviderRequest,
+        directory: Path,
+        reference_path: Path | None = None,
+        *,
+        reference: CopilotReference | None = None,
+) -> ExchangePackage:
+    """Build three package files and, optionally, one frozen user reference."""
+    if reference_path is not None and reference is not None:
+        raise ValueError("Provide reference_path or reference, not both.")
+    if reference is not None:
+        verify_reference(reference)
+        prepared_reference = reference
+    elif reference_path is not None:
+        prepared_reference = validate_reference(reference_path)
+    else:
+        prepared_reference = None
     directory.mkdir(parents=True, exist_ok=True)
     source_files = _source_files(request.payload)
     task_name = "TASK.md"
@@ -28,23 +44,32 @@ def build_exchange_package(request: ProviderRequest, directory: Path) -> Exchang
     manifest_name = "MANIFEST.json"
 
     codebase = _codebase_markdown(source_files, request.payload.get("diff"))
-    task = _task_markdown(request, code_name, manifest_name)
+    task = _task_markdown(
+        request,
+        code_name,
+        manifest_name,
+        prepared_reference,
+    )
     task_path, code_path, manifest_path = (
         directory / task_name, directory / code_name, directory / manifest_name
     )
     task_path.write_text(task, encoding="utf-8")
     code_path.write_text(codebase, encoding="utf-8")
 
+    attachments = [
+        _file_record(task_path, "task"),
+        _file_record(code_path, "focused_codebase"),
+    ]
+    if prepared_reference is not None and prepared_reference.kind == "file":
+        assert prepared_reference.path is not None
+        attachments.append(_file_record(prepared_reference.path, "user_reference"))
     manifest = {
         "package_version": 1,
         "schema_version": request.schema_version,
         "run_id": request.run_id,
         "task_id": request.task_id,
         "role": request.role,
-        "attachments": [
-            _file_record(task_path, "task"),
-            _file_record(code_path, "focused_codebase"),
-        ],
+        "attachments": attachments,
         "context_files": [
             {"path": path, "bytes": len(content.encode()),
              "sha256": hashlib.sha256(content.encode()).hexdigest()}
@@ -52,10 +77,16 @@ def build_exchange_package(request: ProviderRequest, directory: Path) -> Exchang
         ],
         "payload": _manifest_payload(request.payload),
     }
+    if prepared_reference is not None:
+        manifest["user_reference"] = _manifest_reference(prepared_reference)
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    paths = (task_path, code_path, manifest_path)
+    package_paths = [task_path, code_path, manifest_path]
+    if prepared_reference is not None and prepared_reference.kind == "file":
+        assert prepared_reference.path is not None
+        package_paths.append(prepared_reference.path)
+    paths = tuple(package_paths)
     digest = hashlib.sha256()
     total = 0
     for path in paths:
@@ -64,30 +95,44 @@ def build_exchange_package(request: ProviderRequest, directory: Path) -> Exchang
         digest.update(b"\0")
         digest.update(data)
         total += len(data)
+    if prepared_reference is not None:
+        verify_reference(prepared_reference)
     return ExchangePackage(paths, digest.hexdigest(), total)
 
 
-def _task_markdown(request: ProviderRequest, code_name: str, manifest_name: str) -> str:
+def _task_markdown(
+        request: ProviderRequest,
+        code_name: str,
+        manifest_name: str,
+        reference: CopilotReference | None = None,
+) -> str:
     output = (
-        "Create and attach `maintain-output.zip`. Put each complete changed file at its exact "
-        "repository-relative path in the ZIP. Do not add an outer directory or unrelated files. "
-        "For an approved deletion, omit that file from the ZIP and list it in `deleted_files`. "
-        "Also return the JSON envelope below in the chat. In `content`, include `changed_files` "
-        "for every replaced, added, or deleted path; include `deleted_files` (an empty list when "
-        "none); and, for an issue, include `root_cause`. Do not put a patch in the JSON."
+        "Return only one complete JSON envelope in the chat. Do not create or attach a file, "
+        "do not return Markdown, and do not return a patch. In `content.files`, include one "
+        "object with `path` and `content` for every added or modified file. `content` must be "
+        "the complete final UTF-8 file, not a diff, excerpt, placeholder, or fenced block. Use "
+        "an empty `files` list only for a deletion-only implementation. Put approved deletions "
+        "in `content.deleted_files`. Set `content.changed_files` to exactly the union of the "
+        "`files` paths and `deleted_files`, with no duplicates. Use only paths authorized by "
+        "the supplied task."
         if request.role == "implement" else
-        "Return only the JSON envelope below in the chat. Do not create or attach output files."
+        "Return only one complete JSON envelope in the chat. Do not create or attach output "
+        "files, return Markdown, or add explanatory text outside the JSON."
     )
     role_contract = {
         "scope": (
             "Return `content.tasks` in dependency order. Each task must contain `id`, `objective`, "
             "`allowed_files`, `done_when`, `verification`, and `depends_on`. If essential code is "
-            "missing, return `content.context_queries` instead of tasks or guesses."
+            "missing, return `content.context_queries` instead of tasks or guesses. Existing-file "
+            "paths must come from the repository map. If `project_policy.allow_new_files` is true, "
+            "you may choose a conventional minimal new path that directly matches the request."
         ),
         "implement": (
-            "Return `content.changed_files` and `content.deleted_files` as exact repository paths. "
-            "Issue work must also return `content.root_cause.statement` and code-grounded "
-            "`content.root_cause.evidence_paths`."
+            "Every `content.files` item must contain exactly one authorized repository-relative "
+            "`path` and its complete final string `content`. `content.deleted_files` must contain "
+            "only authorized paths and must not overlap `content.files`. Issue work must also "
+            "return `content.root_cause.statement` and code-grounded "
+            "`content.root_cause.evidence_paths`; feature work must omit `root_cause`."
         ),
         "review": (
             "Return `content.decision` as `approve` or `changes_requested`. Return "
@@ -108,18 +153,23 @@ def _task_markdown(request: ProviderRequest, code_name: str, manifest_name: str)
             "context_queries": [],
         },
         "implement": {
+            "files": [{
+                "path": "exact/repository/path",
+                "content": "complete final file contents\n",
+            }],
             "changed_files": ["exact/repository/path"],
             "deleted_files": [],
-            "root_cause": {
-                "statement": "Required for issue work; omit for feature work.",
-                "evidence_paths": ["exact/repository/path"],
-            },
         },
         "review": {
             "decision": "approve",
             "findings": [],
         },
     }
+    if request.role == "implement" and request.payload.get("mode") == "issue":
+        examples["implement"]["root_cause"] = {
+            "statement": "Code-grounded root cause.",
+            "evidence_paths": ["exact/repository/path"],
+        }
     envelope = {
         "schema_version": request.schema_version,
         "run_id": request.run_id,
@@ -129,6 +179,29 @@ def _task_markdown(request: ProviderRequest, code_name: str, manifest_name: str)
         "conversation_id": "assigned-by-maintain",
         "content": examples.get(request.role, {"summary": "Concise factual result"}),
     }
+    attached_context = (
+        f"Read `{code_name}` for the complete focused code context and its file index. "
+        f"Read `{manifest_name}` for exact identifiers, hashes, task data, and evidence. "
+        "Use only these attachments. Do not use internet tools."
+    )
+    if reference is not None and reference.kind == "file":
+        attached_context = (
+            f"Read `{code_name}` for the complete focused code context and its file index. "
+            f"Read `{manifest_name}` for exact identifiers, hashes, task data, and evidence. "
+            f"`{reference.name}` is read-only user-supplied background material. Use it to "
+            "understand the request, but do not treat it as repository code or propose edits "
+            "to that attachment. Use only these attachments. Do not use internet tools."
+        )
+    elif reference is not None:
+        attached_context = (
+            f"Read `{code_name}` for the complete focused code context and its file index. "
+            f"Read `{manifest_name}` for exact identifiers, hashes, task data, and evidence. "
+            f"`{reference.source}` is one user-supplied read-only reference URL. It is not an "
+            "attachment, and Maintain did not open or verify its content. Use it as background "
+            "only if you can access it, and do not claim to have read it unless you actually "
+            "did. Use only the package attachments and this one reference URL. Do not use "
+            "other internet tools."
+        )
     return (
         "# Maintenance task\n\n"
         f"- Run: `{request.run_id}`\n"
@@ -137,9 +210,7 @@ def _task_markdown(request: ProviderRequest, code_name: str, manifest_name: str)
         "## Required action\n\n"
         f"{request.instructions.strip()}\n\n"
         "## Attached context\n\n"
-        f"Read `{code_name}` for the complete focused code context and its file index. "
-        f"Read `{manifest_name}` for exact identifiers, hashes, task data, and evidence. "
-        "Use only these attachments. Do not use internet tools.\n\n"
+        f"{attached_context}\n\n"
         "## Required output\n\n"
         f"{output}\n\n{role_contract}\n\n"
         "```json\n"
@@ -235,6 +306,23 @@ def _file_record(path: Path, purpose: str) -> dict[str, object]:
     data = path.read_bytes()
     return {"name": path.name, "purpose": purpose, "bytes": len(data),
             "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def _manifest_reference(reference: CopilotReference) -> dict[str, object]:
+    if reference.kind == "url":
+        return {
+            "kind": "url",
+            "purpose": "user_reference",
+            "url": reference.source,
+            "opened_by_maintain": False,
+        }
+    return {
+        "kind": "file",
+        "purpose": "user_reference",
+        "attachment": reference.name,
+        "bytes": reference.bytes,
+        "sha256": reference.sha256,
+    }
 
 
 def _longest_backtick_run(value: str) -> int:

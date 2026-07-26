@@ -17,19 +17,22 @@
   ██   ██
 ```
 
-Software Maintainer Agent is a focused command-line workflow for changing an
-existing software project with an AI assistant. It can add or change a feature,
-fix an issue, review the implementation, run local checks, and retain an audit
-record of every package and response.
+Software Maintainer Agent is a focused command-line workflow for creating or
+changing a software project with an AI assistant. It can add or change a
+feature, fix an issue, review the implementation, run local checks, and retain
+an audit record of every package and response.
 
 The installed command is `maintain`.
 
 ## What it does
 
 - Selects only the code needed for the requested change.
-- Creates explicit, self-contained task packages using no more than three files.
+- Creates explicit, self-contained three-file task packages.
 - Combines focused source files into one indexed `CODEBASE.md` document.
-- Receives implementation files in a checked, repository-ready ZIP.
+- Can provide one local file or HTTPS reference directly to Microsoft 365 Copilot.
+- Remembers recent projects, switches between them, and creates blank projects.
+- Receives complete implementation files inline and stages them in a checked,
+  repository-ready ZIP.
 - Uses an isolated Git worktree and branch for every run.
 - Implements, independently reviews, and locally verifies each task.
 - Requires human acceptance before it creates a commit or updates the project branch.
@@ -44,7 +47,7 @@ browser profile.
 
 - Python 3.11 or later
 - Git
-- A Git repository for the project you want to maintain
+- A Git repository for an existing project, or a folder in which to create one
 - Chromium when using a browser provider
 - The selected assistant account or local assistant CLI
 
@@ -136,6 +139,38 @@ maintain --version
 
 Follow-up commands displayed by Maintain on Windows use PowerShell syntax.
 
+## Open, switch, and create projects
+
+Launch without a path to reopen the most recently used project:
+
+```sh
+maintain
+```
+
+The home screen shows the absolute project path and current branch. Choose `P`
+to switch between recent projects or browse for another Git repository, and
+choose `N` to create a blank project. Missing projects remain visible until you
+forget them, so a moved or deleted folder is not silently replaced.
+
+The same controls are available as direct commands:
+
+```sh
+maintain project list
+maintain project open 2
+maintain project open "Project name"
+maintain project add /path/to/existing/repository
+maintain project forget /path/to/old/repository
+maintain project new /path/to/new-project --provider m365-browser --name "New Project"
+```
+
+`project new` requires a destination that does not exist. It creates the folder,
+initializes a `main` branch, adds a README and `.gitignore`, creates a validated
+`.maintain.json`, and makes the initial commit. The Microsoft 365 Copilot browser
+profile is shared across projects, so an existing local sign-in can be reused.
+
+Recent projects and each project's optional default reference are stored in the
+per-user Maintain settings file, not in the repository.
+
 ## Set up an existing project
 
 The tool keeps its source and audit data separate from the project that it
@@ -146,8 +181,8 @@ maintain --repo /path/to/project
 ```
 
 You only need `--repo` when choosing or changing projects. After a successful
-use, `maintain` opens the last repository automatically. On the first launch,
-Windows shows a folder picker and asks for the Git repository root.
+use, `maintain` opens the active recent project automatically. On the first
+launch, Maintain offers to browse for an existing repository or create a new one.
 
 Choose `S`, select Microsoft 365 Copilot, ChatGPT, or Codex, and follow the
 on-screen sign-in step. Browser setup retrieves the models available to the
@@ -275,6 +310,40 @@ maintain --repo /path/to/project feature "Add the requested behavior"
 maintain --repo /path/to/project issue "Describe the observed problem"
 ```
 
+### Give Microsoft 365 Copilot a reference
+
+For a Microsoft 365 Copilot project, add one local file or HTTPS link:
+
+```sh
+maintain feature "Implement the approved design" --reference ./design-spec.pdf
+maintain issue "Match the behavior in this example" --reference https://example.sharepoint.com/...
+```
+
+A local reference must be a readable, non-empty file no larger than 10 MB.
+Maintain snapshots it into the run evidence and attaches that unchanged snapshot
+as a fourth file in every Copilot scope, implementation, and review conversation.
+The task explicitly marks it as read-only background material; the maintenance
+request and repository policy take precedence if they conflict.
+
+For an HTTPS link, Maintain puts the exact link in each Copilot request. Maintain
+does not open or verify the linked content, so Copilot must already have access
+through the signed-in Microsoft 365 session.
+
+To remember a reference for future runs in the current project:
+
+```sh
+maintain feature "Use the project brief" \
+  --reference ./project-brief.docx \
+  --save-reference
+
+# Keep the saved default, but skip it for this run
+maintain feature "Make an unrelated change" --no-reference
+```
+
+The interactive workflow offers the saved default, lets you skip or clear it,
+and provides a native file picker on Windows. Version 0.9 supports one reference
+per run.
+
 Maintain prepares an isolated workspace, selects focused context, creates a
 change plan, implements it, reviews it in a separate conversation, and runs the
 configured checks. When all gates pass, it asks whether to inspect, revise, save,
@@ -282,17 +351,21 @@ or accept the change. The guided default creates the verified commit and
 fast-forwards the source branch if the source checkout is still unchanged.
 
 For each browser exchange, Maintain uploads `TASK.md`, `CODEBASE.md`, and
-`MANIFEST.json`. The codebase document contains only the selected context, with
-an index and exact repository paths. Implementation returns a ZIP containing
-complete changed files at those paths. Maintain validates and applies the ZIP in
-the isolated worktree before review and local verification.
+`MANIFEST.json`, plus the optional Copilot reference file. The codebase document
+contains only the selected context, with an index and exact repository paths.
+Implementation returns one JSON envelope containing the complete final content
+of every changed file. Maintain validates the paths and content, creates the
+repository-ready ZIP itself, and applies it in the isolated worktree before
+review and local verification. This avoids depending on the assistant UI to
+generate a downloadable artifact.
 
-After attaching a package, Maintain confirms that all three files are visible and
-that upload activity has stopped. Filename matching is case-insensitive and does
-not depend on Copilot's current attachment-chip markup. Maintain also confirms the
-exact browser file count, requires the visible state to remain stable, checks that
-Send is enabled, clicks Send, and confirms the outgoing request. This avoids
-submitting a request while Copilot is still attaching files.
+After attaching a package, Maintain confirms that all three standard files, and
+the optional fourth reference, are visible and that upload activity has stopped.
+Filename matching is case-insensitive and does not depend on Copilot's current
+attachment-chip markup. Maintain also confirms the exact browser file count,
+requires the visible state to remain stable, checks that Send is enabled, clicks
+Send, and confirms the outgoing request. This avoids submitting a request while
+Copilot is still attaching files.
 The permanent Microsoft 365 notice about copying device uploads to OneDrive is
 informational and does not block submission.
 

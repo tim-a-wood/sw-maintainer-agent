@@ -16,12 +16,20 @@ from typing import Callable
 from .audit import AuditStore, sha256
 from .config import ProjectConfig
 from .context import ContextSelector
-from .errors import DeliveryError, PolicyError, ProviderError, RecoveryError, VerificationError
+from .errors import (
+    ConfigurationError,
+    DeliveryError,
+    PolicyError,
+    ProviderError,
+    RecoveryError,
+    VerificationError,
+)
 from .models import ProviderRequest, RunRecord, RunState
 from .locking import FileLock
 from .policy import transition
 from .presenter import Presenter
 from .provider_factory import build_provider
+from .references import CopilotReference, prepare_reference
 from .runner import CommandRunner
 from .security import assert_no_secrets
 from .workspace import WorkspaceManager
@@ -35,6 +43,16 @@ PROVIDER_SAFETY_HEADER = (
 )
 
 TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _provider_step(role: str, provider_label: str) -> tuple[str, str]:
+    """Return a short user-facing description of assistant work."""
+    steps = {
+        "scope": ("PLAN", f"Ask {provider_label} to plan the change"),
+        "implement": ("CHANGE", f"Ask {provider_label} to create the change"),
+        "review": ("REVIEW", f"Ask {provider_label} to review the change"),
+    }
+    return steps.get(role, ("ASSISTANT", f"Ask {provider_label} to do this step"))
 
 
 class WorkflowEngine:
@@ -52,7 +70,9 @@ class WorkflowEngine:
             source_repository=config.repository,
         )
 
-    def start(self, mode: str, request: str) -> RunRecord:
+    def start(
+            self, mode: str, request: str,
+            reference: str | Path | None = None) -> RunRecord:
         if mode not in {"feature", "issue"}:
             raise ValueError("Mode must be feature or issue.")
         if not request.strip():
@@ -67,13 +87,37 @@ class WorkflowEngine:
         if any(marker.casefold() in request.casefold() for marker in transcript_markers):
             raise PolicyError(
                 "The request appears to contain a terminal transcript. Enter only the outcome or issue.")
+        reference_value = str(reference).strip() if reference is not None else ""
+        if reference_value and not any(
+                self.config.providers.get(profile, {}).get("type")
+                == "m365_copilot_browser"
+                for profile in set(self.config.roles.values())):
+            raise PolicyError(
+                "Copilot references require a Microsoft 365 Copilot provider.")
         run_id = f"{mode[0]}-{__import__('datetime').datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
         record = RunRecord(run_id, mode, request.strip(), str(self.config.repository), "", "", "",
                            config_hash=sha256(self.config.path.read_bytes()))
         store = AuditStore(self.config.runtime_root, run_id)
+        prepared_reference = None
+        if reference_value:
+            prepared_reference = prepare_reference(
+                reference if isinstance(reference, Path) else reference_value,
+                store.artifacts / "references",
+            )
+            if prepared_reference.path is not None:
+                store.register_artifact(prepared_reference.path)
+            record.evidence["copilot_reference"] = prepared_reference.to_dict(
+                run_dir=store.run_dir)
         store.save_record(record)
         store.append("run_created", {"mode": mode, "request": request,
-                                     "config_hash": record.config_hash})
+                                     "config_hash": record.config_hash,
+                                     "reference": (
+                                         {
+                                             "kind": prepared_reference.kind,
+                                             "name": prepared_reference.name,
+                                         }
+                                         if prepared_reference is not None else None
+                                     )})
         return self.run(record)
 
     def resume(self, run_id: str) -> RunRecord:
@@ -461,7 +505,7 @@ class WorkflowEngine:
     def _preflight(self, record: RunRecord, store: AuditStore) -> None:
         if RunState(record.state) is RunState.CREATED:
             self._move(record, store, RunState.PREFLIGHT)
-        with self.presenter.progress("PREPARE", "Check the repository and assistant"):
+        with self.presenter.progress("PREPARE", "Prepare the project and assistant"):
             self._preflight_commands()
             before_preflight = {
                 path.resolve() for path in store.artifacts.rglob("*") if path.is_file()
@@ -497,30 +541,40 @@ class WorkflowEngine:
             snapshot = store.write_artifact("configuration.json", self.config.path.read_bytes())
             self._move(record, store, RunState.WORKSPACE_READY,
                        artifacts=[snapshot, *preflight_artifacts])
-        self.presenter.complete("PREPARE", "Preflight checks passed")
+        self.presenter.complete("PREPARE", "The project and assistant are ready")
 
     def _scope(self, record: RunRecord, store: AuditStore) -> None:
         if RunState(record.state) is RunState.WORKSPACE_READY:
             self._move(record, store, RunState.SCOPING)
         if RunState(record.state) is RunState.SCOPING:
             self._move(record, store, RunState.CONTEXT_EXPANDING)
-        with self.presenter.progress("CONTEXT", "Find the required repository context"):
+        with self.presenter.progress("FILES", "Find the project files for this change"):
             selector = ContextSelector(self.config.repository,
                                        self.config.source_roots + self.config.test_roots,
                                        self.config.exclude_paths,
                                        self.config.max_file_bytes)
             context = selector.select(record.request)
-        self.presenter.complete("CONTEXT", "Required code selected")
+        self.presenter.complete("FILES", "Selected the project files for this change")
         disclosed = {item.path: item for item in context}
         expansions: list[dict] = []
         response: dict = {}
+        scope_policy = {
+            "allow_new_files": self.config.allow_new_files,
+            "allow_deletes": self.config.allow_deletes,
+            "source_roots": list(self.config.source_roots),
+            "test_roots": list(self.config.test_roots),
+        }
         for scope_attempt in range(1, 4):
             response = self._exchange(record, store, "scope", f"scope-{scope_attempt}",
-                "Define the smallest complete tasks in dependency order. Use only supplied paths. "
-                "Return content.tasks. Each task needs id, objective, allowed_files, done_when, "
-                "verification, and depends_on. If essential code is absent, return context_queries "
-                "instead of guessing.",
+                "Define the smallest complete tasks in dependency order. Use exact supplied paths "
+                "for existing files. When project_policy.allow_new_files is true and the request "
+                "requires a new file, choose the conventional minimal repository-relative path "
+                "that directly matches the request (for example, main.c for a standalone C "
+                "program); do not request that path from the user. Return content.tasks. Each task "
+                "needs id, objective, allowed_files, done_when, verification, and depends_on. If "
+                "essential existing code is absent, return context_queries instead of guessing.",
                 {"mode": record.mode, "request": record.request,
+                 "project_policy": scope_policy,
                  "context_expansions": expansions,
                  "repository_map": selector.repository_map(),
                  "candidate_files": [{"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
@@ -566,7 +620,7 @@ class WorkflowEngine:
                 }
                 expansions.append(expansion)
                 store.append("context_expansion_empty", expansion)
-                self.presenter.complete("CONTEXT", "No additional matching files")
+                self.presenter.complete("FILES", "No more project files match the request")
                 continue
             expansion = {
                 "reason": reason,
@@ -575,7 +629,8 @@ class WorkflowEngine:
             }
             expansions.append(expansion)
             store.append("context_expanded", expansion)
-            self.presenter.complete("CONTEXT", f"Added {len(added)} focused file(s)")
+            noun = "file" if len(added) == 1 else "files"
+            self.presenter.complete("FILES", f"Added {len(added)} more project {noun}")
         if not response.get("tasks"):
             # Context queries are valid during discovery, but they are not a final scope result.
             # After bounded expansion is exhausted, request task synthesis from the context that
@@ -586,9 +641,12 @@ class WorkflowEngine:
                 "Context discovery is complete. Do not return context_queries. Define the "
                 "smallest complete tasks that can satisfy the request from the supplied context. "
                 "Use exact repository-relative paths from the repository map. New files are "
-                "allowed only when project policy permits them. Return content.tasks with id, "
+                "allowed when project_policy.allow_new_files is true; when no existing path "
+                "applies, choose a conventional minimal path that directly matches the request "
+                "(for example, main.c for a standalone C program). Return content.tasks with id, "
                 "objective, allowed_files, done_when, verification, and depends_on.",
                 {"mode": record.mode, "request": record.request,
+                 "project_policy": scope_policy,
                  "context_expansions": expansions,
                  "repository_map": selector.repository_map(),
                  "candidate_files": [{"path": x.path, "sha256": x.sha256,
@@ -637,7 +695,7 @@ class WorkflowEngine:
                 "added_files": [],
                 "result": f"Created a constrained task for {only_path}.",
             })
-            self.presenter.complete("SCOPE", "Used constrained single-file plan")
+            self.presenter.complete("PLAN", "Created a plan for the only project file")
 
         context = list(disclosed.values())
         repository_bytes = selector.repository_text_bytes()
@@ -688,7 +746,7 @@ class WorkflowEngine:
         record.tasks = tasks
         task_artifact = store.write_artifact("tasks.json", tasks)
         self._move(record, store, RunState.TASKS_READY, artifacts=[artifact, task_artifact])
-        self.presenter.complete("SCOPE", "Change plan is ready")
+        self.presenter.complete("PLAN", "The change plan is ready")
 
     def _validate_task_path(self, value: object, candidates: set[str],
                             new_paths: set[str]) -> None:
@@ -764,11 +822,12 @@ class WorkflowEngine:
                               "media_type": "text/x-diff"}
         else:
             content = self._exchange(record, store, "implement", str(task["id"]),
-                "Implement the task through the provider's declared path. Patch providers return "
-                "content.patch as a complete unified diff. Workspace-edit providers edit only the "
-                "isolated worktree. For an issue, also return "
-                "content.root_cause with statement and evidence_paths. Do not use internet tools. "
-                "Do not claim local verification. Copilot cannot run MATLAB.", payload,
+                "Implement the complete authorized task and follow the provider-specific output "
+                "contract exactly. Patch providers return content.patch as a complete unified "
+                "diff. Workspace-edit providers edit only the isolated worktree. Browser "
+                "assistants return complete final files inline as specified in TASK.md. For an "
+                "issue, also return content.root_cause with statement and evidence_paths. Do not "
+                "use internet tools, claim local verification, or run MATLAB.", payload,
                 conversation_suffix=f"{task['id']}-attempt-{record.attempt}",
                 implementation_worktree=Path(record.worktree))
             workspace_edited = bool(content.pop("_maintain_workspace_edited", False))
@@ -834,7 +893,8 @@ class WorkflowEngine:
         diff_artifact = store.write_artifact(f"{attempt_dir}/actual.diff", diff.text.encode())
         self._move(record, store, RunState.IMPLEMENTED, tree_hash=diff.tree_hash,
                    artifacts=[patch_artifact, diff_artifact])
-        self.presenter.complete("IMPLEMENT", f"Changed {len(diff.paths)} file(s)")
+        noun = "file" if len(diff.paths) == 1 else "files"
+        self.presenter.complete("CHANGE", f"Changed {len(diff.paths)} {noun}")
 
     def _review(self, record: RunRecord, store: AuditStore) -> None:
         if RunState(record.state) is RunState.IMPLEMENTED:
@@ -930,7 +990,10 @@ class WorkflowEngine:
         self._move(record, store, RunState.TESTING if decision == "approve" else RunState.CHANGES_REQUESTED,
                    artifacts=[artifact])
         self.presenter.complete(
-            "REVIEW", "Review approved" if decision == "approve" else "Changes requested"
+            "REVIEW",
+            ("The review found no required changes"
+             if decision == "approve" else
+             "The review found changes to make"),
         )
 
     def _reproduce_before_fix(self, record: RunRecord, store: AuditStore, worktree: Path) -> None:
@@ -940,17 +1003,17 @@ class WorkflowEngine:
             store.append("issue_reproduction_not_configured", {
                 "reason": "No focused pre-fix reproduction command is configured."
             })
-            self.presenter.complete("REPRODUCE", "No focused reproduction check configured")
+            self.presenter.complete("REPRODUCE", "No issue check is configured")
             return
         results = []
         for spec in specs:
-            with self.presenter.progress("REPRODUCE", f"Confirm the issue with {spec.name}"):
+            with self.presenter.progress("REPRODUCE", f"Use {spec.name} to reproduce the issue"):
                 result = self.runner.run(spec, worktree)
                 results.append(result)
             if result.exit_code != 0:
-                self.presenter.complete("REPRODUCE", f"Issue confirmed by {spec.name}")
+                self.presenter.complete("REPRODUCE", f"{spec.name} reproduced the issue")
             else:
-                self.presenter.failed("REPRODUCE", f"Issue was not found by {spec.name}")
+                self.presenter.failed("REPRODUCE", f"{spec.name} did not reproduce the issue")
         if all(result.exit_code == 0 for result in results):
             raise VerificationError("The issue did not reproduce before the fix.")
         record.evidence["pre_fix_reproduction"] = [result.to_dict() for result in results]
@@ -969,13 +1032,13 @@ class WorkflowEngine:
             raise VerificationError("No local verification command is configured.")
         results = []
         for spec in specs:
-            with self.presenter.progress("CHECK", f"Run {spec.name}"):
+            with self.presenter.progress("CHECK", f"Run the {spec.name} check"):
                 result = self.runner.run(spec, Path(record.worktree))
                 results.append(result)
             if result.exit_code == 0:
-                self.presenter.complete("CHECK", f"{spec.name} passed")
+                self.presenter.complete("CHECK", f"The {spec.name} check passed")
             else:
-                self.presenter.failed("CHECK", f"{spec.name} failed")
+                self.presenter.failed("CHECK", f"The {spec.name} check failed")
         passed = all(result.exit_code == 0 for result in results)
         post_command_diff = self.workspaces.diff(Path(record.worktree))
         workspace_changed = post_command_diff.tree_hash != diff.tree_hash
@@ -1010,7 +1073,11 @@ class WorkflowEngine:
             record.evidence.pop("review", None)
             record.evidence.pop("tests", None)
             self._move(record, store, RunState.TASKS_READY, tree_hash=diff.tree_hash)
-            self.presenter.complete("TASK", f"Start task {record.task_index + 1} of {len(record.tasks)}")
+            completed_number = record.task_index
+            self.presenter.complete(
+                "TASK",
+                f"Completed task {completed_number} of {len(record.tasks)}",
+            )
             return
         record.evidence["verified_tree_hash"] = diff.tree_hash
         if record.mode == "issue":
@@ -1020,7 +1087,7 @@ class WorkflowEngine:
             )
         record.tree_hash = diff.tree_hash
         self._move(record, store, RunState.VERIFIED, tree_hash=diff.tree_hash)
-        self.presenter.complete("TEST", "Local verification passed")
+        self.presenter.complete("TEST", "All local checks passed")
 
     def _repair_or_stop(self, record: RunRecord, store: AuditStore) -> None:
         if record.attempt >= self.config.max_attempts:
@@ -1039,7 +1106,21 @@ class WorkflowEngine:
             f"maintain: {summary}", record.accepted_tree_hash)
         record.evidence["delivery"] = {"commit": commit, "tree_hash": record.accepted_tree_hash}
         self._move(record, store, RunState.DELIVERED)
-        self.presenter.complete("DELIVER", f"Verified branch is ready: {record.branch}")
+        self.presenter.complete("DELIVER", f"Created the verified commit on {record.branch}")
+
+    @staticmethod
+    def _copilot_reference(
+            record: RunRecord, store: AuditStore) -> CopilotReference | None:
+        value = record.evidence.get("copilot_reference")
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ProviderError("The saved Copilot reference metadata is invalid.")
+        try:
+            return CopilotReference.from_dict(value, run_dir=store.run_dir)
+        except (ConfigurationError, OSError, ValueError, TypeError) as exc:
+            raise ProviderError(
+                f"The saved Copilot reference could not be restored: {exc}") from exc
 
     def _exchange(self, record: RunRecord, store: AuditStore, role: str, task_id: str,
                   instructions: str, payload: dict, conversation_suffix: str = "",
@@ -1047,13 +1128,37 @@ class WorkflowEngine:
         profile_name = self.config.roles.get(role)
         if not profile_name or profile_name not in self.config.providers:
             raise ProviderError(f"No provider is configured for role {role}.")
+        provider_kind = str(self.config.providers[profile_name].get("type", ""))
+        reference = (
+            self._copilot_reference(record, store)
+            if provider_kind == "m365_copilot_browser" else None
+        )
         exchange_base = f"{role}-{conversation_suffix or task_id}"
         retries = record.evidence.get("provider_retry_counts", {})
         retry = int(retries.get(exchange_base, 0)) if isinstance(retries, dict) else 0
         effective_payload = {**payload, "exchange_attempt": retry + 1}
+        if reference is not None:
+            effective_payload["copilot_reference"] = {
+                "kind": reference.kind,
+                "name": reference.name,
+                "url": reference.source if reference.kind == "url" else None,
+                "bytes": reference.bytes,
+                "sha256": reference.sha256,
+                "read_only": True,
+                "precedence": (
+                    "Use as background material. The maintenance request and repository "
+                    "policy take precedence if they conflict."
+                ),
+            }
+        reference_exception = (
+            "\nThe explicitly declared user-provided HTTPS reference is the only "
+            "exception to the preceding internet-tool restriction. Open no other links."
+            if reference is not None and reference.kind == "url" else ""
+        )
         request = ProviderRequest(
             1, record.run_id, task_id, role,
-            f"{PROVIDER_SAFETY_HEADER}\n\n{instructions}", effective_payload,
+            f"{PROVIDER_SAFETY_HEADER}{reference_exception}\n\n{instructions}",
+            effective_payload,
         )
         assert_no_secrets(request.__dict__, f"{role} request")
         request_bytes = len(json.dumps(request.__dict__, ensure_ascii=False).encode())
@@ -1074,6 +1179,15 @@ class WorkflowEngine:
             f"provider/{exchange_name}-request.json", request.__dict__)
         provider = self.provider_builder(profile_name, self.config.providers[profile_name],
                                          store.artifacts / "browser")
+        if reference is not None:
+            if not hasattr(provider, "set_reference_material"):
+                raise ProviderError(
+                    "The Microsoft 365 Copilot provider cannot accept reference material.")
+            try:
+                provider.set_reference_material(reference)
+            except ConfigurationError as exc:
+                raise ProviderError(
+                    f"The Microsoft 365 Copilot reference could not be prepared: {exc}") from exc
         capabilities = provider.capabilities
         if not capabilities.structured_output:
             raise ProviderError(f"Provider {profile_name} cannot return structured output.")
@@ -1087,7 +1201,6 @@ class WorkflowEngine:
             provider.set_status_callback(self.presenter.complete)
         before_provider = {path.resolve() for path in store.artifacts.rglob("*") if path.is_file()}
         try:
-            provider_kind = str(self.config.providers[profile_name].get("type", ""))
             provider_label = {
                 "chatgpt_browser": "ChatGPT",
                 "m365_copilot_browser": "Microsoft 365 Copilot",
@@ -1096,7 +1209,8 @@ class WorkflowEngine:
                 "file_exchange": "the configured assistant",
                 "command": "the configured assistant",
             }.get(provider_kind, "the configured assistant")
-            with self.presenter.progress(role.upper(), f"Work with {provider_label}"):
+            step_label, step_message = _provider_step(role, provider_label)
+            with self.presenter.progress(step_label, step_message):
                 if role == "implement" and capabilities.can_edit_workspace:
                     if implementation_worktree is None:
                         raise ProviderError("The workspace-edit provider has no isolated worktree.")
