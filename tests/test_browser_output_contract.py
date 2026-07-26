@@ -99,6 +99,82 @@ def test_implementation_task_uses_one_inline_json_contract(tmp_path: Path) -> No
     assert "downloadable Markdown" not in task
 
 
+def test_m365_implementation_task_uses_downloadable_zip_contract(
+        tmp_path: Path) -> None:
+    package = build_exchange_package(
+        _request(),
+        tmp_path / "package",
+        implementation_transport="zip",
+    )
+    task = package.paths[0].read_text(encoding="utf-8")
+
+    assert "maintain-output.zip" in task
+    assert "Do not add a wrapper directory" in task
+    assert "`content.files` to an empty list" in task
+    assert "do not duplicate or base64-encode file contents" in task
+    assert '"files": []' in task
+    assert '"changed_files": [' in task
+    assert '"exact/repository/path"' in task
+
+
+def test_browser_implementation_transport_defaults_by_provider(tmp_path: Path) -> None:
+    inline = _browser(tmp_path / "inline")
+    zipped = BrowserProvider(
+        "m365_copilot_browser",
+        {"profile_dir": str(tmp_path / "zip" / "profile")},
+        tmp_path / "zip" / "evidence",
+    )
+
+    assert inline._implementation_transport() == "inline"
+    assert zipped._implementation_transport() == "zip"
+    zipped.config["implementation_transport"] = "inline"
+    assert zipped._implementation_transport() == "inline"
+
+
+class _VisibleNode:
+    def __init__(self, visible: bool) -> None:
+        self.visible = visible
+
+    def is_visible(self) -> bool:
+        return self.visible
+
+
+class _ArtifactPage:
+    def __init__(self, artifact_visible: bool) -> None:
+        self.artifact_visible = artifact_visible
+
+    def locator(self, _selector: str):
+        return self
+
+    def all(self) -> list[_VisibleNode]:
+        return [_VisibleNode(self.artifact_visible)]
+
+
+def test_implementation_envelope_waits_for_zip_when_source_is_not_inline() -> None:
+    selectors = {"output_download_selector": "a[download]"}
+    envelope = {
+        "content": {
+            "files": [],
+            "changed_files": ["main.c"],
+            "deleted_files": [],
+        },
+    }
+
+    assert not BrowserProvider._implementation_envelope_ready(
+        _ArtifactPage(False), selectors, envelope)
+    assert BrowserProvider._implementation_envelope_ready(
+        _ArtifactPage(True), selectors, envelope)
+
+    envelope["content"]["deleted_files"] = ["old.c"]
+    envelope["content"]["changed_files"] = ["main.c", "old.c"]
+    assert not BrowserProvider._implementation_envelope_ready(
+        _ArtifactPage(False), selectors, envelope)
+
+    envelope["content"]["changed_files"] = ["old.c"]
+    assert BrowserProvider._implementation_envelope_ready(
+        _ArtifactPage(False), selectors, envelope)
+
+
 def test_issue_contract_requires_root_cause_but_feature_contract_omits_it(
         tmp_path: Path) -> None:
     feature = build_exchange_package(
@@ -128,6 +204,15 @@ def test_inline_complete_files_round_trip_to_zip(tmp_path: Path) -> None:
     with zipfile.ZipFile(output) as archive:
         assert archive.namelist() == ["main.c"]
         assert archive.read("main.c").decode() == content["files"][0]["content"]
+
+
+def test_downloaded_zip_paths_are_derived_from_the_artifact(tmp_path: Path) -> None:
+    output = tmp_path / "maintain-output.zip"
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr("src/main.c", "int main(void) { return 0; }\n")
+        archive.mkdir("empty/")
+
+    assert BrowserProvider._output_zip_paths(output) == ["src/main.c"]
 
 
 def test_inline_deletion_only_response_creates_an_empty_zip(tmp_path: Path) -> None:
@@ -294,6 +379,63 @@ class InlineBrowserProtocolProvider(Provider):
         )
 
 
+class DownloadedZipBrowserProtocolProvider(Provider):
+    def __init__(self, evidence_dir: Path) -> None:
+        self.evidence_dir = evidence_dir
+        self.roles: list[str] = []
+
+    def preflight(self) -> None:
+        return None
+
+    def exchange(self, request: ProviderRequest) -> ProviderResponse:
+        self.roles.append(request.role)
+        if request.role == "scope":
+            content = {
+                "tasks": [{
+                    "id": "create-main-c",
+                    "objective": "Create a C program that prints Hello World.",
+                    "allowed_files": ["main.c"],
+                    "done_when": ["main.c prints Hello World followed by a newline."],
+                    "verification": ["Compile and execute main.c."],
+                    "depends_on": [],
+                }],
+            }
+        elif request.role == "implement":
+            name = "downloaded-create-main-c-implement-output.zip"
+            output = self.evidence_dir / name
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(
+                    "main.c",
+                    (
+                        "#include <stdio.h>\n\n"
+                        "int main(void) {\n"
+                        '    puts("Hello World");\n'
+                        "    return 0;\n"
+                        "}\n"
+                    ),
+                )
+            content = {
+                "files": [],
+                "changed_files": BrowserProvider._output_zip_paths(output),
+                "deleted_files": [],
+                "_maintain_output_zip": name,
+            }
+        elif request.role == "review":
+            content = {"decision": "approve", "findings": []}
+        else:  # pragma: no cover
+            raise AssertionError(request.role)
+        return ProviderResponse(
+            schema_version=request.schema_version,
+            run_id=request.run_id,
+            task_id=request.task_id,
+            role=request.role,
+            content=content,
+            provider="assistant",
+            conversation_id=f"{request.role}-conversation",
+        )
+
+
 def test_hello_world_inline_browser_protocol_reaches_verified_gate(
         tmp_path: Path) -> None:
     repository = tmp_path / "hello-world"
@@ -349,6 +491,77 @@ def test_hello_world_inline_browser_protocol_reaches_verified_gate(
     assert record.state == "awaiting_acceptance"
     assert (Path(record.worktree) / "main.c").read_text(encoding="utf-8").endswith(
         '    return 0;\n}\n')
+    assert [role for provider in providers for role in provider.roles] == [
+        "scope",
+        "implement",
+        "review",
+    ]
+
+
+def test_hello_world_downloaded_zip_reaches_delivery_and_integration(
+        tmp_path: Path) -> None:
+    repository = tmp_path / "hello-world-zip"
+    repository.mkdir()
+    _git(repository, "init", "-b", "main")
+    _git(repository, "config", "user.name", "Maintain Test")
+    _git(repository, "config", "user.email", "maintain@example.invalid")
+    (repository / "README.md").write_text("# Hello World\n", encoding="utf-8")
+    _git(repository, "add", "README.md")
+    _git(repository, "commit", "-m", "initial")
+
+    candidate = default_config(repository, "codex")
+    candidate["providers"] = {
+        "profiles": {"assistant": {"type": "command", "argv": ["unused"]}},
+        "roles": {
+            "scope": "assistant",
+            "implement": "assistant",
+            "review": "assistant",
+        },
+    }
+    candidate["verification"]["commands"] = {
+        "hello-world-source": {
+            "argv": [
+                sys.executable,
+                "-c",
+                (
+                    "from pathlib import Path; "
+                    "text=Path('main.c').read_text(encoding='utf-8'); "
+                    "raise SystemExit(0 if 'puts(\"Hello World\")' in text else 1)"
+                ),
+            ],
+            "phase": "verify",
+            "timeout_seconds": 30,
+        },
+    }
+    runtime_root = tmp_path / "runs"
+    candidate["audit"]["runtime_root"] = str(runtime_root)
+    config_path = repository / ".maintain.json"
+    config_path.write_text(json.dumps(candidate, indent=2) + "\n", encoding="utf-8")
+    providers: list[DownloadedZipBrowserProtocolProvider] = []
+
+    def build_provider(_name: str, _profile: dict, evidence_dir: Path):
+        provider = DownloadedZipBrowserProtocolProvider(evidence_dir)
+        providers.append(provider)
+        return provider
+
+    engine = WorkflowEngine(
+        ProjectConfig.load(config_path),
+        QuietPresenter(),
+        provider_builder=build_provider,
+    )
+    record = engine.start(
+        "feature", "Make a C program that prints Hello World to the console")
+    assert record.state == "awaiting_acceptance"
+    assert engine.gate_status(record)["local_commands"] == "pass"
+
+    record = engine.accept(record.run_id)
+    record = engine.deliver(record.run_id)
+    record = engine.integrate(record.run_id, "main", confirmed=True)
+
+    assert record.state == "delivered"
+    assert (repository / "main.c").read_text(encoding="utf-8").endswith(
+        '    return 0;\n}\n')
+    assert _git(repository, "log", "-1", "--format=%s").startswith("maintain:")
     assert [role for provider in providers for role in provider.roles] == [
         "scope",
         "implement",

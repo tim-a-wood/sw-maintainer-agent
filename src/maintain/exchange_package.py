@@ -26,8 +26,11 @@ def build_exchange_package(
         reference_path: Path | None = None,
         *,
         reference: CopilotReference | None = None,
+        implementation_transport: str = "inline",
 ) -> ExchangePackage:
     """Build three package files and, optionally, one frozen user reference."""
+    if implementation_transport not in {"inline", "zip"}:
+        raise ValueError("implementation_transport must be inline or zip.")
     if reference_path is not None and reference is not None:
         raise ValueError("Provide reference_path or reference, not both.")
     if reference is not None:
@@ -49,6 +52,7 @@ def build_exchange_package(
         code_name,
         manifest_name,
         prepared_reference,
+        implementation_transport,
     )
     task_path, code_path, manifest_path = (
         directory / task_name, directory / code_name, directory / manifest_name
@@ -105,8 +109,9 @@ def _task_markdown(
         code_name: str,
         manifest_name: str,
         reference: CopilotReference | None = None,
+        implementation_transport: str = "inline",
 ) -> str:
-    output = (
+    inline_output = (
         "Return only one complete JSON envelope in the chat. Do not create or attach a file, "
         "do not return Markdown, and do not return a patch. In `content.files`, include one "
         "object with `path` and `content` for every added or modified file. `content` must be "
@@ -115,7 +120,20 @@ def _task_markdown(
         "in `content.deleted_files`. Set `content.changed_files` to exactly the union of the "
         "`files` paths and `deleted_files`, with no duplicates. Use only paths authorized by "
         "the supplied task."
-        if request.role == "implement" else
+    )
+    zip_output = (
+        "Create and attach one downloadable ZIP file named `maintain-output.zip`. At the ZIP "
+        "root, include every added or modified file at its exact authorized repository-relative "
+        "path. Do not add a wrapper directory, manifest, notes, patches, excerpts, placeholders, "
+        "or deleted files to the ZIP. Also return one complete JSON envelope in the chat. Set "
+        "`content.files` to an empty list; do not duplicate or base64-encode file contents in "
+        "the JSON. Put approved deletions in `content.deleted_files`. Set "
+        "`content.changed_files` to exactly the union of ZIP file paths and deleted paths, with "
+        "no duplicates. Finish creating the downloadable ZIP before completing the chat response."
+    )
+    output = (
+        zip_output if request.role == "implement" and implementation_transport == "zip"
+        else inline_output if request.role == "implement" else
         "Return only one complete JSON envelope in the chat. Do not create or attach output "
         "files, return Markdown, or add explanatory text outside the JSON."
     )
@@ -128,10 +146,17 @@ def _task_markdown(
             "you may choose a conventional minimal new path that directly matches the request."
         ),
         "implement": (
-            "Every `content.files` item must contain exactly one authorized repository-relative "
-            "`path` and its complete final string `content`. `content.deleted_files` must contain "
-            "only authorized paths and must not overlap `content.files`. Issue work must also "
-            "return `content.root_cause.statement` and code-grounded "
+            (
+                "`content.files` must be an empty list because complete added and modified files "
+                "belong in `maintain-output.zip`. `content.deleted_files` must contain only "
+                "authorized paths and must not overlap ZIP members. "
+                if implementation_transport == "zip" else
+                "Every `content.files` item must contain exactly one authorized "
+                "repository-relative `path` and its complete final string `content`. "
+                "`content.deleted_files` must contain only authorized paths and must not overlap "
+                "`content.files`. "
+            )
+            + "Issue work must also return `content.root_cause.statement` and code-grounded "
             "`content.root_cause.evidence_paths`; feature work must omit `root_cause`."
         ),
         "review": (
@@ -153,10 +178,10 @@ def _task_markdown(
             "context_queries": [],
         },
         "implement": {
-            "files": [{
+            "files": ([] if implementation_transport == "zip" else [{
                 "path": "exact/repository/path",
                 "content": "complete final file contents\n",
-            }],
+            }]),
             "changed_files": ["exact/repository/path"],
             "deleted_files": [],
         },

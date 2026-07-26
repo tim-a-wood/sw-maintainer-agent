@@ -147,6 +147,7 @@ class ProjectConfig:
             "m365_copilot_browser": {"url", "browser", "profile_dir", "visible",
                                       "expected_tenant", "expected_identity", "allowed_hosts",
                                       "package_transport", "response_format",
+                                      "implementation_transport",
                                       "selectors", "timeout_ms", "max_chunk_chars", "retention",
                                       "upload_settle_ms", "send_settle_ms",
                                       "submission_confirm_timeout_ms", "response_start_timeout_ms",
@@ -155,6 +156,7 @@ class ProjectConfig:
             "chatgpt_browser": {"url", "browser", "profile_dir", "visible",
                                 "expected_workspace", "expected_identity", "allowed_hosts",
                                 "package_transport", "response_format",
+                                "implementation_transport",
                                 "selectors", "timeout_ms", "max_chunk_chars", "retention",
                                 "upload_settle_ms", "send_settle_ms",
                                 "submission_confirm_timeout_ms", "response_start_timeout_ms",
@@ -217,6 +219,13 @@ class ProjectConfig:
                 if model and available_models and model not in available_models:
                     raise ConfigurationError(
                         f"Browser provider profile {profile_name}.model is not in available_models.")
+                implementation_transport = str(
+                    profile.get("implementation_transport") or "").strip().casefold()
+                if (implementation_transport
+                        and implementation_transport not in {"inline", "zip"}):
+                    raise ConfigurationError(
+                        f"Browser provider profile {profile_name}.implementation_transport "
+                        "must be inline or zip.")
             if kind == "chatgpt_browser":
                 if "account_capabilities" not in profile:
                     raise ConfigurationError(
@@ -423,6 +432,7 @@ def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
                                        "?internalredirect=M365Cloud&auth=2"),
                                "browser": "msedge",
                                "profile_dir": "~/.maintain/browser/m365", "visible": True,
+                               "implementation_transport": "zip",
                                "allowed_hosts": ["copilot.cloud.microsoft",
                                                  "m365.cloud.microsoft"]}}
     else:

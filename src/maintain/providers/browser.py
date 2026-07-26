@@ -109,6 +109,12 @@ class BrowserProvider(Provider):
             return M365_ENTRY_URL
         return configured
 
+    def _implementation_transport(self) -> str:
+        configured = str(self.config.get("implementation_transport") or "").casefold()
+        if configured:
+            return configured
+        return "zip" if self.name == "m365_copilot_browser" else "inline"
+
     def _approved_hosts(self, navigation_url: str) -> set[str]:
         """Return configured hosts plus the provider's fixed service hosts."""
         defaults = ({"chatgpt.com"} if self.name == "chatgpt_browser"
@@ -774,7 +780,11 @@ class BrowserProvider(Provider):
                     stage = "attach package files"
                     try:
                         package = build_exchange_package(
-                            request, exchange_dir / "packages", reference=reference)
+                            request,
+                            exchange_dir / "packages",
+                            reference=reference,
+                            implementation_transport=self._implementation_transport(),
+                        )
                     except ConfigurationError as exc:
                         raise ProviderError(
                             f"The prepared Copilot reference is unavailable: {exc}") from exc
@@ -797,10 +807,16 @@ class BrowserProvider(Provider):
                         "exactly."
                     )
                     if request.role == "implement":
-                        message += (
-                            " Return the complete implementation inline in the JSON envelope as "
-                            "specified by TASK.md. Do not create or attach a downloadable artifact."
-                        )
+                        if self._implementation_transport() == "zip":
+                            message += (
+                                " Create and attach maintain-output.zip, then return the small JSON "
+                                "envelope specified by TASK.md. Do not put source contents in chat."
+                            )
+                        else:
+                            message += (
+                                " Return the complete implementation inline in the JSON envelope as "
+                                "specified by TASK.md. Do not create or attach a downloadable artifact."
+                            )
                     if reference_line:
                         message += "\n\n" + reference_line
                     transport = "attachment"
@@ -881,6 +897,7 @@ class BrowserProvider(Provider):
                     conversation_id=f"{self.name}-{exchange_dir.name}",
                 )
                 if request.role == "implement":
+                    implementation_transport = self._implementation_transport()
                     implementation_defect = ""
                     try:
                         output_zip = self._inline_output_zip(
@@ -899,18 +916,39 @@ class BrowserProvider(Provider):
                             break
                         implementation_repairs += 1
                         stage = "repair implementation content"
-                        implementation_repair = (
+                        envelope_prefix = (
                             "Correct the implementation response now. Return only one complete JSON "
                             "object and no Markdown or explanation. Use "
                             f"schema_version={request.schema_version}, "
                             f"run_id={json.dumps(request.run_id)}, "
                             f"task_id={json.dumps(request.task_id)}, "
                             f"role={json.dumps(request.role)}, provider=\"assistant\", and a string "
-                            "conversation_id. content.files must be a list of objects with string "
-                            "path and complete final string content for every added or modified file. "
-                            "content.deleted_files must be a list of deleted paths. content.changed_files "
-                            "must equal exactly the union of files paths and deleted_files. Do not return "
-                            "a patch, excerpt, placeholder, fenced block, or downloadable artifact. Use "
+                            "conversation_id. "
+                        )
+                        if implementation_transport == "zip":
+                            transport_correction = (
+                                "Create and attach one downloadable ZIP named maintain-output.zip. "
+                                "Put every complete added or modified file directly at its exact "
+                                "repository-relative path in the ZIP, with no wrapper directory, "
+                                "manifest, notes, patch, or deleted files. Set content.files=[]; do "
+                                "not put source text or base64 data in chat. content.deleted_files "
+                                "must be a list of deleted paths. content.changed_files must equal "
+                                "the union of ZIP paths and deleted_files. Finish creating the ZIP "
+                                "before completing the JSON response. "
+                            )
+                        else:
+                            transport_correction = (
+                                "content.files must be a list of objects with string path and "
+                                "complete final string content for every added or modified file. "
+                                "content.deleted_files must be a list of deleted paths. "
+                                "content.changed_files must equal exactly the union of files paths "
+                                "and deleted_files. Do not return a patch, excerpt, placeholder, "
+                                "fenced block, or downloadable artifact. "
+                            )
+                        implementation_repair = (
+                            envelope_prefix
+                            + transport_correction
+                            + "Use "
                             "only these approved paths, except the single explicitly approved trailing "
                             f".txt correction when applicable: {json.dumps(allowed)}. "
                             + (
@@ -946,6 +984,18 @@ class BrowserProvider(Provider):
                                 f"{implementation_defect or 'complete inline files were missing'}.")
                         stage = "download implementation"
                         output_zip = self._download_output_zip(page, selectors, request, exchange_dir.name)
+                        deleted_files = parsed.content.get("deleted_files")
+                        if deleted_files is None:
+                            deleted_files = []
+                            parsed.content["deleted_files"] = deleted_files
+                        if (not isinstance(deleted_files, list)
+                                or any(not isinstance(path, str) for path in deleted_files)):
+                            raise ProviderError(
+                                "The implementation response has invalid deleted_files metadata.")
+                        parsed.content["changed_files"] = [
+                            *self._output_zip_paths(output_zip),
+                            *deleted_files,
+                        ]
                     parsed.content["_maintain_output_zip"] = output_zip.name
                     parsed.content["_maintain_implementation_repairs"] = implementation_repairs
                 page.screenshot(path=str(exchange_dir / f"{request.role}.png"), full_page=True)
@@ -994,7 +1044,9 @@ class BrowserProvider(Provider):
             min(int(self.config.get("timeout_ms", 300_000)), 90_000),
         ))
         complete_timeout = int(self.config.get("timeout_ms", 300_000))
-        settle_seconds = int(self.config.get("response_settle_ms", 1_500)) / 1_000
+        default_settle_ms = 5_000 if self.name == "m365_copilot_browser" else 1_500
+        settle_seconds = int(
+            self.config.get("response_settle_ms", default_settle_ms)) / 1_000
         start_deadline = time.monotonic() + start_timeout / 1_000
         complete_deadline: float | None = None
         latest = ""
@@ -1053,10 +1105,17 @@ class BrowserProvider(Provider):
                     envelope = json.loads(_extract_json(candidate))
                 except json.JSONDecodeError:
                     envelope = None
-                if (isinstance(envelope, dict)
+                envelope_matches = (
+                    isinstance(envelope, dict)
                         and str(envelope.get("run_id")) == request.run_id
                         and str(envelope.get("task_id")) == request.task_id
-                        and str(envelope.get("role")) == request.role):
+                        and str(envelope.get("role")) == request.role
+                )
+                implementation_ready = (
+                    request.role != "implement"
+                    or self._implementation_envelope_ready(page, selectors, envelope)
+                )
+                if envelope_matches and implementation_ready:
                     self._mark_state("response_complete", "Complete response envelope received")
                     return candidate
                 if (not generating and not continuation_visible
@@ -1074,6 +1133,30 @@ class BrowserProvider(Provider):
         raise ProviderError(
             "The assistant did not expose a response to browser automation. "
             "The visible page was saved in the failure evidence.")
+
+    @staticmethod
+    def _implementation_envelope_ready(
+            page, selectors: dict[str, Any], envelope: object) -> bool:
+        """Require implementation content or a visible artifact before accepting an envelope."""
+        if not isinstance(envelope, dict):
+            return False
+        content = envelope.get("content")
+        if not isinstance(content, dict):
+            return False
+        files = content.get("files")
+        deleted = content.get("deleted_files")
+        if isinstance(files, list) and files:
+            return True
+        changed = content.get("changed_files")
+        if (isinstance(deleted, list) and deleted
+                and all(isinstance(path, str) for path in deleted)
+                and isinstance(changed, list)
+                and all(isinstance(path, str) for path in changed)
+                and set(changed) == set(deleted)):
+            return True
+        selector = selectors.get("output_download_selector")
+        return bool(selector and any(
+            node.is_visible() for node in page.locator(selector).all()))
 
     @staticmethod
     def _response_candidates(page, response_selector: str, envelope_selector: str,
@@ -1749,6 +1832,12 @@ class BrowserProvider(Provider):
             destination.unlink(missing_ok=True)
             raise ProviderError("The implementation output is not a valid ZIP file.")
         return destination
+
+    @staticmethod
+    def _output_zip_paths(archive: Path) -> list[str]:
+        """Read non-directory ZIP members; workspace policy performs final validation."""
+        with zipfile.ZipFile(archive) as bundle:
+            return [item.filename for item in bundle.infolist() if not item.is_dir()]
 
     def _launch_context(self, playwright, *, visible: bool | None = None):
         browser = str(self.config.get("browser") or "chromium").casefold()

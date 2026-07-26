@@ -353,11 +353,14 @@ fast-forwards the source branch if the source checkout is still unchanged.
 For each browser exchange, Maintain uploads `TASK.md`, `CODEBASE.md`, and
 `MANIFEST.json`, plus the optional Copilot reference file. The codebase document
 contains only the selected context, with an index and exact repository paths.
-Implementation returns one JSON envelope containing the complete final content
-of every changed file. Maintain validates the paths and content, creates the
-repository-ready ZIP itself, and applies it in the isolated worktree before
-review and local verification. This avoids depending on the assistant UI to
-generate a downloadable artifact.
+Microsoft 365 Copilot implementation returns a small JSON envelope plus one
+downloadable `maintain-output.zip`. The ZIP contains complete added or modified
+files at their exact repository-relative paths; Maintain derives the changed
+paths from the archive, validates every member against the authorized task, and
+applies it in the isolated worktree before review and local verification. This
+avoids placing source code—with its quotes and newlines—inside a large JSON
+string. Browser profiles can set `implementation_transport` to `inline` when
+downloadable artifacts are unavailable.
 
 After attaching a package, Maintain confirms that all three standard files, and
 the optional fourth reference, are visible and that upload activity has stopped.
