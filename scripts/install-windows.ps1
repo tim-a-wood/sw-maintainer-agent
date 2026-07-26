@@ -10,9 +10,14 @@ $installLogPath = Join-Path $installRoot "install.log"
 $iconPath = Join-Path $installRoot "maintain.ico"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $iconSource = Join-Path $repoRoot "assets\maintain.ico.b64"
-$packageSource = "sw-maintainer-agent[browser] @ https://github.com/tim-a-wood/sw-maintainer-agent/archive/refs/heads/main.zip"
+$repositoryUrl = "https://github.com/tim-a-wood/sw-maintainer-agent.git"
+$repositoryRef = "refs/heads/main"
+$packageSource = $null
 $packageSourceOverridden = $false
 $packageSourceOverride = [Environment]::GetEnvironmentVariable("MAINTAIN_PACKAGE_SOURCE")
+$resolvedCommit = ""
+$expectedVersion = ""
+$sourceRoot = ""
 
 function Test-PythonCandidate {
     param(
@@ -55,6 +60,64 @@ function Find-Git {
     & $git.Source --version | Out-Host
     Assert-NativeCommand -Action "Checking Git"
     return $git.Source
+}
+
+function Resolve-RemoteCommit {
+    param(
+        [string]$GitPath,
+        [string]$Repository,
+        [string]$Reference
+    )
+    $result = (& $GitPath ls-remote $Repository $Reference | Out-String).Trim()
+    Assert-NativeCommand -Action "Resolving the latest Maintain source"
+    $match = [regex]::Match(
+        $result,
+        "^(?<commit>[0-9a-fA-F]{40})\s+$([regex]::Escape($Reference))$"
+    )
+    if (-not $match.Success) {
+        throw "GitHub did not return one exact commit for $Reference."
+    }
+    return $match.Groups["commit"].Value.ToLowerInvariant()
+}
+
+function New-SourceCheckout {
+    param(
+        [string]$GitPath,
+        [string]$Repository,
+        [string]$Commit
+    )
+    $root = Join-Path ([IO.Path]::GetTempPath()) (
+        "maintain-install-" + [Guid]::NewGuid().ToString("N")
+    )
+    New-Item -ItemType Directory -Path $root | Out-Null
+    & $GitPath -C $root init --quiet
+    Assert-NativeCommand -Action "Preparing the Maintain source checkout"
+    & $GitPath -C $root remote add origin $Repository
+    Assert-NativeCommand -Action "Configuring the Maintain source checkout"
+    & $GitPath -C $root fetch --quiet --depth 1 origin $Commit
+    Assert-NativeCommand -Action "Downloading the resolved Maintain commit"
+    & $GitPath -C $root checkout --quiet --detach FETCH_HEAD
+    Assert-NativeCommand -Action "Checking out the resolved Maintain commit"
+    $actual = (& $GitPath -C $root rev-parse HEAD | Out-String).Trim().ToLowerInvariant()
+    Assert-NativeCommand -Action "Verifying the Maintain source checkout"
+    if ($actual -ne $Commit) {
+        throw "The downloaded Maintain source did not match commit $Commit."
+    }
+    return $root
+}
+
+function Get-ProjectVersion {
+    param([string]$SourceRoot)
+    $projectFile = Join-Path $SourceRoot "pyproject.toml"
+    if (-not (Test-Path -LiteralPath $projectFile -PathType Leaf)) {
+        throw "The resolved Maintain source is missing pyproject.toml."
+    }
+    $text = Get-Content -LiteralPath $projectFile -Raw
+    $match = [regex]::Match($text, '(?m)^version\s*=\s*"(?<version>[^"]+)"\s*$')
+    if (-not $match.Success) {
+        throw "The resolved Maintain source does not declare one project version."
+    }
+    return $match.Groups["version"].Value
 }
 
 function New-MaintainShortcut {
@@ -155,6 +218,16 @@ try {
     $gitCommand = Find-Git
     Write-Host "Python: $pythonCommand $($pythonPrefix -join ' ')"
     Write-Host "Git: $gitCommand"
+    if (-not $packageSourceOverridden) {
+        $resolvedCommit = Resolve-RemoteCommit `
+            -GitPath $gitCommand -Repository $repositoryUrl -Reference $repositoryRef
+        $sourceRoot = New-SourceCheckout `
+            -GitPath $gitCommand -Repository $repositoryUrl -Commit $resolvedCommit
+        $expectedVersion = Get-ProjectVersion -SourceRoot $sourceRoot
+        $packageSource = "${sourceRoot}[browser]"
+        Write-Host "Source commit: $resolvedCommit"
+        Write-Host "Expected version: Maintain $expectedVersion"
+    }
 
     $venvPython = Join-Path $venvRoot "Scripts\python.exe"
     if ((Test-Path -LiteralPath $venvRoot) -and
@@ -186,22 +259,23 @@ try {
         if ($packageSourceOverridden) {
             throw "Installing MAINTAIN_PACKAGE_SOURCE failed with exit code $LASTEXITCODE."
         }
-        Write-Host "The online update was unavailable. Installing from this folder..." -ForegroundColor Yellow
-        Push-Location $repoRoot
-        try {
-            & $venvPython -m pip install --disable-pip-version-check --no-cache-dir `
-                --upgrade --force-reinstall ".[browser]"
-            Assert-NativeCommand -Action "Installing Maintain from the local folder"
-        }
-        finally {
-            Pop-Location
-        }
+        throw (
+            "Installing resolved commit $resolvedCommit failed with exit code $LASTEXITCODE. " +
+            "Maintain was not reported as updated; review the install log and try again."
+        )
     }
 
     $installedVersion = (& $venvPython -m maintain --version | Out-String).Trim()
     Assert-NativeCommand -Action "Checking the installed Maintain runtime"
     if (-not $installedVersion) {
         throw "The installed Maintain runtime did not report its version."
+    }
+    if (-not $packageSourceOverridden -and
+            $installedVersion -ne "Maintain $expectedVersion") {
+        throw (
+            "The private runtime reported '$installedVersion' after installing commit " +
+            "$resolvedCommit; expected 'Maintain $expectedVersion'."
+        )
     }
 
     Write-Host "Preparing the browser used by Copilot and ChatGPT..."
@@ -298,6 +372,9 @@ exit /b %MAINTAIN_EXIT%
     Write-Host ""
     Write-Host "Installed: $installRoot" -ForegroundColor Green
     Write-Host "Runtime: $installedVersion" -ForegroundColor Green
+    if ($resolvedCommit) {
+        Write-Host "Source commit: $resolvedCommit" -ForegroundColor Green
+    }
     Write-Host "Desktop shortcut: $desktopShortcut" -ForegroundColor Green
     if ($pinned) {
         Write-Host "Taskbar shortcut: pinned" -ForegroundColor Green
@@ -317,6 +394,18 @@ catch {
     throw
 }
 finally {
+    if ($sourceRoot -and (Test-Path -LiteralPath $sourceRoot)) {
+        $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd(
+            [IO.Path]::DirectorySeparatorChar
+        )
+        $resolvedSource = [IO.Path]::GetFullPath($sourceRoot)
+        if ($resolvedSource.StartsWith(
+                $tempRoot + [IO.Path]::DirectorySeparatorChar,
+                [StringComparison]::OrdinalIgnoreCase) -and
+                (Split-Path -Leaf $resolvedSource).StartsWith("maintain-install-")) {
+            Remove-Item -LiteralPath $resolvedSource -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
     if ($transcriptStarted) {
         Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
     }
