@@ -320,13 +320,23 @@ cmd /k
     $repomix = Get-Command "repomix.cmd", "repomix" -ErrorAction SilentlyContinue |
         Select-Object -First 1
 
-    # A `maintain` left on PATH by an earlier install would shadow this one.
-    $shadow = $null
-    $onPath = Get-Command "maintain" -All -ErrorAction SilentlyContinue |
-        Where-Object { $_.Source } |
-        Where-Object { (Split-Path -Parent $_.Source) -ne $installRoot }
-    if ($onPath) {
-        $shadow = ($onPath | Select-Object -First 1).Source
+    # Which `maintain` will a NEW terminal run? The current process PATH is
+    # stale after this script edits the user PATH, so rebuild the effective
+    # search order from the stored machine and user values and walk it.
+    $effectivePath = @(
+        [Environment]::GetEnvironmentVariable("Path", "Machine"),
+        [Environment]::GetEnvironmentVariable("Path", "User")
+    ) -join ";"
+    $winner = $null
+    foreach ($directory in ($effectivePath -split ";" | Where-Object { $_ })) {
+        foreach ($leaf in @("maintain.cmd", "maintain.exe", "maintain.bat")) {
+            $candidate = Join-Path $directory.Trim() $leaf
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                $winner = $candidate
+                break
+            }
+        }
+        if ($winner) { break }
     }
 
     Write-Host ""
@@ -348,15 +358,24 @@ cmd /k
     else {
         Write-Host "Repomix: $($repomix.Source)" -ForegroundColor Green
     }
-    if ($shadow) {
+    Write-Host ""
+    if ($null -eq $winner) {
+        Write-Host "A new terminal will find: nothing yet — sign out and back in if PATH does not refresh." -ForegroundColor Yellow
+    }
+    elseif ((Split-Path -Parent $winner) -eq $installRoot) {
+        Write-Host "A new terminal will run: $winner" -ForegroundColor Green
+    }
+    else {
+        Write-Host "PROBLEM: a different 'maintain' comes first on your PATH." -ForegroundColor Red
+        Write-Host "  A new terminal will run: $winner" -ForegroundColor Red
+        Write-Host "  This installer put the new one at: $launcherPath" -ForegroundColor Red
         Write-Host ""
-        Write-Host "Another 'maintain' is earlier on your PATH and would run instead:" -ForegroundColor Yellow
-        Write-Host "  $shadow" -ForegroundColor Yellow
-        Write-Host "Remove it, or check which one runs with: where maintain" -ForegroundColor Yellow
+        Write-Host "  That other copy is probably an earlier pip install. Remove it with:" -ForegroundColor Yellow
+        Write-Host "      py -3 -m pip uninstall -y sw-maintainer-agent maintain" -ForegroundColor Yellow
+        Write-Host "  or delete the file above, then open a new terminal." -ForegroundColor Yellow
     }
     Write-Host ""
-    Write-Host "New terminals can run: maintain"
-    Write-Host "Confirm the new runtime with: maintain --version   (expects maintain $expectedVersion)"
+    Write-Host "Confirm with: maintain --version   (expects: maintain $expectedVersion)"
     Write-Host "Run this installer again whenever you want to update."
 }
 catch {

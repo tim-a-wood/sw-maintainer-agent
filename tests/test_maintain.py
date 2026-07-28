@@ -379,6 +379,8 @@ def test_installer_files_are_present():
         "scripts/install-windows.ps1",
         "scripts/uninstall-windows.ps1",
         "scripts/install-unix.sh",
+        "which-maintain-windows.cmd",
+        "scripts/which-maintain.ps1",
         "assets/maintain.ico.b64",
     ):
         assert (PROJECT_ROOT / relative).is_file(), relative
