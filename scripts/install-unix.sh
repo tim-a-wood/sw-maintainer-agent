@@ -42,6 +42,15 @@ else
     echo "Source: $REPO_ROOT (not a Git clone; installing it as-is)"
 fi
 
+# The 0.9 runtime ships the distribution "sw-maintainer-agent", whose import
+# package is also called "maintain". Installing over it would leave every 0.9
+# module behind, so the environment is rebuilt instead.
+if [ -x "$VENV/bin/python" ] &&
+   "$VENV/bin/python" -m pip show sw-maintainer-agent >/dev/null 2>&1; then
+    echo "Found the 0.9 runtime, which shares the 'maintain' package name. Rebuilding..."
+    rm -rf "$VENV"
+fi
+
 if [ ! -x "$VENV/bin/python" ]; then
     echo "Creating the private Maintain environment..."
     rm -rf "$VENV"

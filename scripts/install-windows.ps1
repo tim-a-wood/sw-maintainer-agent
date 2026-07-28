@@ -117,6 +117,24 @@ function Test-PrivateEnvironment {
     }
 }
 
+function Test-LegacyRuntime {
+    # The 0.9 runtime installs the distribution "sw-maintainer-agent", which
+    # ships an import package also called "maintain". Installing this version
+    # on top of it would leave every 0.9 module in place and the wrong CLI
+    # could keep running, so the environment is rebuilt instead.
+    param([string]$PythonPath)
+    if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
+        return $false
+    }
+    try {
+        & $PythonPath -m pip show sw-maintainer-agent 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        return $false
+    }
+}
+
 function Add-UserPath {
     param([string]$Directory)
     $current = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -186,12 +204,20 @@ try {
     Write-Host "Expected version: maintain $expectedVersion"
 
     $venvPython = Join-Path $venvRoot "Scripts\python.exe"
-    if ((Test-Path -LiteralPath $venvRoot) -and
-            -not (Test-PrivateEnvironment -PythonPath $venvPython)) {
+    $rebuildReason = ""
+    if (Test-Path -LiteralPath $venvRoot) {
+        if (-not (Test-PrivateEnvironment -PythonPath $venvPython)) {
+            $rebuildReason = "The existing private environment is unusable."
+        }
+        elseif (Test-LegacyRuntime -PythonPath $venvPython) {
+            $rebuildReason = "Found the 0.9 runtime, which shares the 'maintain' package name."
+        }
+    }
+    if ($rebuildReason) {
         if ((Split-Path -Parent $venvRoot) -ne $installRoot) {
             throw "Refusing to replace an unexpected Python environment path: $venvRoot"
         }
-        Write-Host "The existing private environment is unusable. Recreating it..." -ForegroundColor Yellow
+        Write-Host "$rebuildReason Rebuilding it..." -ForegroundColor Yellow
         Remove-Item -LiteralPath $venvRoot -Recurse -Force
     }
     if (-not (Test-PrivateEnvironment -PythonPath $venvPython)) {
@@ -294,6 +320,15 @@ cmd /k
     $repomix = Get-Command "repomix.cmd", "repomix" -ErrorAction SilentlyContinue |
         Select-Object -First 1
 
+    # A `maintain` left on PATH by an earlier install would shadow this one.
+    $shadow = $null
+    $onPath = Get-Command "maintain" -All -ErrorAction SilentlyContinue |
+        Where-Object { $_.Source } |
+        Where-Object { (Split-Path -Parent $_.Source) -ne $installRoot }
+    if ($onPath) {
+        $shadow = ($onPath | Select-Object -First 1).Source
+    }
+
     Write-Host ""
     Write-Host "Installed: $installRoot" -ForegroundColor Green
     Write-Host "Runtime: $installedVersion" -ForegroundColor Green
@@ -313,8 +348,15 @@ cmd /k
     else {
         Write-Host "Repomix: $($repomix.Source)" -ForegroundColor Green
     }
+    if ($shadow) {
+        Write-Host ""
+        Write-Host "Another 'maintain' is earlier on your PATH and would run instead:" -ForegroundColor Yellow
+        Write-Host "  $shadow" -ForegroundColor Yellow
+        Write-Host "Remove it, or check which one runs with: where maintain" -ForegroundColor Yellow
+    }
     Write-Host ""
     Write-Host "New terminals can run: maintain"
+    Write-Host "Confirm the new runtime with: maintain --version   (expects maintain $expectedVersion)"
     Write-Host "Run this installer again whenever you want to update."
 }
 catch {
