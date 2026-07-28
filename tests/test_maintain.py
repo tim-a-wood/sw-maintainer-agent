@@ -209,6 +209,21 @@ Revised plan text.
 Nothing has been applied yet; there is nothing to discard.
 """
 
+PATCH_NEW_FILE_NO_MODE = '''diff --git a/app.py b/app.py
+--- a/app.py
++++ b/app.py
+@@ -1,2 +1,2 @@
+ def greet():
+-    return "Helo, world"
++    return "Hello, world"
+diff --git a/extra.py b/extra.py
+--- /dev/null
++++ b/extra.py
+@@ -0,0 +1,2 @@
++def helper():
++    return True
+'''
+
 RESCOPE_REQUIRED_RESPONSE = """STATUS: RESCOPE_REQUIRED
 
 ## Rescope Reason
@@ -879,6 +894,43 @@ def test_patch_paths_extracts_and_validates():
         mod.patch_paths("--- app.py\n+++ app.py\n@@ -1 +1 @@\n-x\n+y\n")
     with pytest.raises(mod.MaintainError):
         mod.patch_paths("this is not a diff at all")
+
+
+def test_new_file_patch_without_mode_line_applies(h):
+    """Chatbots often omit `new file mode`; capture must restore it."""
+    h.setup()
+    h.run("new", "Fix the greeting and add a helper")
+    scope = SCOPE_RESPONSE.replace("- app.py", "- app.py\n- extra.py")
+    h.set_clip(scope)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_NEW_FILE_NO_MODE))
+    h.run("capture")
+    patch_text = (
+        h.task_dir() / "rounds" / "01" / "implementation.patch"
+    ).read_text(encoding="utf-8")
+    assert "new file mode 100644" in patch_text
+    out = h.run("apply", input_text="y\n").stdout
+    assert "Tests: PASSED" in out
+    assert (h.repo / "extra.py").exists()
+
+
+def test_normalise_patch_inserts_missing_mode_lines():
+    fixed = mod.normalise_patch(PATCH_NEW_FILE_NO_MODE)
+    assert fixed.count("new file mode 100644") == 1
+    assert "diff --git a/extra.py b/extra.py\nnew file mode 100644\n--- /dev/null" in fixed
+    # Modified-file sections are untouched.
+    assert "diff --git a/app.py b/app.py\n--- a/app.py" in fixed
+    # Patches that already carry the metadata are unchanged.
+    assert mod.normalise_patch(PATCH_TWO_FILES) == PATCH_TWO_FILES
+    deletion = (
+        "diff --git a/gone.py b/gone.py\n"
+        "--- a/gone.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,1 +0,0 @@\n"
+        "-x = 1\n"
+    )
+    assert "deleted file mode 100644" in mod.normalise_patch(deletion)
 
 
 def test_unsafe_path_reasons():

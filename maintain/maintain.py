@@ -493,6 +493,22 @@ def strip_diff_blocks(text: str) -> str:
     return DIFF_BLOCK_RE.sub("[patch omitted — preserved in the task's round directory]", text)
 
 
+# Chatbots often omit the metadata line git requires for created or deleted
+# files; without it `git apply` mis-parses /dev/null as a path. Restoring the
+# line is mechanical and does not alter the change itself.
+_MISSING_NEW_MODE_RE = re.compile(r"^(diff --git [^\n]+\n)(?=--- /dev/null$)", re.MULTILINE)
+_MISSING_DELETED_MODE_RE = re.compile(
+    r"^(diff --git [^\n]+\n)(?=--- (?:\"a/[^\n]+\"|a/[^\n]+)\n\+\+\+ /dev/null$)",
+    re.MULTILINE,
+)
+
+
+def normalise_patch(patch: str) -> str:
+    patch = _MISSING_NEW_MODE_RE.sub(r"\g<1>new file mode 100644\n", patch)
+    patch = _MISSING_DELETED_MODE_RE.sub(r"\g<1>deleted file mode 100644\n", patch)
+    return patch
+
+
 def patch_paths(patch: str) -> list:
     """Extract repository-relative file paths from a unified Git diff."""
     paths = []
@@ -922,7 +938,7 @@ def validate_implementation_response(task: Task, text: str) -> dict:
             f"More than one diff block is present ({len(blocks)} found). The response "
             "must contain exactly one fenced ```diff block."
         )
-    patch = blocks[0]
+    patch = normalise_patch(blocks[0])
     if not patch.endswith("\n"):
         patch += "\n"
     paths = patch_paths(patch)  # validates basic diff shape early
