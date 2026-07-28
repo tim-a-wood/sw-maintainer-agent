@@ -1078,6 +1078,85 @@ def test_new_file_patch_without_mode_line_applies(h):
     assert (h.repo / "extra.py").exists()
 
 
+MULTILINE_APP_PY = (
+    "def greeting():\n"
+    '    return "Helo, world"\n'
+    "\n"
+    "\n"
+    'if __name__ == "__main__":\n'
+    "    print(greeting())\n"
+)
+
+PATCH_NO_TRAILING_CONTEXT = '''diff --git a/app.py b/app.py
+--- a/app.py
++++ b/app.py
+@@ -1,2 +1,2 @@
+ def greeting():
+-    return "Helo, world"
++    return "Hello, world!"
+'''
+
+
+def test_patch_without_trailing_context_is_healed(h):
+    """git apply rejects a hunk that ends on a changed line mid-file.
+
+    Chatbots trim trailing context routinely, so the apply step repairs it
+    from the working tree rather than burning a correction round.
+    """
+    (h.repo / "app.py").write_text(MULTILINE_APP_PY, encoding="utf-8")
+    (h.repo / "test_app.py").write_text(
+        "from app import greeting\n\n\n"
+        'def test_greeting():\n    assert greeting() == "Hello, world!"\n',
+        encoding="utf-8",
+    )
+    h.git("add", "-A")
+    h.git("commit", "-qm", "multi-line fixture")
+    h.setup()
+    h.run("new", "Fix the greeting")
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_NO_TRAILING_CONTEXT))
+    h.run("capture")
+
+    # The captured patch is rejected by git as-is...
+    patch_file = h.task_dir() / "rounds" / "01" / "implementation.patch"
+    raw = subprocess.run(
+        ["git", "apply", "--recount", "--check", str(patch_file)],
+        cwd=h.repo, capture_output=True, text=True,
+    )
+    assert raw.returncode != 0
+
+    # ...but apply heals it and the tests pass.
+    out = h.run("apply", input_text="y\n").stdout
+    assert "added trailing context" in out
+    assert "Tests: PASSED" in out
+    assert (h.repo / "app.py").read_text(encoding="utf-8") == MULTILINE_APP_PY.replace(
+        '"Helo, world"', '"Hello, world!"'
+    )
+
+
+def test_add_trailing_context_leaves_valid_patches_alone(tmp_path):
+    (tmp_path / "app.py").write_text(MULTILINE_APP_PY, encoding="utf-8")
+    # Already has trailing context: unchanged.
+    with_context = PATCH_NO_TRAILING_CONTEXT.replace(
+        '+    return "Hello, world!"\n', '+    return "Hello, world!"\n \n'
+    ).replace("@@ -1,2 +1,2 @@", "@@ -1,3 +1,3 @@")
+    assert mod.add_trailing_context(with_context, tmp_path) == with_context
+    # A created file has no old side to extend.
+    assert mod.add_trailing_context(PATCH_DISALLOWED, tmp_path) == PATCH_DISALLOWED
+    # A hunk that already runs to end of file is left alone.
+    at_eof = (
+        "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n"
+        "@@ -6,1 +6,1 @@\n-    print(greeting())\n+    print(greeting().upper())\n"
+    )
+    assert mod.add_trailing_context(at_eof, tmp_path) == at_eof
+    # Healing appends exactly the real next line of the file.
+    healed = mod.add_trailing_context(PATCH_NO_TRAILING_CONTEXT, tmp_path)
+    assert "@@ -1,3 +1,3 @@" in healed
+    assert healed.endswith('+    return "Hello, world!"\n \n')
+
+
 def test_normalise_patch_inserts_missing_mode_lines():
     fixed = mod.normalise_patch(PATCH_NEW_FILE_NO_MODE)
     assert fixed.count("new file mode 100644") == 1

@@ -520,6 +520,75 @@ def normalise_patch(patch: str) -> str:
     return patch
 
 
+_HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
+
+
+def add_trailing_context(patch: str, root: Path) -> str:
+    """Give every hunk a trailing context line, reading it from the file.
+
+    `git apply` rejects a hunk that ends on an added or removed line unless
+    the hunk runs to the end of the file — and chatbots routinely trim
+    trailing context. The appended line is copied from the working tree at
+    the position the hunk itself claims, so it cannot change what the patch
+    does; git still validates the whole hunk afterwards.
+    """
+    lines = patch.split("\n")
+    output = []
+    current_file = None
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+        match = re.match(r"^--- (?:\"a/(.+)\"|a/(\S+))\s*$", line)
+        if match:
+            current_file = normalise_path(match.group(1) or match.group(2))
+        header = _HUNK_HEADER_RE.match(line)
+        if not header or current_file is None:
+            output.append(line)
+            index += 1
+            continue
+
+        old_start = int(header.group(1))
+        old_count = 1 if header.group(2) is None else int(header.group(2))
+        new_start = int(header.group(3))
+        new_count = 1 if header.group(4) is None else int(header.group(4))
+        tail = header.group(5)
+
+        body = []
+        index += 1
+        while index < len(lines):
+            candidate = lines[index]
+            if candidate.startswith(("@@", "diff --git", "--- ", "+++ ")):
+                break
+            if candidate == "" and index == len(lines) - 1:
+                break  # trailing newline of the patch itself
+            body.append(candidate)
+            index += 1
+
+        real_body = [entry for entry in body if entry[:1] in (" ", "+", "-", "\\")]
+        needs_context = bool(real_body) and real_body[-1][:1] in ("+", "-")
+        if needs_context and old_count > 0:
+            target = root / current_file
+            if target.is_file():
+                try:
+                    source = target.read_text(encoding="utf-8").split("\n")
+                except (OSError, UnicodeDecodeError):
+                    source = []
+                # The line just past this hunk's old range, 0-based.
+                position = old_start - 1 + old_count
+                if 0 <= position < len(source) and not (
+                    position == len(source) - 1 and source[position] == ""
+                ):
+                    body.append(" " + source[position])
+                    old_count += 1
+                    new_count += 1
+
+        output.append(f"@@ -{old_start},{old_count} +{new_start},{new_count} @@{tail}")
+        output.extend(body)
+
+    return "\n".join(output)
+
+
 def patch_paths(patch: str) -> list:
     """Extract repository-relative file paths from a unified Git diff."""
     paths = []
@@ -1696,8 +1765,20 @@ def cmd_apply() -> None:
         )
         return
 
-    # 4. Check that the patch applies cleanly.
+    # 4. Check that the patch applies cleanly. Hunks that stop on a changed
+    #    line are healed against the working tree first; the raw response is
+    #    preserved separately, so nothing is lost by rewriting the patch.
     check = git_run(root, "apply", "--recount", "--check", str(patch_file))
+    if check.returncode != 0:
+        healed = add_trailing_context(patch_text, root)
+        if healed != patch_text:
+            patch_file.write_text(healed, encoding="utf-8")
+            retry = git_run(root, "apply", "--recount", "--check", str(patch_file))
+            if retry.returncode == 0:
+                say("note: added trailing context to the patch so it applies cleanly.")
+                patch_text, check = healed, retry
+            else:
+                patch_file.write_text(patch_text, encoding="utf-8")
     if check.returncode != 0:
         record_patch_failure(
             task,
