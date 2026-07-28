@@ -1,9 +1,10 @@
 # Maintain Simple UI — Product Requirements
 
-- Status: PRD v1.0, for review
+- Status: PRD v1.1, for review
 - Branch: `maintain-simple-ui`
 - Date: 2026-07-28
-- Visual specification: `docs/mockup/simple-ui-mockup.html` (interactive)
+- Interactive reference: `docs/mockup/simple-ui-mockup.html` (snapshot at
+  PRD v1.0; illustrative, not maintained with every PRD change)
 - Architecture background: `docs/simple-ui-concept.md`
 
 ## 1. Product statement
@@ -15,9 +16,11 @@ Copilot and brings the reply back. The tool prepares, validates, checks,
 and records everything else. The tool never edits the project before the
 person accepts the result.
 
-The interactive mockup is the visual specification. The implemented UI
-must match it in layout, text, states, and polish. All engine behavior
-reuses the existing `maintain` codebase as mapped in the concept document.
+This document is the authoritative specification. The interactive mockup
+is a reference for the flow, the layout, and the expected level of
+polish. It is a snapshot; where the two differ, this document wins. All
+engine behavior reuses the existing `maintain` codebase as mapped in the
+concept document.
 
 ## 2. Users and problem
 
@@ -60,9 +63,9 @@ exchange. "Task type" means one of Plan, Build, Repair, Review.
   Change software, Repair a fault, History, Settings.
 - FR-P2. When a run is stopped or waiting, Home shows one Continue card
   with the run number, the stage, and what the tool waits for.
-- FR-P3. Recent projects and project switching reuse the existing
-  project registry. (Same behavior as the CLI; selection UI may ship in
-  a later slice, see section 9.)
+- FR-P3. The UI opens the active recent project from the existing
+  project registry. The CLI project commands manage projects; a project
+  picker in the UI is not in this version (section 9).
 
 ### 5.2 Describe
 
@@ -242,8 +245,9 @@ All settings are edited in plain-language screens with safe defaults.
 
 - NFR-1. Windows 10/11. Installed with the existing installer scripts;
   one Start Menu and desktop shortcut; no console window.
-- NFR-2. The UI matches the mockup: layout, spacing, text, states,
-  light and dark theme. The mockup is the acceptance reference.
+- NFR-2. The UI is at least as polished as the reference mockup: the
+  same layout discipline, spacing, state feedback, and light and dark
+  themes. Where this document and the mockup differ, this document wins.
 - NFR-3. All user-visible text obeys ASD-STE100, lives in one string
   catalog, and is enforced by the catalog unit test (concept §12).
 - NFR-4. Packaging one packet completes in under 5 seconds for a
@@ -257,8 +261,10 @@ All settings are edited in plain-language screens with safe defaults.
 
 ## 7. Screen inventory
 
-The mockup implements every screen below; the Screens control in the
-mockup jumps to each one with a plausible state.
+The reference mockup shows every screen below as of PRD v1.0; its
+Screens control jumps to each one with a plausible state. The rows
+below, together with section 5, are the authoritative screen
+definitions.
 
 | Screen | Purpose | Primary action | Requirements |
 |---|---|---|---|
@@ -283,8 +289,8 @@ mockup jumps to each one with a plausible state.
 ## 8. Acceptance criteria (release gate)
 
 1. One full feature run on Windows, moving files by hand, ends in a
-   verified commit on a maintenance branch, with every screen matching
-   the mockup.
+   verified commit on a maintenance branch, with every screen behaving
+   as sections 5 and 7 define, at the polish bar of NFR-2.
 2. A stale reply, a wrong-kind reply, and a non-reply file each produce
    the specified refusal or classification message.
 3. The OneDrive route ends with the correct link in the clipboard, and
@@ -315,6 +321,8 @@ Stated to keep the scope firm:
 - History search and filters beyond the recent list.
 - A diff viewer beyond the Save screen's summary and inline diff.
 - Editing prompt text inside the Send screen. Settings only.
+- A project picker in the UI. Use the CLI project commands to add,
+  open, or forget projects; the UI opens the active project.
 - Browser automation, Copilot API, Graph API, telemetry, macOS/Linux
   packaging.
 
@@ -327,8 +335,8 @@ Stated to keep the scope firm:
    go back / undo, Continue card, Task prompts & documents settings,
    OneDrive settings, package style, checks editor.
 3. **M3 — Polish and compliance.** STE catalog and test, installer
-   shortcut, keyboard pass, dark theme pass, mockup parity review
-   against NFR-2.
+   shortcut, keyboard pass, dark theme pass, polish review against
+   NFR-2.
 
 ## 11. Open points
 
