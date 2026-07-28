@@ -39,6 +39,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
 DEFAULT_CONFIG = {
     "test_command": None,
+    "harden_command": None,
     "maximum_rounds": 3,
     "repomix_args": [],
 }
@@ -726,7 +727,16 @@ def build_scope_package(task: Task, config: dict) -> Path:
             "repomix_context": run_repomix(task.root, config),
         }
     )
-    content = render_template("scope.md", mapping)
+    if task.state.get("kind") == "harden":
+        template = "harden.md"
+        gate = config.get("harden_command") or config.get("test_command")
+        mapping["harden_command"] = gate or (
+            "(none configured — set \"harden_command\" in .maintain/config.json "
+            "before the apply step)"
+        )
+    else:
+        template = "scope.md"
+    content = render_template(template, mapping)
     task.scope_dir.mkdir(parents=True, exist_ok=True)
     (task.scope_dir / "package.md").write_text(content, encoding="utf-8")
     return write_export(task, f"maintain-{task.id}-scope.md", content)
@@ -1196,6 +1206,54 @@ def cmd_new(request: str) -> None:
     root = find_repo_root()
     require_initialised(root)
     config = load_config(root)
+    create_task(root, config, request, kind="maintenance")
+
+
+def harden_target_files(root: Path) -> list:
+    """Union of non-test files touched by every completed task, in order."""
+    targets = []
+    tasks_dir = maintain_dir(root) / "tasks"
+    if tasks_dir.is_dir():
+        for state_file in sorted(tasks_dir.glob("*/state.json")):
+            try:
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if state.get("stage") != S_COMPLETE or state.get("kind") == "harden":
+                continue
+            for path in state.get("allowed_files", []):
+                if Path(path).name.startswith("test_"):
+                    continue
+                if path not in targets:
+                    targets.append(path)
+    return targets
+
+
+def cmd_harden(note: str) -> None:
+    root = find_repo_root()
+    require_initialised(root)
+    config = load_config(root)
+    targets = harden_target_files(root)
+    target_text = (
+        "\n".join(f"- {path}" for path in targets)
+        if targets
+        else "(no completed tasks found — treat the whole repository as the target)"
+    )
+    request = (
+        "Harden the test suite for the completed work in this repository. "
+        "Reach 100% line and branch coverage of the target files under the "
+        "configured hardening gate, make the assertions mutation-resistant "
+        "(exact expected values, boundary cases, error paths — tests that "
+        "would fail under small operator or off-by-one mutations), and add "
+        "end-to-end tests that exercise the real entry points the way a user "
+        "would. Do not change the behaviour of the target files.\n\n"
+        "Target files:\n" + target_text + "\n\n"
+        "User notes: " + (note.strip() or "(none)")
+    )
+    create_task(root, config, request, kind="harden")
+
+
+def create_task(root: Path, config: dict, request: str, kind: str) -> None:
 
     active = current_task_id(root)
     if active:
@@ -1237,6 +1295,7 @@ def cmd_new(request: str) -> None:
     task.request_file.write_text(request.strip() + "\n", encoding="utf-8")
     task.state = {
         "task_id": task.id,
+        "kind": kind,
         "created": datetime.now().isoformat(timespec="seconds"),
         "stage": S_AWAIT_SCOPE,
         "base_commit": base_commit,
@@ -1495,6 +1554,8 @@ def run_tests(task: Task, config: dict) -> None:
     round_dir = task.round_dir(task.implementation_round)
     results_path = round_dir / "test-results.txt"
     command = config.get("test_command")
+    if task.state.get("kind") == "harden" and config.get("harden_command"):
+        command = config["harden_command"]
     timestamp = datetime.now().isoformat(timespec="seconds")
 
     if not command:
@@ -1679,6 +1740,8 @@ def cmd_status() -> None:
     }.get(task.state.get("test_status"), str(task.state.get("test_status")))
 
     say(f"Task: {task.id}")
+    if task.state.get("kind") == "harden":
+        say("Kind: Test hardening")
     say(f"Request: {task.request_text().splitlines()[0] if task.request_text() else ''}")
     say(f"Stage: {stage_label(task)}")
     say(f"Implementation round: {task.rounds_this_scope} of {task.maximum_rounds}")
@@ -1731,6 +1794,9 @@ chatbot-assisted software maintenance.
 Usage:
   maintain init             Create Maintain configuration and project context
   maintain new "<request>"  Create a task and generate its scope package
+  maintain harden ["notes"] Create a test-hardening task for completed work
+                            (100% coverage, mutation-resistant assertions,
+                            end-to-end tests; gated by "harden_command")
   maintain capture          Read and store the expected chatbot response
                             from the clipboard
   maintain next             Generate the next appropriate handoff package
@@ -1764,6 +1830,8 @@ def main(argv: Optional[list] = None) -> int:
                     'Usage: maintain new "Correct the greeting shown at startup"',
                 )
             cmd_new(request)
+        elif command == "harden":
+            cmd_harden(" ".join(args[1:]).strip())
         elif command == "capture":
             cmd_capture()
         elif command == "next":

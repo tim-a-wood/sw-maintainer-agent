@@ -64,6 +64,7 @@ python3 maintain/maintain.py --help
 | --- | --- |
 | `maintain init` | Create Maintain configuration and project context |
 | `maintain new "<request>"` | Create a task and generate its scope package |
+| `maintain harden ["notes"]` | Create a test-hardening task for completed work |
 | `maintain capture` | Read and store the expected chatbot response from the clipboard |
 | `maintain next` | Generate the next appropriate handoff package |
 | `maintain apply` | Validate, confirm, apply and test a patch |
@@ -191,6 +192,39 @@ asks whether to keep the current working-tree changes or reset them to the
 task's base commit — the decision is always yours. Implementation then
 continues under the revised scope with a fresh round allowance. A scope
 revision does not consume an implementation retry.
+
+## Hardening
+
+After work has passed review (and you have committed it), `maintain harden`
+starts a test-hardening task over everything your completed tasks touched:
+
+```sh
+maintain harden "focus on the parser error paths"   # notes are optional
+```
+
+The hardening scope conversation is asked for a plan that reaches 100% line
+and branch coverage of the target files, makes assertions
+mutation-resistant (exact values, boundaries, error paths), and adds
+end-to-end tests of the real entry points — while changing no behaviour:
+the allowed files should be tests, e2e tests, and coverage configuration
+only, and the anti-gaming rules (no logic pragmas, no assertion-free tests)
+ride in the acceptance criteria so the independent reviewer enforces them.
+
+During a hardening task, `maintain apply` runs `harden_command` from
+`config.json` instead of `test_command` — configure it as your strict gate,
+for example:
+
+```json
+{
+  "harden_command": "python3 -m pytest -q --cov=mymodule --cov-branch --cov-fail-under=100"
+}
+```
+
+Everything else is the ordinary workflow: correction rounds when the gate
+fails, independent review when it passes, your confirmation to close.
+Mutation testing tools (for example `mutmut`) can be chained into
+`harden_command` when their exit codes are reliable in your environment, or
+run manually as an advisory check.
 
 ## Task storage
 

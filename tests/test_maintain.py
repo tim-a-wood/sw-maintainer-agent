@@ -282,6 +282,9 @@ class Harness:
         self.git("init", "-q")
         self.git("config", "user.email", "test@example.com")
         self.git("config", "user.name", "Test User")
+        (self.repo / ".gitignore").write_text(
+            ".maintain/\n__pycache__/\n.pytest_cache/\n", encoding="utf-8"
+        )
         (self.repo / "app.py").write_text(APP_PY, encoding="utf-8")
         (self.repo / "test_app.py").write_text(TEST_PY, encoding="utf-8")
         self.git("add", ".")
@@ -828,6 +831,101 @@ def test_no_test_command_records_not_configured(h):
     assert state["stage"] == "ready_for_review"
     results = h.task_dir() / "rounds" / "01" / "test-results.txt"
     assert "NOT_CONFIGURED" in results.read_text(encoding="utf-8")
+
+
+HARDEN_SCOPE_RESPONSE = """STATUS: SCOPE_COMPLETE
+
+## Understanding
+
+app.py is covered only on the happy path; the greeting has no boundary or
+end-to-end tests. Hardening adds exact-value and CLI-level tests.
+
+## Allowed Files
+
+- test_hardening.py
+
+## Proposed Changes
+
+test_hardening.py: exact-value assertions for greet() and an end-to-end
+subprocess invocation of the module.
+
+## Acceptance Criteria
+
+- The hardening gate command passes.
+- No coverage-exclusion pragmas are added to logic.
+- Every new test asserts an exact expected value.
+
+## Risks and Unknowns
+
+- None.
+"""
+
+HARDEN_TEST_PATCH = '''diff --git a/test_hardening.py b/test_hardening.py
+new file mode 100644
+--- /dev/null
++++ b/test_hardening.py
+@@ -0,0 +1,5 @@
++from app import greet
++
++
++def test_exact_value():
++    assert greet() == "Hello, world"
+'''
+
+
+def test_harden_workflow_uses_gate_command_and_targets(h):
+    h.setup()
+    # Complete an ordinary task first so harden has targets to derive.
+    h.run("new", "Fix the greeting")
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_DIRECT))
+    h.run("capture")
+    h.run("apply", input_text="y\n")
+    h.run("next")
+    h.set_clip(review_response("APPROVE"))
+    h.run("capture")
+    h.run("next", input_text="y\n")
+    # The user commits accepted work before starting the next task.
+    h.git("add", "-A")
+    h.git("commit", "-qm", "task 1 accepted")
+
+    gate = f"{shlex.quote(sys.executable)} -c \"print('HARDEN GATE OK')\""
+    h.config(harden_command=gate)
+    out = h.run("harden", "focus on boundaries").stdout
+    assert "Created task:" in out
+    task_id = h.task_id()
+    state = h.state()
+    assert state["kind"] == "harden"
+
+    package = (
+        h.task_dir() / "scope" / "package.md"
+    ).read_text(encoding="utf-8")
+    assert "Test Hardening Scope" in package
+    assert "- app.py" in package        # derived target (non-test files only)
+    assert "test_app.py\n" in package   # visible in repo structure
+    assert "HARDEN GATE OK" in package  # gate command shown to the scoper
+    assert "focus on boundaries" in package
+
+    h.set_clip(HARDEN_SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(HARDEN_TEST_PATCH, summary="Add hardening tests."))
+    h.run("capture")
+    out = h.run("apply", input_text="y\n").stdout
+    assert "Tests: PASSED" in out
+    results = (
+        h.task_dir(task_id) / "rounds" / "01" / "test-results.txt"
+    ).read_text(encoding="utf-8")
+    assert "HARDEN GATE OK" in results  # the gate ran, not test_command
+
+
+def test_harden_without_completed_tasks_targets_whole_repo(h):
+    h.setup()
+    h.run("harden")
+    package = (h.task_dir() / "scope" / "package.md").read_text(encoding="utf-8")
+    assert "whole repository" in package
 
 
 # Unit tests -----------------------------------------------------------------
