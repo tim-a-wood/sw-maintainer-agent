@@ -66,6 +66,51 @@ echo "Installing Maintain..."
 mkdir -p "$BIN_DIR"
 ln -sf "$VENV/bin/maintain" "$BIN_DIR/maintain"
 
+# Older copies elsewhere on PATH would answer `maintain` instead of this one.
+remove_shadowing_install() {
+    local executable="$1" env_root python distribution listing
+    env_root="$(dirname "$(dirname "$executable")")"
+    python="$env_root/bin/python"
+    [ -x "$python" ] || { echo "  Cannot identify the Python behind $executable; leaving it." ; return; }
+    for distribution in sw-maintainer-agent maintain; do
+        "$python" -m pip show "$distribution" >/dev/null 2>&1 || continue
+        if [ "$distribution" = "maintain" ]; then
+            listing="$("$python" -m pip show -f maintain 2>/dev/null)"
+            # The file list identifies a normal install; the summary also
+            # identifies an editable one, recorded as a finder shim instead.
+            case "$listing" in
+                *maintain/maintain.py*|*maintain/templates/scope.md*|*"chatbot-assisted software maintenance"*) ;;
+                *) echo "  Leaving '$distribution' alone; it is not Maintain."; continue ;;
+            esac
+        fi
+        echo "  Removing $distribution from $python"
+        "$python" -m pip uninstall -y "$distribution" >/dev/null 2>&1 ||
+            echo "  Could not remove $distribution automatically."
+    done
+}
+
+shadows=""
+while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    [ "$candidate" = "$BIN_DIR/maintain" ] && continue
+    [ "$candidate" = "$VENV/bin/maintain" ] && continue
+    shadows="$shadows$candidate
+"
+done <<EOF
+$(type -a -P maintain 2>/dev/null || true)
+EOF
+if [ -n "${shadows//[[:space:]]/}" ]; then
+    echo
+    echo "Removing other copies of Maintain found on your PATH..."
+    while IFS= read -r shadow; do
+        [ -n "$shadow" ] || continue
+        echo "  Found: $shadow"
+        remove_shadowing_install "$shadow"
+    done <<EOF
+$shadows
+EOF
+fi
+
 echo
 echo "Installed: $INSTALL_ROOT"
 echo "Runtime: $("$VENV/bin/maintain" --version)"

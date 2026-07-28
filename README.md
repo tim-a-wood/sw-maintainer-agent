@@ -61,6 +61,12 @@ creates or refreshes the desktop and Start Menu shortcuts with the Maintain
 icon. **Run the same file again to update** — it replaces the runtime and
 repoints the existing shortcut, so there is nothing to clean up first.
 
+It also takes ownership of the `maintain` command: any older copy found on
+your PATH — such as a 0.9 `pip install` in your Python's `Scripts` folder —
+is uninstalled, and the install folder is moved to the front of your user
+PATH. A `maintain` it cannot identify as this tool is reported and left
+alone.
+
 The installer warns if Repomix is missing but still completes; install
 Node.js and run `npm install -g repomix` before your first task.
 

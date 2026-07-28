@@ -152,6 +152,94 @@ function Add-UserPath {
     }
 }
 
+function Get-EffectivePath {
+    # What a NEW terminal searches: machine PATH, then user PATH. The current
+    # process copy is stale once this script edits the user value.
+    return @(
+        [Environment]::GetEnvironmentVariable("Path", "Machine"),
+        [Environment]::GetEnvironmentVariable("Path", "User")
+    ) -join ";"
+}
+
+function Find-MaintainOnPath {
+    param([string]$ExcludeDirectory)
+    $found = @()
+    foreach ($directory in (Get-EffectivePath -split ";" | Where-Object { $_ })) {
+        $trimmed = $directory.Trim()
+        if (-not $trimmed) { continue }
+        if ($trimmed.TrimEnd('\') -eq $ExcludeDirectory.TrimEnd('\')) { continue }
+        foreach ($leaf in @("maintain.exe", "maintain.cmd", "maintain.bat")) {
+            $candidate = Join-Path $trimmed $leaf
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                $found += $candidate
+            }
+        }
+    }
+    return $found
+}
+
+function Resolve-OwningPython {
+    # A console script lives in <env>\Scripts; python.exe is its sibling's parent.
+    param([string]$ExecutablePath)
+    $scripts = Split-Path -Parent $ExecutablePath
+    foreach ($candidate in @(
+        (Join-Path (Split-Path -Parent $scripts) "python.exe"),
+        (Join-Path $scripts "python.exe")
+    )) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
+function Test-IsThisTool {
+    # Only ever uninstall a distribution that is really Maintain.
+    param([string]$PythonPath, [string]$Distribution)
+    if ($Distribution -eq "sw-maintainer-agent") {
+        return $true   # the 0.9 name; unambiguous
+    }
+    $listing = (& $PythonPath -m pip show -f $Distribution 2>$null | Out-String)
+    if ($LASTEXITCODE -ne 0) { return $false }
+    # The file list identifies a normal install; the summary also identifies an
+    # editable one, whose files are recorded as a finder shim instead.
+    return ($listing -match "maintain[\\/]maintain\.py" -or
+            $listing -match "maintain[\\/]templates[\\/]scope\.md" -or
+            $listing -match "chatbot-assisted software maintenance")
+}
+
+function Remove-ShadowingInstall {
+    # Uninstalls older or duplicate copies of Maintain that would win on PATH.
+    param([string]$ExecutablePath)
+    $python = Resolve-OwningPython -ExecutablePath $ExecutablePath
+    if ($null -eq $python) {
+        Write-Host "  Cannot identify the Python behind $ExecutablePath; leaving it alone." -ForegroundColor Yellow
+        return $false
+    }
+    $removedAny = $false
+    foreach ($distribution in @("sw-maintainer-agent", "maintain")) {
+        & $python -m pip show $distribution 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { continue }
+        if (-not (Test-IsThisTool -PythonPath $python -Distribution $distribution)) {
+            Write-Host "  Leaving '$distribution' alone; it is not Maintain." -ForegroundColor Yellow
+            continue
+        }
+        Write-Host "  Removing $distribution from $python"
+        & $python -m pip uninstall -y $distribution 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $removedAny = $true
+        }
+        else {
+            Write-Host "  Could not remove $distribution automatically." -ForegroundColor Yellow
+        }
+    }
+    if ((Test-Path -LiteralPath $ExecutablePath -PathType Leaf) -and $removedAny) {
+        # pip leaves the launcher behind in some layouts.
+        Remove-Item -LiteralPath $ExecutablePath -Force -ErrorAction SilentlyContinue
+    }
+    return $removedAny
+}
+
 function New-MaintainShortcut {
     param([string]$Path)
     $shell = New-Object -ComObject WScript.Shell
@@ -327,15 +415,21 @@ cmd /k
     $repomix = Get-Command "repomix.cmd", "repomix" -ErrorAction SilentlyContinue |
         Select-Object -First 1
 
-    # Which `maintain` will a NEW terminal run? The current process PATH is
-    # stale after this script edits the user PATH, so rebuild the effective
-    # search order from the stored machine and user values and walk it.
-    $effectivePath = @(
-        [Environment]::GetEnvironmentVariable("Path", "Machine"),
-        [Environment]::GetEnvironmentVariable("Path", "User")
-    ) -join ";"
+    # Older copies of Maintain elsewhere on PATH would answer `maintain`
+    # instead of the one just installed, so remove them here rather than
+    # asking the user to do it.
+    $shadows = @(Find-MaintainOnPath -ExcludeDirectory $installRoot)
+    if ($shadows.Count -gt 0) {
+        Write-Host ""
+        Write-Host "Removing other copies of Maintain found on your PATH..."
+        foreach ($shadow in $shadows) {
+            Write-Host "  Found: $shadow"
+            Remove-ShadowingInstall -ExecutablePath $shadow | Out-Null
+        }
+    }
+
     $winner = $null
-    foreach ($directory in ($effectivePath -split ";" | Where-Object { $_ })) {
+    foreach ($directory in (Get-EffectivePath -split ";" | Where-Object { $_ })) {
         foreach ($leaf in @("maintain.cmd", "maintain.exe", "maintain.bat")) {
             $candidate = Join-Path $directory.Trim() $leaf
             if (Test-Path -LiteralPath $candidate -PathType Leaf) {
