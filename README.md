@@ -45,17 +45,75 @@ Review
 
 ## Install
 
+You run `maintain` **inside the project you are maintaining**, not inside
+this repository, so the command has to be on your PATH. Install it once,
+from your clone of this repository.
+
+### Recommended: pipx, editable
+
+[pipx](https://pipx.pypa.io) keeps the tool in its own environment but puts
+the command on your PATH. `--editable` means a `git pull` updates the
+installed command immediately, with no reinstall step.
+
 ```sh
 git clone -b simple-maintain https://github.com/tim-a-wood/sw-maintainer-agent.git
 cd sw-maintainer-agent
-python3 -m pip install .
-maintain --help
+pipx install --editable .
+pipx ensurepath          # once, then reopen the terminal
+maintain --version
 ```
 
-Or run it without installing:
+On Windows, use `py -3 -m pip install --user pipx` first if you do not have
+pipx, then the same commands.
+
+### Alternative: a virtual environment
 
 ```sh
-python3 maintain/maintain.py --help
+python3 -m venv .venv
+source .venv/bin/activate         # Windows: .venv\Scripts\Activate.ps1
+python -m pip install -e .
+maintain --version
+```
+
+The command then lives at `.venv/bin/maintain` (Windows:
+`.venv\Scripts\maintain.exe`). To use it in other projects without
+activating the environment each time, add that directory to your PATH — or
+use pipx above, which does it for you.
+
+### Without installing anything
+
+```sh
+python3 /path/to/sw-maintainer-agent/maintain/maintain.py --help
+```
+
+This works from any directory, but you must install `rich` and `pyperclip`
+yourself.
+
+## Update
+
+```sh
+cd /path/to/sw-maintainer-agent
+git pull
+maintain --version
+```
+
+With an editable install (`pipx install --editable .` or `pip install -e .`)
+that is the whole update: the pulled code is what runs. Reinstall only if a
+release changes dependencies:
+
+```sh
+pipx reinstall maintain          # or: python -m pip install -e .
+```
+
+If you installed **without** `--editable`, every update needs
+`python -m pip install .` again after pulling.
+
+To check the tool and its prerequisites are all present:
+
+```sh
+maintain --version
+git --version
+repomix --version
 ```
 
 ## Commands
