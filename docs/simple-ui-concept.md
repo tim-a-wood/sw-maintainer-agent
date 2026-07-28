@@ -4,6 +4,8 @@
 - Branch: `maintain-simple-ui`
 - Date: 2026-07-28
 - Applies to: sw-maintainer-agent 0.9.x
+- Product requirements: `docs/simple-ui-prd.md` (authoritative where the
+  two documents differ)
 
 ## 1. Summary
 

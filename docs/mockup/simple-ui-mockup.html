@@ -18,7 +18,6 @@
     --warn:#8a6100; --warn-soft:rgba(196,148,20,.18);
     --chip:#edf2f8; --chip-edge:#d8e2ee;
     --code:#101826; --code-ink:#d5e3f2;
-    --bubble:#eef1f7; --bubble-user:#dcedfb;
     --drop:#f2f7fc;
     --shadow:0 18px 50px rgba(20,40,70,.26), 0 2px 8px rgba(20,40,70,.10);
   }
@@ -34,7 +33,6 @@
       --warn:#f0c052; --warn-soft:rgba(240,192,82,.15);
       --chip:#242e42; --chip-edge:#313c54;
       --code:#0d1422; --code-ink:#cfdff2;
-      --bubble:#232c3e; --bubble-user:#173a54;
       --drop:#1f2839;
       --shadow:0 18px 50px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.35);
     }
@@ -50,7 +48,6 @@
     --warn:#8a6100; --warn-soft:rgba(196,148,20,.18);
     --chip:#edf2f8; --chip-edge:#d8e2ee;
     --code:#101826; --code-ink:#d5e3f2;
-    --bubble:#eef1f7; --bubble-user:#dcedfb;
     --drop:#f2f7fc;
     --shadow:0 18px 50px rgba(20,40,70,.26), 0 2px 8px rgba(20,40,70,.10);
   }
@@ -65,7 +62,6 @@
     --warn:#f0c052; --warn-soft:rgba(240,192,82,.15);
     --chip:#242e42; --chip-edge:#313c54;
     --code:#0d1422; --code-ink:#cfdff2;
-    --bubble:#232c3e; --bubble-user:#173a54;
     --drop:#1f2839;
     --shadow:0 18px 50px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.35);
   }
@@ -81,38 +77,34 @@
   code,pre,.mono{font-family:"Cascadia Mono",Consolas,"SF Mono",ui-monospace,monospace}
   button{font:inherit; color:inherit; background:none; border:none; cursor:pointer;
     -webkit-tap-highlight-color:transparent; touch-action:manipulation}
-  button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible, summary:focus-visible{
+  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible,
+  [tabindex]:focus-visible, summary:focus-visible{
     outline:2px solid var(--acc); outline-offset:2px; border-radius:4px;
   }
-  input,textarea{font:inherit; color:var(--ink)}
+  input,textarea,select{font:inherit; color:var(--ink)}
   ::placeholder{color:var(--faint)}
 
   /* ---------- meta bar ---------- */
   .meta{
-    max-width:1400px; margin:0 auto; padding:14px 22px 4px;
-    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    max-width:820px; margin:0 auto; padding:14px 22px 4px;
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
   }
   .meta-brand{font-size:11px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); white-space:nowrap}
-  .meta-hint{font-size:12.5px; color:var(--dim); flex:1; min-width:220px}
-  .meta button{
+  .meta-hint{font-size:12.5px; color:var(--dim); flex:1; min-width:180px}
+  .meta button, .navsel{
     font-size:12px; font-weight:600; color:var(--dim);
     border:1px solid var(--win-edge); border-radius:6px; padding:5px 12px; background:var(--win);
   }
   .meta button:hover{color:var(--ink); border-color:var(--acc-edge)}
+  .navsel{max-width:190px}
 
   /* ---------- scene ---------- */
-  .scene{
-    max-width:1400px; margin:0 auto; padding:12px 22px 36px;
-    display:grid; grid-template-columns:470px minmax(360px,1fr); gap:26px; align-items:start;
-  }
-  @media (max-width:1020px){
-    .scene{grid-template-columns:1fr; max-width:640px}
-  }
-
+  .scene{max-width:820px; margin:0 auto; padding:12px 22px 36px; display:flex; justify-content:center}
   .win{
+    width:600px; max-width:100%;
     background:var(--win); border:1px solid var(--win-edge); border-radius:10px;
     box-shadow:var(--shadow); overflow:hidden; display:flex; flex-direction:column;
-    min-height:664px;
+    min-height:680px;
   }
   .tbar{
     height:42px; flex:none; background:var(--bar); border-bottom:1px solid var(--bar-edge);
@@ -122,15 +114,11 @@
   .tbar-app{display:flex; align-items:center; gap:9px; font-size:12.5px; font-weight:600; flex:1; min-width:0; white-space:nowrap; overflow:hidden}
   .appdot{width:20px; height:20px; border-radius:5px; background:var(--acc); color:var(--acc-ink);
     display:inline-flex; align-items:center; justify-content:center; font-size:11px; flex:none}
-  .cdot{width:16px; height:16px; border-radius:50%; flex:none;
-    background:conic-gradient(from 210deg,#2f7fe0,#26b7a4,#e8b429,#d95d8a,#2f7fe0)}
-  .simtag{font-size:10px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--dim);
-    border:1px solid var(--win-edge); border-radius:99px; padding:1.5px 8px}
   .tbar-btns{display:flex; color:var(--faint); font-size:10px}
   .tbar-btns span{width:34px; height:30px; display:inline-flex; align-items:center; justify-content:center; border-radius:5px}
   .tbar-btns span:hover{background:var(--chip)}
 
-  /* ---------- maintain window ---------- */
+  /* ---------- stage header ---------- */
   .stagewrap{flex:none; padding:14px 22px 0}
   .stages{display:flex; align-items:flex-start}
   .stage{display:flex; flex-direction:column; align-items:center; gap:5px; width:52px; flex:none}
@@ -143,23 +131,23 @@
   .stage.cur .stage-dot{border-color:var(--acc); color:var(--acc); box-shadow:0 0 0 4px var(--acc-soft)}
   .stage.cur .stage-lbl{color:var(--acc); font-weight:600}
   .stage.done .stage-dot{border-color:var(--ok); background:var(--ok); color:#fff}
-  .stage.done .stage-lbl{color:var(--dim)}
   .stage-link{flex:1; height:2px; background:var(--chip-edge); margin-top:12px; min-width:10px}
   .stage-link.done{background:var(--ok)}
 
   .m-body{flex:1; overflow-y:auto; padding:20px 24px 22px; display:flex; flex-direction:column; gap:14px}
   .m-foot{
     flex:none; border-top:1px solid var(--bar-edge); background:var(--bar);
-    min-height:38px; display:flex; align-items:center; gap:10px; padding:0 14px;
+    min-height:38px; display:flex; align-items:center; gap:6px; padding:0 14px;
     font-size:11.5px; color:var(--dim);
   }
   .m-foot .spacer{flex:1}
-  .foot-stop{font-size:12px; font-weight:600; color:var(--dim); padding:4px 10px; border-radius:5px}
-  .foot-stop:hover{color:var(--bad); background:var(--bad-soft)}
+  .foot-btn{font-size:12px; font-weight:600; color:var(--dim); padding:4px 10px; border-radius:5px}
+  .foot-btn:hover{color:var(--acc); background:var(--acc-soft)}
+  .foot-btn.stop:hover{color:var(--bad); background:var(--bad-soft)}
 
   .step-eyebrow{font-size:11px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--acc)}
   h1.m-title{font-size:19px; font-weight:600; letter-spacing:-.01em; text-wrap:balance}
-  .m-lead{font-size:13.5px; color:var(--dim); max-width:40ch}
+  .m-lead{font-size:13.5px; color:var(--dim); max-width:44ch}
   .m-gap{height:2px}
 
   .btn{
@@ -215,6 +203,7 @@
   .dropzone .dz-sub{font-size:12px; margin-top:3px}
   .dropzone.over{background:var(--acc-soft); border-color:var(--acc)}
   .dropzone.big{padding:34px 18px}
+  .dropzone.slim{padding:10px 14px; font-size:12px}
 
   .chips{display:flex; flex-wrap:wrap; gap:8px}
   .chip{
@@ -240,6 +229,7 @@
   .pkgcard .pk-grip{margin-left:auto; color:var(--faint); font-size:15px; letter-spacing:2px; flex:none}
   .pkgcard.dragging{opacity:.55}
 
+  .subhead{font-size:11px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--dim)}
   .ordiv{display:flex; align-items:center; gap:10px; color:var(--faint); font-size:11px; letter-spacing:.1em; text-transform:uppercase; font-weight:600}
   .ordiv::before,.ordiv::after{content:""; flex:1; height:1px; background:var(--chip-edge)}
 
@@ -318,6 +308,47 @@
     display:flex; align-items:center; justify-content:center; font-size:26px; font-weight:700;
   }
 
+  /* ---------- history ---------- */
+  .runrow{
+    display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+    border:1px solid var(--win-edge); border-radius:9px; padding:12px 14px; background:var(--win);
+  }
+  .runrow:hover{border-color:var(--acc-edge); background:var(--acc-soft)}
+  .runrow .rmeta{flex:1; min-width:0}
+  .runrow b{font-size:13.5px; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .runrow .rsub{font-size:11.5px; color:var(--dim); margin-top:1px}
+  .statechip{font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; border-radius:99px; padding:2.5px 9px; flex:none}
+  .statechip.saved{background:var(--ok-soft); color:var(--ok)}
+  .statechip.inwork{background:var(--acc-soft); color:var(--acc)}
+  .statechip.discarded{background:var(--chip); color:var(--faint)}
+  .statechip.stopped{background:var(--warn-soft); color:var(--warn)}
+
+  .timeline{display:flex; flex-direction:column}
+  .it{display:flex; gap:12px; position:relative; padding:0 0 16px 0}
+  .it::before{
+    content:""; position:absolute; left:11px; top:24px; bottom:0; width:2px; background:var(--chip-edge);
+  }
+  .it:last-child::before{display:none}
+  .it-dot{
+    width:24px; height:24px; flex:none; border-radius:50%; border:2px solid var(--chip-edge);
+    background:var(--win); color:var(--dim); font-size:10.5px; font-weight:700;
+    display:flex; align-items:center; justify-content:center; position:relative; z-index:1;
+  }
+  .it.cur .it-dot{border-color:var(--acc); color:var(--acc); box-shadow:0 0 0 4px var(--acc-soft)}
+  .it.rev .it-dot{border-color:var(--warn); color:var(--warn)}
+  .it-main{flex:1; min-width:0; padding-top:2px}
+  .it b{font-size:13px; font-weight:600}
+  .it .it-sub{font-size:11.5px; color:var(--dim); margin-top:1px; overflow-wrap:anywhere}
+  .it .it-time{font-size:11px; color:var(--faint); padding-top:4px; flex:none}
+  .it-act{font-size:11.5px; font-weight:600; color:var(--acc); flex:none; padding-top:3px}
+  .it-act:hover{text-decoration:underline}
+  .it.super .it-main, .it.super .it-time{opacity:.5}
+  .it .tagsuper{
+    font-size:9.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--faint); border:1px solid var(--chip-edge); border-radius:99px; padding:1px 7px; margin-left:7px;
+  }
+
+  /* ---------- settings ---------- */
   .setrow{display:flex; flex-direction:column; gap:5px}
   .setrow label{font-size:12px; font-weight:600; color:var(--dim)}
   .setrow input[type=text],.setrow input[type=number]{
@@ -330,66 +361,22 @@
   .radio b{font-size:13px}
   .radio span{display:block; font-size:12px; color:var(--dim)}
   textarea.gp{
-    width:100%; min-height:220px; resize:vertical; border:1px solid var(--win-edge); border-radius:8px;
+    width:100%; min-height:200px; resize:vertical; border:1px solid var(--win-edge); border-radius:8px;
     padding:11px 13px; font-size:12px; background:var(--win);
     font-family:"Cascadia Mono",Consolas,ui-monospace,monospace; line-height:1.55;
+  }
+  textarea.gp.short{min-height:130px}
+  pre.promptview{
+    background:var(--chip); color:var(--dim); font-size:11px; line-height:1.55; border-radius:8px;
+    padding:10px 12px; white-space:pre-wrap; border:1px solid var(--chip-edge);
   }
   .checkedit{display:flex; gap:8px; align-items:center}
   .checkedit input{border:1px solid var(--win-edge); border-radius:6px; padding:7px 10px; font-size:12.5px; background:var(--win)}
   .checkedit .cin-name{width:32%}
   .checkedit .cin-cmd{flex:1; font-family:"Cascadia Mono",Consolas,ui-monospace,monospace; font-size:11.5px}
-
-  .backrow{display:flex; align-items:center}
-
-  /* ---------- copilot window ---------- */
-  .chat{flex:1; overflow-y:auto; padding:18px 20px; display:flex; flex-direction:column; gap:14px; scroll-behavior:smooth}
-  @media (prefers-reduced-motion: reduce){ .chat{scroll-behavior:auto} }
-  .sysnote{align-self:center; font-size:11px; color:var(--faint); text-align:center; max-width:46ch}
-  .convdiv{display:flex; align-items:center; gap:10px; color:var(--faint); font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; font-weight:600; margin:2px 0}
-  .convdiv::before,.convdiv::after{content:""; flex:1; height:1px; background:var(--chip-edge)}
-  .brow{display:flex; flex-direction:column; gap:4px; max-width:82%}
-  .brow.user{align-self:flex-end; align-items:flex-end}
-  .brow.cop{align-self:flex-start; align-items:flex-start}
-  .bwho{font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); padding:0 4px}
-  .bubble{border-radius:12px; padding:10px 14px; font-size:13px; background:var(--bubble); overflow-wrap:anywhere}
-  .brow.user .bubble{background:var(--bubble-user); border-bottom-right-radius:4px}
-  .brow.cop .bubble{border-bottom-left-radius:4px}
-  .bubble .chips{margin-top:8px}
-  .bubble .linktext{color:var(--acc); text-decoration:underline; font-size:12px; word-break:break-all}
-  .chip.dl{cursor:grab; background:var(--win); border-color:var(--acc-edge)}
-  .chip.dl:active{cursor:grabbing}
-  .chip.dl .cdlhint{font-size:10.5px; color:var(--acc); font-weight:600; white-space:nowrap}
-  .typing{display:inline-flex; gap:4px; padding:4px 2px}
-  .typing i{width:6px; height:6px; border-radius:50%; background:var(--faint); animation:ty 1s ease-in-out infinite}
-  .typing i:nth-child(2){animation-delay:.15s} .typing i:nth-child(3){animation-delay:.3s}
-  @keyframes ty{0%,60%,100%{opacity:.3; transform:translateY(0)} 30%{opacity:1; transform:translateY(-3px)}}
-  @media (prefers-reduced-motion: reduce){
-    .typing i{animation:none} .spin{animation:none; border-top-color:var(--faint)}
-  }
-  details.jsonwrap{margin-top:8px; max-width:100%}
-  details.jsonwrap summary{font-size:11.5px; color:var(--acc); font-weight:600; cursor:pointer; list-style:none}
-  details.jsonwrap pre{
-    margin-top:6px; background:var(--code); color:var(--code-ink); font-size:10.5px; line-height:1.5;
-    border-radius:8px; padding:10px 12px; overflow:auto; max-height:200px;
-  }
-  .bub-actions{margin-top:8px}
-  .copybtn{
-    font-size:11.5px; font-weight:600; color:var(--acc); border:1px solid var(--acc-edge);
-    border-radius:6px; padding:4px 11px; background:var(--win);
-  }
-  .copybtn:hover{background:var(--acc-soft)}
-
-  .composer{
-    flex:none; border-top:1px solid var(--bar-edge); background:var(--bar);
-    display:flex; align-items:center; gap:8px; padding:10px 12px;
-  }
-  .comp-slot{display:flex; gap:6px; max-width:45%}
-  .comp-slot:empty{display:none}
-  .composer input{
-    flex:1; min-width:60px; border:1px solid var(--win-edge); border-radius:7px;
-    padding:8px 12px; font-size:13px; background:var(--win);
-  }
-  .chat.over{box-shadow:inset 0 0 0 2.5px var(--acc); border-radius:0 0 4px 4px}
+  .seg{display:flex; gap:4px; background:var(--chip); border:1px solid var(--chip-edge); border-radius:8px; padding:3px; flex-wrap:wrap}
+  .seg button{padding:6px 12px; border-radius:6px; font-size:12.5px; font-weight:600; color:var(--dim); flex:1; min-width:64px}
+  .seg button.on{background:var(--win); color:var(--ink); box-shadow:0 1px 3px rgba(20,40,70,.15)}
 
   /* ---------- toasts & modal ---------- */
   .toasts{position:fixed; right:18px; bottom:18px; display:flex; flex-direction:column; gap:8px; z-index:60; pointer-events:none}
@@ -399,7 +386,6 @@
     animation:tin .18s ease;
   }
   @keyframes tin{from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none}}
-  @media (prefers-reduced-motion: reduce){ .toast{animation:none} }
   .overlay{
     position:fixed; inset:0; background:rgba(10,20,35,.45); z-index:50;
     display:flex; align-items:center; justify-content:center; padding:20px;
@@ -422,12 +408,47 @@
   .dlpick{display:flex; flex-direction:column; gap:8px}
   .dlpick .chip{cursor:pointer}
   .dlpick .chip:hover{border-color:var(--acc-edge); background:var(--acc-soft)}
-  .dlempty{font-size:12.5px; color:var(--dim)}
+
+  @media (prefers-reduced-motion: reduce){
+    .spin{animation:none; border-top-color:var(--faint)}
+    .toast{animation:none}
+    *{transition:none !important}
+  }
 </style>
 
 <div class="meta">
-  <div class="meta-brand">Maintain Simple UI · Interactive mockup</div>
-  <div class="meta-hint" id="metaHint">The left window is the tool. The right window is a Copilot simulation. Follow the instructions in the tool.</div>
+  <div class="meta-brand">Maintain Simple UI · Specification</div>
+  <div class="meta-hint">Interactive specification. Copilot replies are simulated.</div>
+  <select class="navsel" id="navSel" aria-label="Jump to a screen">
+    <option value="" selected>Screens…</option>
+    <optgroup label="Flow">
+      <option value="home">Home</option>
+      <option value="describe">Describe</option>
+      <option value="send-plan">Send — Plan</option>
+      <option value="receive-plan">Receive — Plan</option>
+      <option value="plancheck">Plan check</option>
+      <option value="send-build">Send — Build</option>
+      <option value="receive-build">Receive — Build</option>
+      <option value="review-findings">Review findings</option>
+      <option value="send-repair">Send — Repair</option>
+      <option value="test">Test</option>
+      <option value="save">Save</option>
+      <option value="done">Done</option>
+    </optgroup>
+    <optgroup label="History">
+      <option value="history">History</option>
+      <option value="run-live">Run timeline — in work</option>
+      <option value="run-saved">Run timeline — saved</option>
+    </optgroup>
+    <optgroup label="Settings">
+      <option value="settings">Settings</option>
+      <option value="set-onedrive">OneDrive</option>
+      <option value="set-tasks">Task prompts &amp; documents</option>
+      <option value="set-global">Global prompt</option>
+      <option value="set-package">Package</option>
+      <option value="set-checks">Checks</option>
+    </optgroup>
+  </select>
   <button id="btnReset" type="button">Restart the demo</button>
 </div>
 
@@ -440,20 +461,6 @@
     <div class="stagewrap" id="stageWrap" hidden></div>
     <div class="m-body" id="mBody"></div>
     <footer class="m-foot" id="mFoot"></footer>
-  </section>
-
-  <section class="win win-c" aria-label="Copilot chat window (simulation)">
-    <header class="tbar">
-      <div class="tbar-app"><span class="cdot"></span> Microsoft 365 Copilot <span class="simtag">simulation</span></div>
-      <div class="tbar-btns" aria-hidden="true"><span>&#8211;</span><span>&#9723;</span><span>&#10005;</span></div>
-    </header>
-    <div class="chat" id="chat"></div>
-    <div class="composer">
-      <div class="comp-slot" id="compSlot"></div>
-      <input id="compInput" placeholder="Message Copilot" aria-label="Message Copilot">
-      <button class="btn secondary sm" id="btnCPaste" type="button">Paste</button>
-      <button class="btn primary sm" id="btnCSend" type="button">Send</button>
-    </div>
   </section>
 </div>
 
@@ -479,69 +486,35 @@ function sysCopy(text){
 const ZIP_ICON = '<svg class="zicon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M12 10v1m0 2v1m0 2v1" stroke-linecap="round"/></svg>';
 const PKG_ICON = '<svg class="pk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M11.5 9v1.2m0 1.8v1.2m0 1.8V16.2" stroke-linecap="round"/><path d="M15 12.5h3M15 15h3" stroke-linecap="round" opacity=".55"/></svg>';
 
-/* ================= state ================= */
+/* ================= fixed content ================= */
+const EXAMPLE = "Add an input filter for wind data in the loader. Reject speeds below 0 kt and above 150 kt.";
 const GP_DEFAULT = [
-"# Project ground rules",
-"",
-"Read this file first. These rules apply to every task.",
-"",
+"# Project ground rules","",
+"Read this file first. These rules apply to every task.","",
 "## Project goal",
 "flight-tools prepares wind and route data for flight planning.",
-"The users are dispatchers. Reliability is more important than speed.",
-"",
+"The users are dispatchers. Reliability is more important than speed.","",
 "## Scope limits",
 "- Work only on the files that the task authorizes.",
 "- Make the smallest change that satisfies the task.",
 "- Do not add a dependency. If one is necessary, stop and say why.",
 "- Do not restructure code that the task does not name.",
-"- Do not add options or layers for possible future needs.",
-"",
+"- Do not add options or layers for possible future needs.","",
 "## Standards",
 "- Python: PEP 8. Line length 100.",
 "- Each change includes a unit test.",
-"- Update docs/manual.md for user-visible changes.",
-"",
+"- Update docs/manual.md for user-visible changes.","",
 "## Definition of done",
 "- The change satisfies the task done_when items.",
 "- The change passes the named verification.",
 "- The reply follows the output contract in TASK.md exactly."
 ].join("\n");
-
-let S;
-function initState(){
-  S = {
-    screen: "home",
-    stage: -1,                 // 0 Plan 1 Build 2 Review 3 Test 4 Save
-    request: "",
-    refs: [],                  // [{name,size}]
-    ex: null,                  // active exchange
-    exSeq: 0,
-    lastConvRole: null,
-    planAttempt: 0,
-    planTasks: [],
-    reviewRound: 0,
-    clip: null,                // {kind:'file'|'link'|'json', ex}
-    downloads: [],             // [{name, payload}]
-    checksState: null,         // per-run check results
-    testsPassed: false,
-    paused: null,              // {screen, stage}
-    runActive: false,
-    settings: {
-      folder: "C:\\Users\\tim\\OneDrive\\MaintainOutbox",
-      linkBase: "https://contoso-my.sharepoint.com/personal/tim_contoso_com/Documents/MaintainOutbox",
-      timeout: 120,
-      style: "zip",
-      global: GP_DEFAULT,
-      checks: [
-        {name:"pytest", cmd:"pytest -q", out:"34 passed in 2.41s"},
-        {name:"ruff",   cmd:"ruff check .", out:"All checks passed!"},
-        {name:"format", cmd:"git diff --check", out:"(no output — the tree is clean)"}
-      ]
-    }
-  };
-}
-
-/* ================= scenario data ================= */
+const BUILTIN = {
+  plan:   "Read the request, the ground rules, and the supplied code. Define the smallest complete tasks in dependency order. Use exact supplied paths. Return one JSON envelope with content.tasks.",
+  build:  "Do the authorized task. Change only the authorized files. Create one downloadable ZIP named maintain-output.zip with IMPLEMENTATION.toml and the complete files.",
+  repair: "Repair only the listed points. Do not change other behavior. Return the same ZIP artifact as the build task.",
+  review: "Examine the change against the task and the ground rules. Return one JSON envelope with content.decision (approve or changes_requested) and content.findings."
+};
 const TASKS_V1 = [
   {id:"wind-filter", objective:"Add the wind-data input filter", files:["src/loader/filter.py"],
    done:"The loader rejects speeds below 0 kt and above 150 kt.", verify:"pytest tests/test_filter.py"},
@@ -550,40 +523,101 @@ const TASKS_V1 = [
   {id:"manual-update", objective:"Update the manual", files:["docs/manual.md"],
    done:"The manual states the wind limits in one short section.", verify:"Manual review"}
 ];
-const TASKS_V2 = [
-  {id:"wind-filter", objective:"Add the wind-data input filter", files:["src/loader/filter.py"],
-   done:"The loader rejects speeds below 0 kt and above 150 kt.", verify:"pytest tests/test_filter.py"},
-  {id:"filter-tests", objective:"Extend the unit tests", files:["tests/test_filter.py"],
-   done:"Tests cover the limits and one pass case.", verify:"pytest -q"}
+const TASKS_V2 = TASKS_V1.slice(0,2);
+const FINDING = {
+  severity:"minor", file:"src/loader/filter.py", line:42,
+  evidence:"The filter compares r.speed without a unit conversion. A record in m/s passes the 150 kt limit.",
+  remediation:"Convert the speed to kt before the limit check. Add one test for a m/s record."
+};
+const DIFF_SNIPPET =
+'<span class="dh">--- a/src/loader/filter.py\n+++ b/src/loader/filter.py\n@@ -39,6 +39,13 @@ def load_wind(records):</span>\n' +
+'<span class="dr">-    return [r for r in records if r.valid]</span>\n' +
+'<span class="da">+    filtered = []\n+    for r in records:\n+        if not r.valid:\n+            continue\n+        speed_kt = to_knots(r.speed, r.unit)\n+        if 0 &lt;= speed_kt &lt;= 150:\n+            filtered.append(r)\n+    return filtered</span>';
+function pastIters(rows){
+  return rows.map((r, i) => ({n:i+1, t:r[0], label:r[1], sub:r[2]||"", snap:null, super:!!r[3], rev:r[1].indexOf("Went back")===0}));
+}
+const PAST_RUNS = [
+  {id:"0142", title:"Correct the fuel unit rounding fault", state:"Saved", date:"27 Jul 2026", files:2,
+   iters:pastIters([["09:12","Run started","Correct the fuel unit rounding fault"],["09:19","Plan proposed — 2 tasks"],
+     ["09:24","Plan approved"],["09:41","Build applied — 2 files"],["09:55","Review approved"],
+     ["09:58","All checks passed"],["10:02","Saved","branch maintain/0142-fuel-rounding"]])},
+  {id:"0141", title:"Add the route export to PDF", state:"Saved", date:"25 Jul 2026", files:4,
+   iters:pastIters([["14:02","Run started","Add the route export to PDF"],["14:11","Plan proposed — 3 tasks"],
+     ["14:15","Plan approved"],["14:40","Build applied — 4 files"],["14:52","Review found 2 points","",true],
+     ["15:04","Repair applied","",true],["15:06","Went back to iteration 3"],["15:31","Build applied — 4 files"],
+     ["15:44","Review approved"],["15:47","All checks passed"],["15:52","Saved","branch maintain/0141-route-pdf"]])},
+  {id:"0140", title:"Test OneDrive folder change", state:"Discarded", date:"24 Jul 2026", files:0,
+   iters:pastIters([["11:30","Run started","Test OneDrive folder change"],["11:36","Plan proposed — 1 task"],["11:38","Discarded"]])}
 ];
-function scopeEnvelope(tasks, attempt){
+
+/* ================= state ================= */
+let S;
+function baseSettings(){
   return {
-    schema_version: 1, run_id: "R-0143", task_id: "scope-" + attempt, role: "scope",
-    provider: "assistant", conversation_id: "c-" + (140 + attempt),
-    content: {
-      tasks: tasks.map((t,i) => ({
-        id: t.id, objective: t.objective, allowed_files: t.files,
-        done_when: [t.done], verification: [t.verify],
-        depends_on: i === 0 ? [] : [tasks[i-1].id]
-      })),
-      context_queries: []
+    folder: "C:\\Users\\tim\\OneDrive\\MaintainOutbox",
+    linkBase: "https://contoso-my.sharepoint.com/personal/tim_contoso_com/Documents/MaintainOutbox",
+    timeout: 120,
+    style: "zip",
+    global: GP_DEFAULT,
+    checks: [
+      {name:"pytest", cmd:"pytest -q", out:"34 passed in 2.41s"},
+      {name:"ruff",   cmd:"ruff check .", out:"All checks passed!"},
+      {name:"format", cmd:"git diff --check", out:"(no output — the tree is clean)"}
+    ],
+    projectDocs: ["docs/standards/python-style.md"],
+    tasks: {
+      plan:   {override:false, prompt:BUILTIN.plan,   docs:[]},
+      build:  {override:false, prompt:BUILTIN.build,  docs:[]},
+      repair: {override:false, prompt:BUILTIN.repair, docs:[]},
+      review: {override:false, prompt:BUILTIN.review, docs:["docs/review-checklist.md"]}
     }
   };
 }
-function reviewEnvelope(round){
-  const changes = (round === 1);
-  return {
-    schema_version: 1, run_id: "R-0143", task_id: "review-" + round, role: "review",
-    provider: "assistant", conversation_id: "c-" + (150 + round),
-    content: changes ? {
-      decision: "changes_requested",
-      findings: [{
-        severity: "minor", file: "src/loader/filter.py", line: 42,
-        evidence: "The filter compares r.speed without a unit conversion. A record in m/s passes the 150 kt limit.",
-        remediation: "Convert the speed to kt before the limit check. Add one test for a m/s record."
-      }]
-    } : { decision: "approve", findings: [] }
+function initState(keepSettings){
+  const settings = keepSettings && S ? S.settings : baseSettings();
+  S = {
+    screen:"home", stage:-1,
+    request:"", runRefs:[],
+    ex:null, exSeq:0,
+    planAttempt:0, planTasks:[], reviewRound:0,
+    checksState:null, checksLogged:false,
+    iterations:[], runs:PAST_RUNS.slice(),
+    viewRun:null, historyBack:"history",
+    paused:null, runActive:false,
+    setTab:"project", pendingRevert:-1, clipLink:"",
+    settings
   };
+}
+
+/* ================= exchange model ================= */
+const ROLE_META = {
+  scope:     {stage:0, key:"plan",   step:"Step 1 of 5 — Plan",   lead:"Copilot makes the plan.",      slug:"plan"},
+  implement: {stage:1, key:"build",  step:"Step 2 of 5 — Build",  lead:"Copilot writes the code.",     slug:"build"},
+  repair:    {stage:1, key:"repair", step:"Step 2 of 5 — Build",  lead:"Copilot repairs the code.",    slug:"repair"},
+  review:    {stage:2, key:"review", step:"Step 3 of 5 — Review", lead:"Copilot examines the change.", slug:"review"}
+};
+function newExchange(role){
+  S.exSeq += 1;
+  let n = 1;
+  if (role === "scope"){ S.planAttempt += 1; n = S.planAttempt; }
+  if (role === "review"){ S.reviewRound += 1; n = S.reviewRound; }
+  S.ex = {
+    id:S.exSeq, role, round:n,
+    pkgName:"maintain-0143-" + ROLE_META[role].slug + (n > 1 ? "-" + n : "") + ".zip",
+    outAction:false, sync:"idle",
+    attachments:S.runRefs.slice()
+  };
+  S.stage = ROLE_META[role].stage;
+}
+function pkgSize(){
+  const base = {scope:182, implement:191, repair:188, review:204}[S.ex.role];
+  return (base + 9 * S.ex.attachments.length) + " KB";
+}
+function docsForRole(role){
+  return S.settings.projectDocs.concat(S.settings.tasks[ROLE_META[role].key].docs);
+}
+function oneDriveLink(){
+  return S.settings.linkBase.replace(/\/+$/, "") + "/" + encodeURIComponent(S.ex.pkgName);
 }
 function filesChanged(){
   const base = [
@@ -593,42 +627,69 @@ function filesChanged(){
   ];
   return S.planTasks.length === 2 ? base.slice(0,2) : base;
 }
-const DIFF_SNIPPET =
-'<span class="dh">--- a/src/loader/filter.py\n+++ b/src/loader/filter.py\n@@ -39,6 +39,13 @@ def load_wind(records):</span>\n' +
-'<span class="dr">-    return [r for r in records if r.valid]</span>\n' +
-'<span class="da">+    filtered = []\n+    for r in records:\n+        if not r.valid:\n+            continue\n+        speed_kt = to_knots(r.speed, r.unit)\n+        if 0 &lt;= speed_kt &lt;= 150:\n+            filtered.append(r)\n+    return filtered</span>';
 
-/* ================= exchange model ================= */
-const ROLE_META = {
-  scope:     {stage:0, step:"Step 1 of 5 — Plan",   lead:"Copilot makes the plan.",       slug:"plan"},
-  implement: {stage:1, step:"Step 2 of 5 — Build",  lead:"Copilot writes the code.",      slug:"build"},
-  repair:    {stage:1, step:"Step 2 of 5 — Build",  lead:"Copilot repairs the code.",     slug:"repair"},
-  review:    {stage:2, step:"Step 3 of 5 — Review", lead:"Copilot examines the change.",  slug:"review"}
-};
-function newExchange(role){
-  S.exSeq += 1;
-  let n = 1;
-  if (role === "scope"){ S.planAttempt += 1; n = S.planAttempt; }
-  if (role === "review"){ S.reviewRound += 1; n = S.reviewRound; }
-  const slug = ROLE_META[role].slug;
-  S.ex = {
-    id: S.exSeq, role, round: n,
-    pkgName: "maintain-0143-" + slug + (n > 1 ? "-" + n : "") + ".zip",
-    size: role === "scope" ? "182 KB" : role === "review" ? "204 KB" : "191 KB",
-    outAction: false, sync: "idle", replied: false
-  };
-  S.stage = ROLE_META[role].stage;
+/* ================= iterations ================= */
+function timeLabel(){ const m = S.iterations.length * 4; return "12:" + String(m % 60).padStart(2, "0"); }
+function pushIter(label, sub, snap, rev){
+  S.iterations.push({n:S.iterations.length + 1, t:timeLabel(), label, sub:sub || "", snap:snap || null, super:false, rev:!!rev});
 }
-function oneDriveLink(){
-  return S.settings.linkBase.replace(/\/+$/, "") + "/" + encodeURIComponent(S.ex.pkgName);
+function snapNow(extra){
+  return Object.assign({stage:S.stage, planTasks:S.planTasks.slice()}, extra);
 }
-function expectedKind(){ return (S.ex.role === "implement" || S.ex.role === "repair") ? "zip" : "json"; }
+function evStart(){
+  S.runActive = true;
+  if (!S.request) S.request = EXAMPLE;
+  pushIter("Run started", S.request, {screen:"describe", stage:-1, planTasks:[]});
+  newExchange("scope");
+  S.screen = "send";
+}
+function evPlanProposed(){
+  S.planTasks = (S.ex.round > 1 ? TASKS_V2 : TASKS_V1).slice();
+  pushIter(S.ex.round > 1 ? "Plan changed — " + S.planTasks.length + " tasks"
+                          : "Plan proposed — " + S.planTasks.length + " tasks",
+           "", snapNow({screen:"plancheck", stage:0}));
+  S.stage = 0; S.screen = "plancheck";
+}
+function evPlanApproved(){
+  pushIter("Plan approved", S.planTasks.length + " tasks", snapNow({screen:"send", stage:1, role:"implement"}));
+  newExchange("implement"); S.screen = "send";
+}
+function evBuildApplied(){
+  pushIter("Build applied — " + filesChanged().length + " files", "isolated workspace",
+           snapNow({screen:"send", stage:2, role:"review"}));
+  newExchange("review"); S.screen = "send";
+}
+function evReviewFound(){
+  pushIter("Review found 1 point", FINDING.severity + " · " + FINDING.file + ":" + FINDING.line,
+           snapNow({screen:"review-findings", stage:2}));
+  S.stage = 2; S.screen = "review-findings";
+}
+function evRepairApplied(){
+  pushIter("Repair applied", "isolated workspace", snapNow({screen:"send", stage:2, role:"review"}));
+  newExchange("review"); S.screen = "send";
+}
+function evReviewApproved(instant){
+  pushIter("Review approved", "", snapNow({screen:"test", stage:3, checks:true}));
+  startTests(instant);
+}
+function evChecksPassed(){
+  const last = S.iterations[S.iterations.length - 1];
+  if (last && last.label === "All checks passed") return;
+  pushIter("All checks passed", S.checksState.map(c => c.name).join(" · "), snapNow({screen:"save", stage:4}));
+}
+function closeRun(state, sub){
+  pushIter(state, sub || "", null);
+  S.runs.unshift({id:"0143", title:S.request, state, date:"28 Jul 2026",
+                  files:state === "Saved" ? filesChanged().length : 0, iters:S.iterations.slice()});
+  S.runActive = false; S.paused = null;
+}
 
-/* ================= maintain window rendering ================= */
+/* ================= rendering ================= */
 const STAGES = ["Plan","Build","Review","Test","Save"];
+const NO_STAGE = ["home","describe","settings","set-onedrive","set-tasks","set-global","set-package","set-checks","done","history","run-detail"];
 function renderStages(){
   const wrap = $("#stageWrap");
-  const show = S.runActive && !["home","describe","settings","set-onedrive","set-global","set-package","set-checks","done"].includes(S.screen);
+  const show = S.runActive && !NO_STAGE.includes(S.screen);
   wrap.hidden = !show;
   if (!show) return;
   let h = '<div class="stages">';
@@ -641,18 +702,20 @@ function renderStages(){
 }
 function renderFoot(){
   const f = $("#mFoot");
-  if (["home","settings","set-onedrive","set-global","set-package","set-checks","done"].includes(S.screen) || !S.runActive){
-    f.innerHTML = '<span>Maintain 1.0 — mockup</span><span class="spacer"></span>';
+  const plain = ["home","settings","set-onedrive","set-tasks","set-global","set-package","set-checks","done"].includes(S.screen) || !S.runActive;
+  if (plain){
+    f.innerHTML = '<span>Maintain — specification mockup v1.0</span><span class="spacer"></span>';
     return;
   }
   f.innerHTML = '<span>Run 0143 · isolated workspace</span><span class="spacer"></span>' +
-    '<button class="foot-stop" data-act="stop" type="button">Stop</button>';
+    '<button class="foot-btn" data-act="history-live" type="button">History</button>' +
+    '<button class="foot-btn stop" data-act="stop" type="button">Stop</button>';
 }
-function chipsHTML(list, removable){
+function chipsHTML(list, act){
   return list.map((r, i) =>
-    '<span class="chip">' + ZIP_ICON + '<span class="cname">' + esc(r.name) + '</span>' +
+    '<span class="chip">' + ZIP_ICON + '<span class="cname">' + esc(r.name || r) + '</span>' +
     (r.size ? '<span class="csize">' + esc(r.size) + '</span>' : "") +
-    (removable ? '<button class="cx" data-act="ref-x" data-i="' + i + '" aria-label="Remove ' + esc(r.name) + '" type="button">&#10005;</button>' : "") +
+    (act ? '<button class="cx" data-act="' + act + '" data-i="' + i + '" aria-label="Remove" type="button">&#10005;</button>' : "") +
     '</span>').join("");
 }
 
@@ -667,16 +730,17 @@ SCREENS.home = () => {
     resume +
     '<button class="bigchoice" data-act="new-feature" type="button"><span class="ico">+</span><span><b>Change software</b><span class="sub">Add or change a function.</span></span></button>' +
     '<button class="bigchoice" data-act="new-issue" type="button"><span class="ico">!</span><span><b>Repair a fault</b><span class="sub">Fix a problem in the software.</span></span></button>' +
-    '<button class="bigchoice" data-act="settings" type="button"><span class="ico">&#9881;</span><span><b>Settings</b><span class="sub">OneDrive, global prompt, package, checks.</span></span></button>';
+    '<button class="bigchoice" data-act="history" type="button"><span class="ico">&#8635;</span><span><b>History</b><span class="sub">Runs, iterations, and go-back.</span></span></button>' +
+    '<button class="bigchoice" data-act="settings" type="button"><span class="ico">&#9881;</span><span><b>Settings</b><span class="sub">OneDrive, prompts, documents, package, checks.</span></span></button>';
 };
 
 SCREENS.describe = () => {
   return '<h1 class="m-title">What do you want to change?</h1>' +
     '<textarea class="req" id="reqText" placeholder="Write the change in one or two sentences.">' + esc(S.request) + '</textarea>' +
     '<button class="example-link" data-act="example" type="button">Use an example</button>' +
-    '<div class="dropzone" data-drop="refs"><div class="dz-main">Drop files here to add them to the package.</div>' +
-    '<div class="dz-sub">All file types are permitted. Or select Import.</div></div>' +
-    (S.refs.length ? '<div class="chips">' + chipsHTML(S.refs, true) + '</div>' : "") +
+    '<div class="dropzone" data-drop="refs"><div class="dz-main">Drop files here to add them to the run.</div>' +
+    '<div class="dz-sub">All file types are permitted. They go into every packet. Or select Import.</div></div>' +
+    (S.runRefs.length ? '<div class="chips">' + chipsHTML(S.runRefs, "ref-x") + '</div>' : "") +
     '<div class="btnrow"><button class="btn secondary sm" data-act="import-refs" type="button">Import…</button></div>' +
     '<div class="m-gap"></div>' +
     '<div class="btnrow"><button class="btn primary" data-act="start-run" type="button">Start</button>' +
@@ -693,23 +757,29 @@ SCREENS.send = () => {
       '<div class="statusline"><span class="spin"></span>OneDrive synchronizes…</div>';
   if (S.ex.sync === "done") sync = '<div class="statusline ok"><span class="tick">&#10003;</span>In sync. The link is in the clipboard.</div>' +
       '<div class="statusline">Paste the link into Copilot. Then send the message.</div>';
+  const docs = docsForRole(S.ex.role);
   const contents =
     '<details class="pkg-details"><summary>What is in the package?</summary><div class="pkg-list">' +
-    '<div class="pkg-row"><code>TASK.md</code><span class="why">the task and the output contract</span></div>' +
+    '<div class="pkg-row"><code>TASK.md</code><span class="why">the task and the output contract</span><button class="show" data-act="show-prompt" type="button">Show</button></div>' +
     '<div class="pkg-row"><code>GLOBAL.md</code><span class="why">the project ground rules</span><button class="show" data-act="show-global" type="button">Show</button></div>' +
     '<div class="pkg-row"><code>CODEBASE.md</code><span class="why">12 focused files, with an index</span></div>' +
     '<div class="pkg-row"><code>MANIFEST.json</code><span class="why">identifiers and hashes</span></div>' +
-    (S.refs.length ? '<div class="pkg-row"><code>references/</code><span class="why">' + S.refs.length + ' file' + (S.refs.length > 1 ? 's' : '') + ' from you</span></div>' : "") +
+    '<div class="pkg-row"><code>documents/</code><span class="why">' + docs.length + ' configured document' + (docs.length === 1 ? "" : "s") + '</span></div>' +
+    '<div class="pkg-row"><code>attachments/</code><span class="why">' + S.ex.attachments.length + ' file' + (S.ex.attachments.length === 1 ? "" : "s") + ' from you</span></div>' +
     '</div></details>';
   return '<div class="step-eyebrow">' + esc(m.step) + esc(again) + '</div>' +
     '<h1 class="m-title">' + esc(m.lead) + '</h1>' +
     '<p class="m-lead">Give this package to Copilot. Use one of the ways below.</p>' +
     '<div class="pkgcard" id="pkgCard" draggable="true" tabindex="0" aria-label="Package ' + esc(S.ex.pkgName) + '. Drag it into the Copilot window.">' +
       PKG_ICON + '<span><span class="pk-name">' + esc(S.ex.pkgName) + '</span>' +
-      '<span class="pk-sub">' + esc(S.ex.size) + ' · Drag this package into Copilot.</span></span>' +
+      '<span class="pk-sub">' + esc(pkgSize()) + ' · Drag this package into Copilot.</span></span>' +
       '<span class="pk-grip">&#8942;&#8942;</span></div>' +
     contents +
-    '<div class="ordiv">or</div>' +
+    '<div class="subhead">Attachments — go into this packet</div>' +
+    (S.ex.attachments.length ? '<div class="chips">' + chipsHTML(S.ex.attachments, "att-x") + '</div>' : "") +
+    '<div class="dropzone slim" data-drop="attach">Drop files here, or select Add files…</div>' +
+    '<div class="btnrow"><button class="btn secondary sm" data-act="att-add" type="button">Add files…</button></div>' +
+    '<div class="ordiv">send it</div>' +
     '<div class="btncol">' +
       '<div><button class="btn primary block" data-act="copy-link" type="button">Copy OneDrive link</button>' +
       '<div class="btn-caption">Recommended. Copilot opens the package from OneDrive.</div></div>' +
@@ -724,7 +794,7 @@ SCREENS.send = () => {
 
 SCREENS.receive = () => {
   const m = ROLE_META[S.ex.role];
-  const zip = expectedKind() === "zip";
+  const zip = (S.ex.role === "implement" || S.ex.role === "repair");
   return '<div class="step-eyebrow">' + esc(m.step) + '</div>' +
     '<h1 class="m-title">Bring the Copilot reply here.</h1>' +
     '<p class="m-lead">' + (zip ? 'Copilot attaches one file. Its name is <code>maintain-output.zip</code>. Drag it here.' :
@@ -756,13 +826,12 @@ SCREENS.plancheck = () => {
 };
 
 SCREENS["review-findings"] = () => {
-  const f = reviewEnvelope(1).content.findings[0];
   return '<div class="step-eyebrow">Step 3 of 5 — Review</div>' +
     '<h1 class="m-title">Copilot found 1 point to repair.</h1>' +
     '<div class="finding"><div class="sevrow"><span class="sev minor">minor</span>' +
-    '<span class="floc mono">' + esc(f.file) + ':' + f.line + '</span></div>' +
-    '<p><b>Evidence.</b> ' + esc(f.evidence) + '</p>' +
-    '<p><b>Repair.</b> ' + esc(f.remediation) + '</p></div>' +
+    '<span class="floc mono">' + esc(FINDING.file) + ':' + FINDING.line + '</span></div>' +
+    '<p><b>Evidence.</b> ' + esc(FINDING.evidence) + '</p>' +
+    '<p><b>Repair.</b> ' + esc(FINDING.remediation) + '</p></div>' +
     '<div class="m-gap"></div>' +
     '<div class="btncol">' +
     '<div><button class="btn primary" data-act="start-repair" type="button">Repair with Copilot</button>' +
@@ -809,7 +878,7 @@ SCREENS.save = () => {
     '<div><button class="btn primary" data-act="accept-save" type="button">Accept and save</button>' +
     '<div class="btn-caption">The tool makes the commit on a new branch. Your project does not change before this point.</div></div>' +
     '<div class="btnrow"><button class="btn secondary sm" data-act="feedback" type="button">Ask for changes</button>' +
-    '<button class="btn danger-ghost sm btn" data-act="discard" type="button">Discard</button></div></div>';
+    '<button class="btn danger-ghost sm" data-act="discard" type="button">Discard</button></div></div>';
 };
 
 SCREENS.done = () => {
@@ -819,7 +888,51 @@ SCREENS.done = () => {
     '<div class="m-gap"></div>' +
     '<div class="btncol" style="align-items:center">' +
     '<button class="btn primary" data-act="new-run" type="button">Start a new change</button>' +
-    '<button class="btn ghost" data-act="open-folder" type="button">Open the project folder</button></div></div>';
+    '<button class="btn ghost" data-act="history" type="button">View the history</button></div></div>';
+};
+
+SCREENS.history = () => {
+  let h = '<h1 class="m-title">History</h1>';
+  if (S.runActive){
+    h += '<button class="runrow" data-act="open-run" data-id="live" type="button"><span class="rmeta">' +
+      '<b>Run 0143 — ' + esc(S.request || "New change") + '</b>' +
+      '<span class="rsub">today · ' + S.iterations.length + ' iterations</span></span>' +
+      '<span class="statechip inwork">In work</span></button>';
+  }
+  h += S.runs.map(r =>
+    '<button class="runrow" data-act="open-run" data-id="' + r.id + '" type="button"><span class="rmeta">' +
+    '<b>Run ' + r.id + ' — ' + esc(r.title) + '</b>' +
+    '<span class="rsub">' + esc(r.date) + (r.files ? ' · ' + r.files + ' files' : '') + '</span></span>' +
+    '<span class="statechip ' + r.state.toLowerCase().replace(" ","") + '">' + esc(r.state) + '</span></button>').join("");
+  h += '<div class="m-gap"></div><div class="btnrow"><button class="btn ghost" data-act="go-home" type="button">Back</button></div>';
+  return h;
+};
+
+SCREENS["run-detail"] = () => {
+  const live = S.viewRun === "live";
+  const run = live ? {id:"0143", title:S.request, state:"In work", iters:S.iterations} :
+              S.runs.find(r => r.id === S.viewRun) || S.runs[0];
+  const iters = run.iters;
+  const lastIdx = iters.length - 1;
+  const snaps = iters.map((it, i) => it.snap ? i : -1).filter(i => i >= 0);
+  const undoTarget = snaps.length >= 2 ? snaps[snaps.length - 2] : -1;
+  const rows = iters.map((it, i) => {
+    const canBack = live && S.runActive && it.snap && i < lastIdx;
+    return '<div class="it' + (i === lastIdx ? " cur" : "") + (it.super ? " super" : "") + (it.rev ? " rev" : "") + '">' +
+      '<span class="it-dot">' + (it.rev ? "&#8635;" : it.n) + '</span>' +
+      '<span class="it-main"><b>' + esc(it.label) + '</b>' + (it.super ? '<span class="tagsuper">superseded</span>' : "") +
+      (it.sub ? '<div class="it-sub">' + esc(it.sub) + '</div>' : "") + '</span>' +
+      (canBack ? '<button class="it-act" data-act="go-back" data-i="' + i + '" type="button">Go back to here</button>' : "") +
+      '<span class="it-time">' + esc(it.t) + '</span></div>';
+  }).join("");
+  return '<h1 class="m-title">Run ' + esc(run.id) + '</h1>' +
+    '<p class="m-lead">' + esc(run.title || "") + '</p>' +
+    (live ?
+      '<div class="btnrow"><button class="btn secondary sm" data-act="undo-last" type="button" ' + (undoTarget < 0 ? "disabled" : "") + '>Undo the last iteration</button></div>' :
+      '<p class="m-lead">This run is ' + run.state.toLowerCase() + '. The timeline is read-only. To change a saved result, start a new change.</p>') +
+    '<div class="timeline">' + rows + '</div>' +
+    '<div class="m-gap"></div>' +
+    '<div class="btnrow"><button class="btn ghost" data-act="history-back" type="button">Back</button></div>';
 };
 
 SCREENS.settings = () => {
@@ -827,11 +940,12 @@ SCREENS.settings = () => {
     '<button class="bigchoice" data-act="' + act + '" type="button"><span class="ico">&#9656;</span><span><b>' + name + '</b><span class="sub">' + sub + '</span></span></button>';
   return '<h1 class="m-title">Settings</h1>' +
     item("set-onedrive", "OneDrive", "The folder and the link for packages.") +
+    item("set-tasks", "Task prompts &amp; documents", "Boilerplate prompts and documents, per task or for the project.") +
     item("set-global", "Global prompt", "The ground rules for every task.") +
     item("set-package", "Package", "The package style.") +
     item("set-checks", "Checks", "The local test commands.") +
     '<div class="m-gap"></div>' +
-    '<div class="backrow"><button class="btn ghost" data-act="go-home" type="button">Back</button></div>';
+    '<div class="backrow btnrow"><button class="btn ghost" data-act="go-home" type="button">Back</button></div>';
 };
 
 SCREENS["set-onedrive"] = () => {
@@ -849,6 +963,39 @@ SCREENS["set-onedrive"] = () => {
     '<div class="hint">After this time, the tool asks you to check File Explorer.</div></div>' +
     '<div class="m-gap"></div>' +
     '<div class="btnrow"><button class="btn primary sm" data-act="save-onedrive" type="button">Save</button>' +
+    '<button class="btn ghost" data-act="settings" type="button">Back</button></div>';
+};
+
+SCREENS["set-tasks"] = () => {
+  const tabs = [["project","Project"],["plan","Plan"],["build","Build"],["repair","Repair"],["review","Review"]];
+  const seg = '<div class="seg">' + tabs.map(t =>
+    '<button data-act="set-tab" data-tab="' + t[0] + '" class="' + (S.setTab === t[0] ? "on" : "") + '" type="button">' + t[1] + '</button>').join("") + '</div>';
+  if (S.setTab === "project"){
+    return '<h1 class="m-title">Task prompts &amp; documents</h1>' + seg +
+      '<div class="subhead">Documents for every packet</div>' +
+      (S.settings.projectDocs.length ? '<div class="chips">' + chipsHTML(S.settings.projectDocs, "pdoc-x") + '</div>' :
+        '<p class="m-lead">No documents yet.</p>') +
+      '<div class="btnrow"><button class="btn secondary sm" data-act="pdoc-add" type="button">Add a document…</button></div>' +
+      '<p class="m-lead">These documents go into every packet, for all task types. Select a task type above to set its prompt and its own documents.</p>' +
+      '<div class="m-gap"></div>' +
+      '<div class="btnrow"><button class="btn primary sm" data-act="save-tasks" type="button">Save</button>' +
+      '<button class="btn ghost" data-act="settings" type="button">Back</button></div>';
+  }
+  const t = S.settings.tasks[S.setTab];
+  const promptPart = t.override
+    ? '<div class="statusline">This task uses its own prompt.</div>' +
+      '<textarea class="gp short" id="tPrompt" spellcheck="false">' + esc(t.prompt) + '</textarea>' +
+      '<div class="btnrow"><button class="btn secondary sm" data-act="prompt-builtin" type="button">Use the built-in prompt again</button></div>'
+    : '<div class="statusline">This task uses the built-in prompt.</div>' +
+      '<pre class="promptview">' + esc(BUILTIN[S.setTab]) + '</pre>' +
+      '<div class="btnrow"><button class="btn secondary sm" data-act="prompt-override" type="button">Change the prompt for this task</button></div>';
+  return '<h1 class="m-title">Task prompts &amp; documents</h1>' + seg +
+    '<div class="subhead">Boilerplate prompt — ' + esc(S.setTab) + '</div>' + promptPart +
+    '<div class="subhead">Documents for ' + esc(S.setTab) + ' packets</div>' +
+    (t.docs.length ? '<div class="chips">' + chipsHTML(t.docs, "tdoc-x") + '</div>' : '<p class="m-lead">No documents yet. The project documents still apply.</p>') +
+    '<div class="btnrow"><button class="btn secondary sm" data-act="tdoc-add" type="button">Add a document…</button></div>' +
+    '<div class="m-gap"></div>' +
+    '<div class="btnrow"><button class="btn primary sm" data-act="save-tasks" type="button">Save</button>' +
     '<button class="btn ghost" data-act="settings" type="button">Back</button></div>';
 };
 
@@ -894,143 +1041,10 @@ function render(){
   if (S.screen === "send") bindPkgDrag();
 }
 
-/* ================= status helpers ================= */
+/* ================= receive & advance ================= */
 function setRecvStatus(html){ const n = $("#recvStatus"); if (n) n.innerHTML = html; }
-
-/* ================= copilot chat ================= */
-function chatEl(){ return $("#chat"); }
-function scrollChat(){ const c = chatEl(); c.scrollTop = c.scrollHeight; }
-function addSys(text){
-  const d = document.createElement("div"); d.className = "sysnote"; d.textContent = text;
-  chatEl().appendChild(d); scrollChat();
-}
-function addConvDivider(){
-  const d = document.createElement("div"); d.className = "convdiv"; d.textContent = "New conversation";
-  chatEl().appendChild(d); scrollChat();
-}
-function addBubble(who, html){
-  const row = document.createElement("div");
-  row.className = "brow " + (who === "user" ? "user" : "cop");
-  row.innerHTML = '<span class="bwho">' + (who === "user" ? "Tim" : "Copilot") + '</span><div class="bubble">' + html + '</div>';
-  chatEl().appendChild(row); scrollChat();
-  return row;
-}
-function replyChipHTML(exId){
-  return '<span class="chip dl" draggable="true" data-reply-ex="' + exId + '" tabindex="0" role="button" ' +
-    'aria-label="maintain-output.zip. Drag it into Maintain, or select to download.">' + ZIP_ICON +
-    '<span class="cname">maintain-output.zip</span><span class="csize">96 KB</span>' +
-    '<span class="cdlhint">drag me &#8598;</span></span>';
-}
-function copilotThink(thenHTML){
-  const t = addBubble("cop", '<span class="typing"><i></i><i></i><i></i></span>');
-  setTimeout(() => {
-    t.querySelector(".bubble").innerHTML = thenHTML();
-    scrollChat();
-  }, 1150);
-}
-function copilotReplyFor(ex){
-  if (ex.role === "scope"){
-    const env = scopeEnvelope(ex.round > 1 ? TASKS_V2 : TASKS_V1, ex.round);
-    const lead = ex.round > 1 ? "Here is the smaller plan. The JSON envelope is below." : "Here is the plan. The JSON envelope is below.";
-    return lead +
-      '<details class="jsonwrap"><summary>Show the JSON</summary><pre>' + esc(JSON.stringify(env, null, 2)) + '</pre></details>' +
-      '<div class="bub-actions"><button class="copybtn" data-copy-ex="' + ex.id + '" type="button">Copy the reply</button></div>';
-  }
-  if (ex.role === "review"){
-    const env = reviewEnvelope(ex.round);
-    const lead = ex.round === 1 ? "I examined the change. I request one repair. The JSON envelope is below."
-                                : "I examined the change again. I approve. The JSON envelope is below.";
-    return lead +
-      '<details class="jsonwrap"><summary>Show the JSON</summary><pre>' + esc(JSON.stringify(env, null, 2)) + '</pre></details>' +
-      '<div class="bub-actions"><button class="copybtn" data-copy-ex="' + ex.id + '" type="button">Copy the reply</button></div>';
-  }
-  return "Maintain output ready." + '<div class="chips">' + replyChipHTML(ex.id) + '</div>';
-}
-function deliverToCopilot(kind){ // kind: 'chip' | 'link'
-  const ex = S.ex;
-  if (!ex) return;
-  if (S.lastConvRole !== ex.role){ addConvDivider(); S.lastConvRole = ex.role; }
-  const body = kind === "link"
-    ? 'Please do the Maintain task in this package: <span class="linktext">' + esc(oneDriveLink()) + '</span>'
-    : 'Please do the Maintain task in this package.<div class="chips"><span class="chip">' + ZIP_ICON +
-      '<span class="cname">' + esc(ex.pkgName) + '</span><span class="csize">' + esc(ex.size) + '</span></span></div>';
-  addBubble("user", body);
-  if (ex.replied){
-    copilotThink(() => "I already sent the reply for this package. It is above.");
-    return;
-  }
-  const id = ex.id;
-  copilotThink(() => {
-    if (S.ex && S.ex.id === id) S.ex.replied = true;
-    return copilotReplyFor(ex);
-  });
-  if (!ex.outAction){ ex.outAction = true; if (S.screen === "send") render(); }
-}
-
-/* ================= composer ================= */
-let comp = {attach: null, link: ""};
-function renderComposer(){
-  const slot = $("#compSlot");
-  slot.innerHTML = comp.attach
-    ? '<span class="chip">' + ZIP_ICON + '<span class="cname">' + esc(comp.attach.name) + '</span>' +
-      '<button class="cx" data-comp-x="1" aria-label="Remove attachment" type="button">&#10005;</button></span>'
-    : "";
-}
-function composerSend(){
-  const text = $("#compInput").value.trim();
-  if (comp.attach){
-    if (comp.attach.kind === "pkg" && S.ex && comp.attach.exId === S.ex.id){ deliverToCopilot("chip"); }
-    else {
-      addBubble("user", 'Look at this file.<div class="chips"><span class="chip">' + ZIP_ICON +
-        '<span class="cname">' + esc(comp.attach.name) + '</span></span></div>');
-      copilotThink(() => "I can read this file. Send the current Maintain package to start the task.");
-    }
-    comp.attach = null; $("#compInput").value = ""; renderComposer(); return;
-  }
-  if (text){
-    if (S.ex && text.indexOf(oneDriveLink()) !== -1){ $("#compInput").value = ""; deliverToCopilot("link"); return; }
-    addBubble("user", esc(text));
-    copilotThink(() => "I am a simulation. Send a Maintain package or a Maintain OneDrive link to start.");
-    $("#compInput").value = "";
-    return;
-  }
-  toast("First attach a package or paste a link.");
-}
-function composerPaste(){
-  if (!S.clip){ toast("The clipboard is empty. First copy something in Maintain."); return; }
-  if (S.clip.kind === "file"){
-    comp.attach = {kind: "pkg", exId: S.clip.ex, name: S.clip.name}; renderComposer();
-  } else if (S.clip.kind === "link"){
-    $("#compInput").value = S.clip.text;
-  } else {
-    toast("That is the Copilot reply. Paste it in Maintain with Paste reply.");
-  }
-}
-
-/* ================= receive & validation ================= */
-function acceptReplyPayload(p){ // p: {t:'reply'|'pkg', ex}
+function acceptSimReply(){
   if (S.screen !== "receive" || !S.ex) return;
-  if (p.t === "pkg"){
-    setRecvStatus('<div class="statusline bad"><span class="cross">&#10005;</span>This is the package, not the reply. Give it to Copilot first.</div>');
-    return;
-  }
-  if (p.ex !== S.ex.id){
-    setRecvStatus('<div class="statusline bad"><span class="cross">&#10005;</span>This reply is for an earlier request. Use the newest reply from Copilot.</div>');
-    return;
-  }
-  if (!S.ex.replied){
-    setRecvStatus('<div class="statusline bad"><span class="cross">&#10005;</span>Copilot did not reply yet. Wait for the reply.</div>');
-    return;
-  }
-  const zip = expectedKind() === "zip";
-  if ((p.kind === "zip") !== zip){
-    setRecvStatus('<div class="statusline bad"><span class="cross">&#10005;</span>This is not the reply for this step. The tool expects ' +
-      (zip ? 'the file <code>maintain-output.zip</code>.' : 'the JSON reply. Use Paste reply.') + '</div>');
-    return;
-  }
-  validateAndAdvance();
-}
-function validateAndAdvance(){
   const role = S.ex.role;
   setRecvStatus('<div class="statusline"><span class="spin"></span>Check the reply…</div>');
   setTimeout(() => {
@@ -1041,42 +1055,34 @@ function validateAndAdvance(){
       setTimeout(() => {
         setRecvStatus('<div class="statusline ok"><span class="tick">&#10003;</span>The reply matches run 0143.</div>' +
           '<div class="statusline ok"><span class="tick">&#10003;</span>Applied. Your project does not change before you accept.</div>');
-        setTimeout(() => { newExchange("review"); S.screen = "send"; render(); }, 900);
+        setTimeout(() => { role === "repair" ? evRepairApplied() : evBuildApplied(); render(); }, 900);
       }, 1000);
       return;
     }
     setRecvStatus(h);
     setTimeout(() => {
-      if (role === "scope"){
-        S.planTasks = (S.ex.round > 1 ? TASKS_V2 : TASKS_V1);
-        S.screen = "plancheck"; render();
-      } else if (role === "review"){
-        if (S.ex.round === 1){ S.screen = "review-findings"; render(); }
+      if (role === "scope"){ evPlanProposed(); render(); }
+      else if (role === "review"){
+        if (S.reviewRound === 1){ evReviewFound(); render(); }
         else {
           setRecvStatus('<div class="statusline ok"><span class="tick">&#10003;</span>Copilot approves the change.</div>');
-          setTimeout(() => { startTests(); }, 800);
+          setTimeout(() => { evReviewApproved(false); }, 800);
         }
       }
     }, 700);
   }, 750);
 }
-function pasteReply(){
-  if (!S.clip || S.clip.kind !== "json"){
-    setRecvStatus('<div class="statusline bad"><span class="cross">&#10005;</span>First copy the reply in Copilot.</div>');
-    return;
-  }
-  acceptReplyPayload({t: "reply", kind: "json", ex: S.clip.ex});
-}
 
 /* ================= tests ================= */
-function startTests(){
-  S.stage = 3; S.screen = "test";
-  S.checksState = S.settings.checks.map(c => ({name: c.name, cmd: c.cmd, out: c.out, state: "wait"}));
+function startTests(instant){
+  S.stage = 3; S.screen = "test"; S.checksLogged = false;
+  S.checksState = S.settings.checks.map(c => ({name:c.name, cmd:c.cmd, out:c.out || "(no output)", state:instant ? "pass" : "wait"}));
+  if (instant){ evChecksPassed(); render(); return; }
   render();
   runNextCheck(0);
 }
 function runNextCheck(i){
-  if (i >= S.checksState.length){ render(); return; }
+  if (i >= S.checksState.length){ evChecksPassed(); render(); return; }
   S.checksState[i].state = "run"; render();
   setTimeout(() => { S.checksState[i].state = "pass"; render(); runNextCheck(i + 1); }, 620);
 }
@@ -1085,69 +1091,38 @@ function runNextCheck(i){
 function copyLinkFlow(){
   const ex = S.ex;
   if (ex.sync === "copying" || ex.sync === "syncing") return;
-  if (ex.sync === "done"){
-    S.clip = {kind: "link", text: oneDriveLink()}; sysCopy(oneDriveLink());
-    toast("The link is in the clipboard.");
-    return;
-  }
+  if (ex.sync === "done"){ sysCopy(oneDriveLink()); toast("The link is in the clipboard."); return; }
   ex.sync = "copying"; render();
   setTimeout(() => { if (S.ex !== ex) return; ex.sync = "syncing"; render();
     setTimeout(() => { if (S.ex !== ex) return;
-      ex.sync = "done"; ex.outAction = true;
-      S.clip = {kind: "link", text: oneDriveLink()}; sysCopy(oneDriveLink());
-      render();
+      ex.sync = "done"; ex.outAction = true; sysCopy(oneDriveLink()); render();
     }, 1500);
   }, 800);
 }
 
 /* ================= drag & drop ================= */
-function setDrag(e, payload){
-  e.dataTransfer.setData("application/x-maintain", JSON.stringify(payload));
-  e.dataTransfer.setData("text/plain", JSON.stringify(payload));
-  e.dataTransfer.effectAllowed = "copy";
-}
-function getDrag(e){
-  const raw = e.dataTransfer.getData("application/x-maintain") || e.dataTransfer.getData("text/plain");
-  if (!raw) return null;
-  try{ const v = JSON.parse(raw); return v && v.t ? v : null; }catch(err){ return null; }
-}
 function bindPkgDrag(){
   const card = $("#pkgCard");
   if (!card) return;
   card.addEventListener("dragstart", e => {
-    setDrag(e, {t: "pkg", ex: S.ex.id, name: S.ex.pkgName});
+    e.dataTransfer.setData("text/plain", S.ex.pkgName);
+    e.dataTransfer.effectAllowed = "copy";
     card.classList.add("dragging");
   });
   card.addEventListener("dragend", () => card.classList.remove("dragging"));
 }
-function addRealRefs(files){
-  for (const f of files){
-    S.refs.push({name: f.name, size: f.size ? Math.max(1, Math.round(f.size / 1024)) + " KB" : ""});
-  }
+function fileList(files){
+  const out = [];
+  for (const f of files) out.push({name:f.name, size:f.size ? Math.max(1, Math.round(f.size / 1024)) + " KB" : ""});
+  return out;
 }
+const FAKE_FILES = ["wind-spec-extract.pdf","notam-sample.txt","icao-limits.xlsx","loader-notes.md"];
+let fakeIdx = 0;
+function nextFakeFile(){ const n = FAKE_FILES[fakeIdx % FAKE_FILES.length]; fakeIdx += 1; return {name:n, size:(140 + 60 * (fakeIdx % 4)) + " KB"}; }
+const FAKE_DOCS = ["docs/standards/naming.md","docs/wind-limits.md","docs/interfaces/loader-api.md"];
+let fakeDocIdx = 0;
+function nextFakeDoc(){ const n = FAKE_DOCS[fakeDocIdx % FAKE_DOCS.length]; fakeDocIdx += 1; return n; }
 
-/* chat as dropzone */
-(function(){
-  const c = $("#chat");
-  c.addEventListener("dragover", e => { e.preventDefault(); c.classList.add("over"); });
-  c.addEventListener("dragleave", () => c.classList.remove("over"));
-  c.addEventListener("drop", e => {
-    e.preventDefault(); c.classList.remove("over");
-    const p = getDrag(e);
-    if (p && p.t === "pkg"){
-      if (S.ex && p.ex === S.ex.id){ comp.attach = {kind: "pkg", exId: p.ex, name: p.name}; renderComposer(); toast("Attached. Now select Send."); }
-      else toast("This package is old. Use the package on the Send screen.");
-      return;
-    }
-    if (p && p.t === "reply"){ toast("That file is already in the chat."); return; }
-    if (e.dataTransfer.files && e.dataTransfer.files.length){
-      comp.attach = {kind: "other", name: e.dataTransfer.files[0].name}; renderComposer();
-      toast("Attached. Now select Send.");
-    }
-  });
-})();
-
-/* maintain body dropzones (delegated) */
 (function(){
   const body = $("#mBody");
   body.addEventListener("dragover", e => {
@@ -1160,54 +1135,18 @@ function addRealRefs(files){
   body.addEventListener("drop", e => {
     const z = e.target.closest(".dropzone"); if (!z) return;
     e.preventDefault(); z.classList.remove("over");
-    const p = getDrag(e);
     const kind = z.getAttribute("data-drop");
+    const files = e.dataTransfer.files && e.dataTransfer.files.length ? fileList(e.dataTransfer.files) : [];
     if (kind === "refs"){
-      if (e.dataTransfer.files && e.dataTransfer.files.length){
-        addRealRefs(e.dataTransfer.files); render();
-        toast("Added " + e.dataTransfer.files.length + " file" + (e.dataTransfer.files.length > 1 ? "s" : "") + " to the package.");
-      } else if (p){ toast("Drop files from your computer here."); }
+      if (files.length){ saveRequestDraft(); S.runRefs.push(...files); render();
+        toast("Added " + files.length + " file" + (files.length > 1 ? "s" : "") + " to the run."); }
       return;
     }
-    if (kind === "reply"){
-      if (p){ acceptReplyPayload(p.t === "reply" ? {t: "reply", kind: "zip", ex: p.ex} : p); return; }
-      if (e.dataTransfer.files && e.dataTransfer.files.length){
-        addRealRefs(e.dataTransfer.files);
-        setRecvStatus('<div class="statusline"><span class="tick" style="color:var(--warn)">&#9670;</span>' +
-          'This file is not the reply. The tool keeps it as a reference for the next package.</div>');
-      }
-    }
-  });
-})();
-
-/* chat chip drag + download + copy buttons (delegated) */
-(function(){
-  const c = $("#chat");
-  c.addEventListener("dragstart", e => {
-    const chip = e.target.closest(".chip.dl"); if (!chip) return;
-    setDrag(e, {t: "reply", ex: Number(chip.getAttribute("data-reply-ex"))});
-  });
-  c.addEventListener("click", e => {
-    const copy = e.target.closest("[data-copy-ex]");
-    if (copy){
-      const ex = Number(copy.getAttribute("data-copy-ex"));
-      S.clip = {kind: "json", ex};
-      const src = ex === (S.ex && S.ex.id) ? S.ex : null;
-      sysCopy("(Maintain reply JSON for exchange " + ex + ")");
-      toast("Copied. Now select Paste reply in Maintain.");
+    if (kind === "attach"){
+      if (files.length){ S.ex.attachments.push(...files); render(); toast("The package is updated."); }
       return;
     }
-    const chip = e.target.closest(".chip.dl");
-    if (chip){
-      const ex = Number(chip.getAttribute("data-reply-ex"));
-      if (!S.downloads.some(d => d.ex === ex)){
-        S.downloads.push({name: "maintain-output.zip", ex});
-        toast("Downloaded maintain-output.zip. In Maintain, select Import.");
-      } else toast("The file is already in Downloads.");
-    }
-  });
-  c.addEventListener("keydown", e => {
-    if (e.key === "Enter" && e.target.closest(".chip.dl")) e.target.closest(".chip.dl").click();
+    if (kind === "reply"){ acceptSimReply(); }
   });
 })();
 
@@ -1222,121 +1161,157 @@ function noteModal(title, sub, act){
     '<div class="btnrow"><button class="btn primary sm" data-act="' + act + '" type="button">Send the note</button>' +
     '<button class="btn ghost sm" data-act="modal-close" type="button">Go back</button></div>');
 }
-function importModal(){
-  const zips = S.downloads;
-  const list = zips.length
-    ? '<div class="dlpick">' + zips.map((d, i) =>
-        '<span class="chip" data-act="import-pick" data-i="' + i + '" tabindex="0" role="button">' + ZIP_ICON +
-        '<span class="cname">' + esc(d.name) + '</span><span class="csize">Downloads</span></span>').join("") + '</div>'
-    : '<p class="dlempty">No downloaded files. In Copilot, select the reply file to download it.</p>';
-  openModal('<h2>Import a file</h2>' + list +
-    '<div class="btnrow"><button class="btn ghost sm" data-act="modal-close" type="button">Close</button></div>');
+
+/* ================= actions ================= */
+function saveRequestDraft(){ const t = $("#reqText"); if (t) S.request = t.value; }
+function collectTaskEdits(){
+  const p = $("#tPrompt");
+  if (p && S.setTab !== "project") S.settings.tasks[S.setTab].prompt = p.value;
+}
+function collectCheckEdits(){
+  document.querySelectorAll(".checkedit input").forEach(inp => {
+    const i = Number(inp.getAttribute("data-i")), k = inp.getAttribute("data-k");
+    if (S.settings.checks[i]) S.settings.checks[i][k] = inp.value;
+  });
+}
+function restoreIter(i){
+  const it = S.iterations[i]; if (!it || !it.snap) return;
+  for (let j = i + 1; j < S.iterations.length; j++) S.iterations[j].super = true;
+  const snap = it.snap;
+  S.planTasks = snap.planTasks.slice();
+  S.stage = snap.stage;
+  pushIter("Went back to iteration " + it.n, "", null, true);
+  if (snap.role){ newExchange(snap.role); S.screen = "send"; }
+  else if (snap.checks){ startTests(true); }
+  else { S.screen = snap.screen; }
+  toast("Went back to iteration " + it.n + ".");
+  render();
 }
 
-/* ================= actions (delegated) ================= */
-function saveRequestDraft(){
-  const t = $("#reqText"); if (t) S.request = t.value;
-}
 function handleAction(act, node){
   switch(act){
     /* navigation */
     case "go-home": S.screen = "home"; render(); break;
-    case "settings": S.screen = "settings"; render(); break;
+    case "settings": collectTaskEdits(); S.screen = "settings"; render(); break;
     case "set-onedrive": case "set-global": case "set-package": case "set-checks":
       S.screen = act; render(); break;
+    case "set-tasks": S.setTab = "project"; S.screen = "set-tasks"; render(); break;
 
     /* home */
-    case "new-feature": case "new-issue":
-      S.screen = "describe"; render(); break;
+    case "new-feature": case "new-issue": S.screen = "describe"; render(); break;
     case "resume":
       S.screen = S.paused.screen; S.stage = S.paused.stage; S.paused = null; render(); break;
 
     /* describe */
-    case "example":
-      S.request = "Add an input filter for wind data in the loader. Reject speeds below 0 kt and above 150 kt.";
-      render(); break;
+    case "example": saveRequestDraft(); S.request = EXAMPLE; render(); break;
     case "import-refs":
-      addRealRefs([{name: "wind-spec-extract.pdf", size: 412 * 1024}]); render();
-      toast("Added 1 file to the package."); break;
+      saveRequestDraft(); S.runRefs.push(nextFakeFile()); render(); toast("Added 1 file to the run."); break;
     case "ref-x":
-      saveRequestDraft(); S.refs.splice(Number(node.getAttribute("data-i")), 1); render(); break;
-    case "start-run": {
+      saveRequestDraft(); S.runRefs.splice(Number(node.getAttribute("data-i")), 1); render(); break;
+    case "start-run":
       saveRequestDraft();
       if (!S.request.trim()){ toast("First write the change."); break; }
-      S.runActive = true; S.planAttempt = 0; S.reviewRound = 0; S.testsPassed = false; S.downloads = [];
-      newExchange("scope"); S.screen = "send"; render(); break;
-    }
+      evStart(); render(); break;
 
     /* send */
     case "copy-link": copyLinkFlow(); break;
     case "copy-file":
-      S.ex.outAction = true;
-      S.clip = {kind: "file", ex: S.ex.id, name: S.ex.pkgName};
-      toast("The package is in the clipboard. Paste it into Copilot.");
-      render(); break;
+      S.ex.outAction = true; toast("The package is in the clipboard. Paste it into Copilot."); render(); break;
     case "export":
-      S.ex.outAction = true;
-      toast("Saved " + S.ex.pkgName + " to Downloads.");
-      render(); break;
+      S.ex.outAction = true; toast("Saved " + S.ex.pkgName + " to Downloads."); render(); break;
+    case "att-add":
+      S.ex.attachments.push(nextFakeFile()); render(); toast("The package is updated."); break;
+    case "att-x":
+      S.ex.attachments.splice(Number(node.getAttribute("data-i")), 1); render(); toast("The package is updated."); break;
     case "show-global":
       openModal('<h2>GLOBAL.md</h2><p>The tool puts this file into every package. Change it in Settings.</p>' +
         '<pre class="gpview">' + esc(S.settings.global) + '</pre>' +
         '<div class="btnrow"><button class="btn ghost sm" data-act="modal-close" type="button">Close</button></div>');
       break;
+    case "show-prompt": {
+      const key = ROLE_META[S.ex.role].key;
+      const t = S.settings.tasks[key];
+      openModal('<h2>Boilerplate prompt — ' + esc(key) + '</h2>' +
+        '<p>' + (t.override ? "This task uses its own prompt. Change it in Settings." : "This task uses the built-in prompt. Change it in Settings.") + '</p>' +
+        '<pre class="gpview">' + esc(t.override ? t.prompt : BUILTIN[key]) + '</pre>' +
+        '<div class="btnrow"><button class="btn ghost sm" data-act="modal-close" type="button">Close</button></div>');
+      break;
+    }
     case "to-receive": S.screen = "receive"; render(); break;
     case "back-send": S.screen = "send"; render(); break;
 
     /* receive */
-    case "paste-reply": pasteReply(); break;
-    case "import-reply": importModal(); break;
-    case "import-pick": {
-      closeModal();
-      const d = S.downloads[Number(node.getAttribute("data-i"))];
-      acceptReplyPayload({t: "reply", kind: "zip", ex: d.ex});
+    case "paste-reply": acceptSimReply(); break;
+    case "import-reply":
+      openModal('<h2>Import a file</h2><div class="dlpick">' +
+        '<span class="chip" data-act="import-pick" tabindex="0" role="button">' + ZIP_ICON +
+        '<span class="cname">maintain-output.zip</span><span class="csize">Downloads</span></span></div>' +
+        '<div class="btnrow"><button class="btn ghost sm" data-act="modal-close" type="button">Close</button></div>');
       break;
-    }
+    case "import-pick": closeModal(); acceptSimReply(); break;
 
     /* plan check */
-    case "accept-plan":
-      newExchange("implement"); S.screen = "send"; render(); break;
+    case "accept-plan": evPlanApproved(); render(); break;
     case "rescope":
       noteModal("Ask for changes", "Tell Copilot what to change in the plan.", "rescope-send"); break;
-    case "rescope-send": {
-      closeModal();
-      newExchange("scope"); S.screen = "send"; render();
+    case "rescope-send":
+      closeModal(); newExchange("scope"); S.screen = "send"; render();
       toast("The note is in the new plan package."); break;
-    }
     case "rescope-late":
-      noteModal("Scope again", "The tool starts a new plan with your note. The current work stays saved in the run.", "rescope-send");
+      noteModal("Scope again", "The tool starts a new plan with your note. The current work stays in the history.", "rescope-send");
       break;
 
     /* review findings */
-    case "start-repair":
-      newExchange("repair"); S.screen = "send"; render(); break;
+    case "start-repair": newExchange("repair"); S.screen = "send"; render(); break;
 
     /* test */
-    case "run-checks": startTests(); break;
-    case "chk-out":
-      node.closest(".checkrow").classList.toggle("open"); break;
+    case "run-checks": startTests(false); break;
+    case "chk-out": node.closest(".checkrow").classList.toggle("open"); break;
     case "to-save": S.stage = 4; S.screen = "save"; render(); break;
 
     /* save */
-    case "accept-save": S.screen = "done"; S.runActive = false; render(); break;
+    case "accept-save": closeRun("Saved", "branch maintain/0143-wind-filter"); S.screen = "done"; render(); break;
     case "feedback":
       noteModal("Ask for changes", "Tell Copilot what to change. The tool makes a repair package.", "feedback-send"); break;
     case "feedback-send":
       closeModal(); newExchange("repair"); S.screen = "send"; render(); break;
     case "discard":
-      openModal('<h2>Discard the change?</h2><p>The tool removes the work of run 0143. Your project does not change.</p>' +
+      openModal('<h2>Discard the change?</h2><p>The tool removes the work of run 0143. Your project does not change. The history keeps the record.</p>' +
         '<div class="btnrow"><button class="btn primary sm" data-act="discard-yes" type="button">Discard</button>' +
         '<button class="btn ghost sm" data-act="modal-close" type="button">Go back</button></div>');
       break;
     case "discard-yes":
-      closeModal(); initStateKeepChat(); render(); toast("The change is discarded."); break;
+      closeModal(); closeRun("Discarded"); S.screen = "home"; render(); toast("The change is discarded."); break;
 
     /* done */
-    case "new-run": initStateKeepChat(); S.screen = "describe"; render(); break;
-    case "open-folder": toast("Opened C:\\work\\flight-tools in File Explorer."); break;
+    case "new-run": {
+      const runs = S.runs, req = "";
+      initState(true); S.runs = runs; S.screen = "describe"; render(); break;
+    }
+
+    /* history */
+    case "history": S.historyBack = "home"; S.screen = "history"; render(); break;
+    case "history-live": S.viewRun = "live"; S.historyBack = S.screen; S.screen = "run-detail"; render(); break;
+    case "open-run":
+      S.viewRun = node.getAttribute("data-id"); S.historyBack = "history"; S.screen = "run-detail"; render(); break;
+    case "history-back":
+      S.screen = S.historyBack === "run-detail" ? "history" : S.historyBack; render(); break;
+    case "go-back": {
+      const i = Number(node.getAttribute("data-i"));
+      const it = S.iterations[i]; S.pendingRevert = i;
+      openModal('<h2>Go back to iteration ' + it.n + '?</h2>' +
+        '<p>The tool returns the work to the state after: ' + esc(it.label) + '. The later iterations stay in the history as superseded. The tool does not delete work.</p>' +
+        '<div class="btnrow"><button class="btn primary sm" data-act="go-back-yes" type="button">Go back</button>' +
+        '<button class="btn ghost sm" data-act="modal-close" type="button">Stay here</button></div>');
+      break;
+    }
+    case "go-back-yes":
+      closeModal(); restoreIter(S.pendingRevert); break;
+    case "undo-last": {
+      const snaps = S.iterations.map((it, i) => it.snap ? i : -1).filter(i => i >= 0);
+      if (snaps.length >= 2) handleAction("go-back", {getAttribute:() => String(snaps[snaps.length - 2])});
+      break;
+    }
 
     /* stop / pause */
     case "stop":
@@ -1347,17 +1322,29 @@ function handleAction(act, node){
     case "stop-yes": {
       closeModal();
       const lbl = STAGES[Math.max(S.stage, 0)] + ". The tool waits for you.";
-      S.paused = {screen: S.screen, stage: S.stage, label: lbl};
+      S.paused = {screen:S.screen === "run-detail" ? "home" : S.screen, stage:S.stage, label:lbl};
       S.screen = "home"; render(); break;
     }
 
-    /* settings save */
+    /* settings */
     case "browse": toast("The folder picker opens here in the real tool."); break;
     case "save-onedrive":
       S.settings.folder = $("#sFolder").value;
       S.settings.linkBase = $("#sLink").value;
       S.settings.timeout = Number($("#sTimeout").value) || 120;
       toast("Saved."); S.screen = "settings"; render(); break;
+    case "set-tab":
+      collectTaskEdits(); S.setTab = node.getAttribute("data-tab"); render(); break;
+    case "prompt-override":
+      S.settings.tasks[S.setTab].override = true; render(); break;
+    case "prompt-builtin":
+      S.settings.tasks[S.setTab].override = false;
+      S.settings.tasks[S.setTab].prompt = BUILTIN[S.setTab]; render(); break;
+    case "pdoc-add": S.settings.projectDocs.push(nextFakeDoc()); render(); break;
+    case "pdoc-x": S.settings.projectDocs.splice(Number(node.getAttribute("data-i")), 1); render(); break;
+    case "tdoc-add": collectTaskEdits(); S.settings.tasks[S.setTab].docs.push(nextFakeDoc()); render(); break;
+    case "tdoc-x": collectTaskEdits(); S.settings.tasks[S.setTab].docs.splice(Number(node.getAttribute("data-i")), 1); render(); break;
+    case "save-tasks": collectTaskEdits(); toast("Saved."); S.screen = "settings"; render(); break;
     case "save-global":
       S.settings.global = $("#sGlobal").value; toast("Saved."); S.screen = "settings"; render(); break;
     case "reset-global":
@@ -1367,26 +1354,12 @@ function handleAction(act, node){
       if (sel) S.settings.style = sel.value;
       toast("Saved."); S.screen = "settings"; render(); break;
     }
-    case "chk-add":
-      collectCheckEdits(); S.settings.checks.push({name: "new check", cmd: "", out: "(no output)"}); render(); break;
-    case "chk-del":
-      collectCheckEdits(); S.settings.checks.splice(Number(node.getAttribute("data-i")), 1); render(); break;
-    case "save-checks":
-      collectCheckEdits(); toast("Saved."); S.screen = "settings"; render(); break;
+    case "chk-add": collectCheckEdits(); S.settings.checks.push({name:"new check", cmd:"", out:"(no output)"}); render(); break;
+    case "chk-del": collectCheckEdits(); S.settings.checks.splice(Number(node.getAttribute("data-i")), 1); render(); break;
+    case "save-checks": collectCheckEdits(); toast("Saved."); S.screen = "settings"; render(); break;
 
     case "modal-close": closeModal(); break;
   }
-}
-function collectCheckEdits(){
-  document.querySelectorAll(".checkedit input").forEach(inp => {
-    const i = Number(inp.getAttribute("data-i")), k = inp.getAttribute("data-k");
-    if (S.settings.checks[i]) S.settings.checks[i][k] = inp.value;
-  });
-}
-function initStateKeepChat(){
-  const keepSettings = S.settings, keepConv = S.lastConvRole;
-  initState();
-  S.settings = keepSettings; S.lastConvRole = keepConv;
 }
 
 $(".win-m").addEventListener("click", e => {
@@ -1398,37 +1371,50 @@ $("#overlay").addEventListener("click", e => {
   const n = e.target.closest("[data-act]"); if (!n) return;
   handleAction(n.getAttribute("data-act"), n);
 });
+$("#overlay").addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.matches(".dlpick .chip")) e.target.click();
+});
 $("#mBody").addEventListener("input", e => {
   if (e.target.id === "sLink"){
     const p = $("#linkPreview");
     if (p) p.textContent = e.target.value.replace(/\/+$/, "") + "/maintain-0143-plan.zip";
   }
 });
-$("#overlay").addEventListener("keydown", e => {
-  if (e.key === "Enter" && e.target.matches(".dlpick .chip")) e.target.click();
-});
 
-/* composer events */
-$("#btnCSend").addEventListener("click", composerSend);
-$("#btnCPaste").addEventListener("click", composerPaste);
-$("#compInput").addEventListener("keydown", e => { if (e.key === "Enter") composerSend(); });
-$("#compSlot").addEventListener("click", e => {
-  if (e.target.closest("[data-comp-x]")){ comp.attach = null; renderComposer(); }
-});
-
-/* reset */
-$("#btnReset").addEventListener("click", () => {
-  initState(); comp = {attach: null, link: ""};
-  chatEl().innerHTML = ""; seedChat(); renderComposer(); render();
-});
-
-function seedChat(){
-  addSys("Copilot simulation. The replies here are generated by this mockup, in the format the real contract requires.");
+/* ================= screen navigator ================= */
+function seed(key){
+  initState(true);
+  const ref = () => { S.runRefs.push({name:"wind-spec-extract.pdf", size:"412 KB"}); };
+  switch(key){
+    case "home": break;
+    case "describe": S.screen = "describe"; break;
+    case "send-plan": ref(); evStart(); break;
+    case "receive-plan": ref(); evStart(); S.ex.outAction = true; S.screen = "receive"; break;
+    case "plancheck": ref(); evStart(); evPlanProposed(); break;
+    case "send-build": ref(); evStart(); evPlanProposed(); evPlanApproved(); break;
+    case "receive-build": ref(); evStart(); evPlanProposed(); evPlanApproved(); S.ex.outAction = true; S.screen = "receive"; break;
+    case "review-findings": ref(); evStart(); evPlanProposed(); evPlanApproved(); evBuildApplied(); evReviewFound(); break;
+    case "send-repair": ref(); evStart(); evPlanProposed(); evPlanApproved(); evBuildApplied(); evReviewFound();
+      newExchange("repair"); S.screen = "send"; break;
+    case "test": ref(); evStart(); evPlanProposed(); evPlanApproved(); evBuildApplied(); evReviewFound();
+      evRepairApplied(); evReviewApproved(true); break;
+    case "save": ref(); evStart(); evPlanProposed(); evPlanApproved(); evBuildApplied(); evReviewFound();
+      evRepairApplied(); evReviewApproved(true); S.stage = 4; S.screen = "save"; break;
+    case "done": ref(); evStart(); evPlanProposed(); evPlanApproved(); evBuildApplied(); evReviewFound();
+      evRepairApplied(); evReviewApproved(true); closeRun("Saved", "branch maintain/0143-wind-filter"); S.screen = "done"; break;
+    case "history": S.screen = "history"; break;
+    case "run-live": ref(); evStart(); evPlanProposed(); evPlanApproved(); evBuildApplied(); evReviewFound();
+      evRepairApplied(); evReviewApproved(true); S.viewRun = "live"; S.historyBack = "test"; S.screen = "run-detail"; break;
+    case "run-saved": S.viewRun = "0141"; S.historyBack = "history"; S.screen = "run-detail"; break;
+    default: S.screen = key; break;
+  }
+  render();
 }
+$("#navSel").addEventListener("change", e => { if (e.target.value) seed(e.target.value); });
+$("#btnReset").addEventListener("click", () => { initState(false); $("#navSel").value = ""; render(); });
 
 /* ================= boot ================= */
-initState();
-seedChat();
+initState(false);
 render();
 }
 function start(){
