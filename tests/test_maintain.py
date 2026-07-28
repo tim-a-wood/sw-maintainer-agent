@@ -402,7 +402,7 @@ def test_output_is_plain_text_when_not_a_terminal(h):
     out = h.run("new", "Fix the greeting").stdout
     assert "\x1b[" not in out
     long_line = [line for line in out.split("\n") if line.startswith("Next:")][0]
-    assert long_line.endswith("run `maintain capture`.")  # not wrapped
+    assert long_line.endswith("run `maintain paste`.")  # not wrapped
 
 
 def test_init_requires_git_repository(tmp_path):

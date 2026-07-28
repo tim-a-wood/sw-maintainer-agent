@@ -81,18 +81,18 @@ STAGE_LABELS = {
 }
 
 STAGE_NEXT_ACTIONS = {
-    S_AWAIT_SCOPE: "Upload the scope package to a fresh chatbot conversation, copy the complete reply, then run `maintain capture`.",
+    S_AWAIT_SCOPE: "Upload the scope package to a fresh chatbot conversation, copy the complete reply, then run `maintain paste`.",
     S_SCOPE_CAPTURED: "Run `maintain next` to generate the implementation package.",
-    S_AWAIT_IMPL: "Upload the package to a fresh chatbot conversation, copy the complete reply, then run `maintain capture`.",
+    S_AWAIT_IMPL: "Upload the package to a fresh chatbot conversation, copy the complete reply, then run `maintain paste`.",
     S_IMPL_CAPTURED: "Run `maintain apply` to validate, apply and test the captured patch.",
     S_PATCH_REJECTED: "Run `maintain next` to generate a correction package.",
     S_TESTS_FAILED: "Run `maintain next` to generate a correction package.",
     S_READY_FOR_REVIEW: "Run `maintain next` to generate the review package.",
-    S_AWAIT_REVIEW: "Upload the review package to a fresh chatbot conversation, copy the complete reply, then run `maintain capture`.",
+    S_AWAIT_REVIEW: "Upload the review package to a fresh chatbot conversation, copy the complete reply, then run `maintain paste`.",
     S_REVIEW_APPROVED: "Run `maintain next` to close the task.",
     S_REVIEW_CHANGES: "Run `maintain next` to generate a correction package.",
     S_RESCOPE_NEEDED: "Run `maintain next` to generate the rescope package.",
-    S_AWAIT_RESCOPE: "Upload the rescope package to a fresh chatbot conversation, copy the complete reply, then run `maintain capture`.",
+    S_AWAIT_RESCOPE: "Upload the rescope package to a fresh chatbot conversation, copy the complete reply, then run `maintain paste`.",
     S_RESCOPED: "Run `maintain next` to generate the implementation package for the revised scope.",
     S_LIMIT_REACHED: "Manual intervention required. Finish the change by hand, or raise \"maximum_rounds\" in the task's state.json and run `maintain next`.",
     S_COMPLETE: "No further action. Create a new task with `maintain new \"<request>\"`.",
@@ -369,7 +369,7 @@ def ask_keep_or_reset(recommendation: str) -> str:
             return "reset"
     raise MaintainError(
         "A keep/reset decision is required to continue after a rescope.",
-        "Run `maintain capture` again with the rescope response in the clipboard.",
+        "Run `maintain paste` again with the rescope response in the clipboard.",
     )
 
 
@@ -800,7 +800,7 @@ def announce_package(task: Task, export_path: Path, note: str) -> None:
     say(f"Package: {task.rel(export_path)}")
     say(
         "Next: Upload the package to a fresh chatbot conversation, copy the complete "
-        "reply, then run `maintain capture`."
+        "reply, then run `maintain paste`."
     )
 
 
@@ -1450,7 +1450,7 @@ def create_task(
     say(f"Package: {task.rel(export_path)}")
     say(
         "Next: Upload the package to a fresh chatbot conversation, copy the complete "
-        "reply, then run `maintain capture`."
+        "reply, then run `maintain paste`."
     )
 
 
@@ -1493,7 +1493,7 @@ def cmd_capture() -> None:
     if not text or not text.strip():
         raise MaintainError(
             "The clipboard is empty.",
-            "Copy the chatbot's complete reply to the clipboard and run `maintain capture` again.",
+            "Copy the chatbot's complete reply to the clipboard and run `maintain paste` again.",
         )
     text = normalise_text(text)
 
@@ -1512,7 +1512,7 @@ def cmd_capture() -> None:
         raise MaintainError(
             str(exc),
             f"The captured text was preserved at {task.rel(rejected)}. Copy a corrected "
-            "response to the clipboard and run `maintain capture` again.",
+            "response to the clipboard and run `maintain paste` again.",
         )
 
     messages = commit(task, data, target)
@@ -1737,7 +1737,7 @@ def cmd_apply() -> None:
     if not patch_file.exists():
         raise MaintainError(
             f"The patch file is missing: {task.rel(patch_file)}.",
-            "Capture the implementation response again with `maintain capture`.",
+            "Capture the implementation response again with `maintain paste`.",
         )
     patch_text = patch_file.read_text(encoding="utf-8")
 

@@ -79,8 +79,8 @@ progress trail across scope, implement, test and review, the current stage
 and test result, the file to upload next, and the single next action — press
 Enter to run it.
 
-`paste`, `continue` and `start` are aliases for `capture`, `next` and `new`;
-both spellings work everywhere.
+`capture`, `continue` and `start` are accepted as aliases for `paste`,
+`next` and `new`, so earlier spellings keep working.
 
 Colour is used when the output is a terminal and dropped otherwise, so piped
 or redirected output stays byte-identical plain text — which matters because
@@ -132,7 +132,7 @@ maintain new "Correct the greeting shown at startup"
 ```text
 Created task: 20260728-001
 Package: .maintain/tasks/20260728-001/exports/maintain-20260728-001-scope.md
-Next: Upload the package to a fresh chatbot conversation, copy the complete reply, then run `maintain capture`.
+Next: Upload the package to a fresh chatbot conversation, copy the complete reply, then run `maintain paste`.
 ```
 
 The scope package contains the scoping role instructions, your request, the
