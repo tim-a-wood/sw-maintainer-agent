@@ -116,14 +116,14 @@ class MainWindow(QMainWindow):
 
         self.home.new_change.connect(self._new_change)
         self.home.open_history.connect(self.show_history)
-        self.home.open_settings.connect(lambda: self.show("settings"))
+        self.home.open_settings.connect(lambda: self.show_screen("settings"))
         self.home.continue_run.connect(self._continue_run)
 
         self.describe.start.connect(self._start_run)
         self.describe.back.connect(self.show_home)
         self.describe.import_requested.connect(self._import_run_files)
 
-        self.send.continue_clicked.connect(lambda: self.show("receive"))
+        self.send.continue_clicked.connect(lambda: self.show_screen("receive"))
         self.send.show_global_button.clicked.connect(self._show_global_text)
         self.send.show_prompt_button.clicked.connect(self._show_prompt_text)
         self.send.add_attachments.connect(self._add_packet_files)
@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
 
         self.receive.reply_submitted.connect(self._reply_submitted)
         self.receive.kept_attachment.connect(self._keep_for_next_packet)
-        self.receive.back.connect(lambda: self.show("send"))
+        self.receive.back.connect(lambda: self.show_screen("send"))
         self.receive.import_requested.connect(self._import_reply)
 
         self.plan_check.accept.connect(
@@ -166,7 +166,7 @@ class MainWindow(QMainWindow):
         self.settings.open_page.connect(self._open_settings_page)
         for page in (self.page_onedrive, self.page_tasks, self.page_global,
                      self.page_package, self.page_checks):
-            page.back.connect(lambda: self.show("settings"))
+            page.back.connect(lambda: self.show_screen("settings"))
         self.page_onedrive.saved.connect(self._settings_saved)
         self.page_tasks.saved.connect(self._settings_saved)
         self.page_tasks.add_doc.connect(self._add_document)
@@ -187,7 +187,7 @@ class MainWindow(QMainWindow):
 
     # ----- navigation -----
 
-    def show(self, name: str) -> None:
+    def show_screen(self, name: str) -> None:
         self.stack.setCurrentWidget(self.screens[name])
 
     def show_home(self) -> None:
@@ -195,11 +195,11 @@ class MainWindow(QMainWindow):
         self.stage_header.setVisible(False)
         summary = self.controller.resumable_run()
         self.home.set_resumable(summary)
-        self.show("home")
+        self.show_screen("home")
 
     def show_history(self) -> None:
         self.history.show_runs(self.controller.runs())
-        self.show("history")
+        self.show_screen("history")
 
     def _set_stage(self, index: int) -> None:
         self.stage_header.setVisible(True)
@@ -216,13 +216,13 @@ class MainWindow(QMainWindow):
 
     def _new_change(self, mode: str) -> None:
         self.describe.reset(mode)
-        self.show("describe")
+        self.show_screen("describe")
 
     def _start_run(self, mode: str, request: str, attachments: list) -> None:
         if self.controller.start_run(mode, request, attachments):
             self.busy.show_message(text("working.plan"))
             self._set_stage(0)
-            self.show("busy")
+            self.show_screen("busy")
 
     def _continue_run(self, run_id: str) -> None:
         summary = next((item for item in self.controller.runs()
@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
         if self.controller.resume(run_id):
             self.busy.show_message(text("working.busy"))
             self._set_run_footer(True, run_id)
-            self.show("busy")
+            self.show_screen("busy")
 
     def _load_record(self, run_id: str) -> RunRecord | None:
         import json
@@ -257,7 +257,7 @@ class MainWindow(QMainWindow):
         self.send.show_handoff(handoff, self._packet_names(),
                                documents_count(self.store, handoff.task_key))
         self.receive.show_handoff(handoff)
-        self.show("send")
+        self.show_screen("send")
 
     def _packet_names(self) -> list[str]:
         return [Path(item).name for item in
@@ -309,7 +309,7 @@ class MainWindow(QMainWindow):
     def _reply_submitted(self, reply) -> None:
         self.controller.answer_reply(reply)
         self.busy.show_message(text("working.busy"))
-        self.show("busy")
+        self.show_screen("busy")
 
     def _keep_for_next_packet(self, paths: list) -> None:
         self.controller.run_attachments.extend(Path(item) for item in paths)
@@ -320,24 +320,24 @@ class MainWindow(QMainWindow):
         self.current_record = record
         self._set_stage(0)
         self.plan_check.show_tasks(tasks)
-        self.show("plan")
+        self.show_screen("plan")
 
     def _findings_ready(self, record: RunRecord, findings: list) -> None:
         self.current_record = record
         self._set_stage(2)
         self.findings.show_findings(findings)
-        self.show("findings")
+        self.show_screen("findings")
 
     def _checks_failed(self, record: RunRecord, results: list) -> None:
         self.current_record = record
         self._set_stage(3)
         self.test.show_failed(results)
-        self.show("test")
+        self.show_screen("test")
 
     def _answer_gate(self, decision: GateDecision) -> None:
         self.controller.answer_decision(decision)
         self.busy.show_message(text("working.busy"))
-        self.show("busy")
+        self.show_screen("busy")
 
     def _gate_with_note(self, kind: str, action: str) -> None:
         note = self.ask_note(text(f"note.title.{kind}" if kind != "rescope"
@@ -357,7 +357,7 @@ class MainWindow(QMainWindow):
                 self._in_test = True
                 self.test.reset()
                 self._set_stage(3)
-                self.show("test")
+                self.show_screen("test")
             self.test.on_progress(phase, label_key, message)
 
     def _run_settled(self, record: RunRecord) -> None:
@@ -371,7 +371,7 @@ class MainWindow(QMainWindow):
             self._set_run_footer(False)
             self._set_stage(5)
             self.stage_header.setVisible(False)
-            self.show("done")
+            self.show_screen("done")
         elif state is RunState.CANCELLED:
             self.toast(text("discard.done"))
             self.show_home()
@@ -386,7 +386,7 @@ class MainWindow(QMainWindow):
         self._set_stage(4)
         changed = self.controller.changed_files(record)
         self.save.show_record(record, changed, self.controller.diff_text(record))
-        self.show("save")
+        self.show_screen("save")
 
     def _run_failed(self, message: str) -> None:
         self._in_test = False
@@ -400,7 +400,7 @@ class MainWindow(QMainWindow):
             return
         if self.controller.accept_and_deliver(self.current_record.run_id):
             self.busy.show_message(text("working.busy"))
-            self.show("busy")
+            self.show_screen("busy")
 
     def _feedback(self) -> None:
         if self.current_record is None:
@@ -410,7 +410,7 @@ class MainWindow(QMainWindow):
             return
         if self.controller.feedback(self.current_record.run_id, note):
             self.busy.show_message(text("working.busy"))
-            self.show("busy")
+            self.show_screen("busy")
 
     def _discard(self) -> None:
         if self.current_record is None:
@@ -422,14 +422,14 @@ class MainWindow(QMainWindow):
             return
         if self.controller.discard(self.current_record.run_id):
             self.busy.show_message(text("working.busy"))
-            self.show("busy")
+            self.show_screen("busy")
 
     def _rerun_checks(self) -> None:
         if self.current_record is None:
             return
         if self.controller.rerun_checks(self.current_record.run_id):
             self.busy.show_message(text("working.checks"))
-            self.show("busy")
+            self.show_screen("busy")
 
     # ----- history and revert -----
 
@@ -450,7 +450,7 @@ class MainWindow(QMainWindow):
         timeline = self.controller.timeline(run_id)
         self.run_detail.show_timeline(summary, timeline, live=not summary.closed)
         self._open_run_id = run_id
-        self.show("run")
+        self.show_screen("run")
 
     def _go_back_to(self, sequence: int) -> None:
         if sequence < 0 or not getattr(self, "_open_run_id", ""):
@@ -470,7 +470,7 @@ class MainWindow(QMainWindow):
         if self.controller.revert_and_continue(self._open_run_id, sequence):
             self.toast(text("run.went_back"))
             self.busy.show_message(text("working.busy"))
-            self.show("busy")
+            self.show_screen("busy")
 
     # ----- stop -----
 
@@ -493,12 +493,12 @@ class MainWindow(QMainWindow):
             self.page_package.load(self.store.config.package.style)
         elif page == "checks":
             self.page_checks.load(self.store.checks())
-        self.show(f"set-{page}")
+        self.show_screen(f"set-{page}")
 
     def _settings_saved(self) -> None:
         self._after_config_change()
         self.toast(text("settings.saved"))
-        self.show("settings")
+        self.show_screen("settings")
 
     def _package_saved(self, style: str) -> None:
         try:
