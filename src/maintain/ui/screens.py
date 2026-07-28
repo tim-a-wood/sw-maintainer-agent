@@ -180,6 +180,9 @@ class SendScreen(Screen):
         self.add(self.card)
         self.contents = label("", "Hint")
         self.add(self.contents)
+        self.show_global_button = button("GLOBAL.md", "Ghost", None)
+        self.show_prompt_button = button("TASK.md", "Ghost", None)
+        self.add_row(self.show_global_button, self.show_prompt_button)
         self.add(label(text("send.attachments"), "Hint"))
         self.chips = FileChips()
         self.chips.removed.connect(self.remove_attachment.emit)
@@ -501,6 +504,17 @@ class TestScreen(Screen):
             passed = int(result.get("exit_code", 1) or 0) == 0
             self._add_check(name, "PASS" if passed else "FAIL",
                             "StatePass" if passed else "StateFail")
+            if not passed:
+                output = "\n".join(part for part in (
+                    str(result.get("stdout", "")).strip(),
+                    str(result.get("stderr", "")).strip()) if part)
+                if output:
+                    view = QPlainTextEdit()
+                    view.setObjectName("Code")
+                    view.setReadOnly(True)
+                    view.setPlainText(output[-4000:])
+                    view.setFixedHeight(120)
+                    self._rows.addWidget(view)
         self.outcome.setObjectName("Bad")
         self.outcome.setText(text("test.failed"))
         self._set_failed_controls(True)

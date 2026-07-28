@@ -124,6 +124,8 @@ class MainWindow(QMainWindow):
         self.describe.import_requested.connect(self._import_run_files)
 
         self.send.continue_clicked.connect(lambda: self.show("receive"))
+        self.send.show_global_button.clicked.connect(self._show_global_text)
+        self.send.show_prompt_button.clicked.connect(self._show_prompt_text)
         self.send.add_attachments.connect(self._add_packet_files)
         self.send.remove_attachment.connect(self._remove_packet_file)
         self.send.import_attachments.connect(self._import_packet_files)
@@ -537,6 +539,28 @@ class MainWindow(QMainWindow):
             self._wire_controller()
         else:
             self.controller.config = self.store.config
+
+    def _show_global_text(self) -> None:
+        from .screens import read_global
+        self.show_text_dialog("GLOBAL.md", read_global(self.store))
+
+    def _show_prompt_text(self) -> None:
+        if self.current_handoff is None:
+            return
+        self.show_text_dialog("TASK.md", self.current_handoff.request.instructions)
+
+    def show_text_dialog(self, title: str, content: str) -> None:
+        from PySide6.QtWidgets import QDialog, QPlainTextEdit, QVBoxLayout
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.resize(520, 420)
+        column = QVBoxLayout(dialog)
+        view = QPlainTextEdit()
+        view.setObjectName("Code")
+        view.setReadOnly(True)
+        view.setPlainText(content)
+        column.addWidget(view)
+        dialog.exec()
 
     # ----- dialogs (overridable in tests) -----
 
