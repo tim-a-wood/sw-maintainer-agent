@@ -71,6 +71,31 @@ class WorkspaceManager:
             raise RecoveryError((result.stderr or result.stdout).strip())
         return branch, worktree
 
+    def restore_tree(self, worktree: Path, tree_hash: str) -> None:
+        """Return the worktree files to a recorded tree without moving HEAD.
+
+        The tree objects come from the diff snapshots (git write-tree), so they
+        stay in the shared object database for the life of the run.
+        """
+        git(worktree, "reset", "--hard", "HEAD")
+        git(worktree, "clean", "-fd")
+        if not tree_hash or tree_hash == git(worktree, "rev-parse", "HEAD^{tree}"):
+            return
+        removed = git(worktree, "diff-tree", "-r", "--name-only", "--diff-filter=D",
+                      "HEAD", tree_hash)
+        env = os.environ.copy()
+        with tempfile.TemporaryDirectory(prefix="maintain-restore-") as directory:
+            env["GIT_INDEX_FILE"] = str(Path(directory) / "index")
+            subprocess.run(["git", "-C", str(worktree), "read-tree", tree_hash],
+                           env=env, check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(worktree), "checkout-index", "-f", "-a"],
+                           env=env, check=True, capture_output=True)
+        for line in removed.splitlines():
+            name = line.strip()
+            target = worktree / name
+            if name and target.is_file():
+                target.unlink()
+
     def diff(self, worktree: Path) -> DiffEvidence:
         text, paths, tree, statuses = self._snapshot(worktree)
         for relative in paths:

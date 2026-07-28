@@ -24,6 +24,7 @@ from .errors import (
     RecoveryError,
     VerificationError,
 )
+from .gates import GateDecision, WorkflowGates
 from .models import ProviderRequest, RunRecord, RunState
 from .locking import FileLock
 from .policy import transition
@@ -32,7 +33,7 @@ from .provider_factory import build_provider
 from .references import CopilotReference, prepare_reference
 from .runner import CommandRunner
 from .security import assert_no_secrets
-from .workspace import WorkspaceManager
+from .workspace import WorkspaceManager, git
 
 Progress = Callable[[str, str], object]
 
@@ -67,11 +68,13 @@ def _provider_step(role: str, provider_label: str) -> tuple[str, str]:
 
 class WorkflowEngine:
     def __init__(self, config: ProjectConfig, presenter: Presenter | None = None,
-                 provider_builder=build_provider, transition_hook=None) -> None:
+                 provider_builder=build_provider, transition_hook=None,
+                 gates: WorkflowGates | None = None) -> None:
         self.config = config
         self.presenter = presenter or Presenter()
         self.provider_builder = provider_builder
         self.transition_hook = transition_hook
+        self.gates = gates or WorkflowGates()
         self.workspaces = WorkspaceManager(config.repository,
                                            config.runtime_root.parent / "workspaces",
                                            (".maintain.json",))
@@ -128,6 +131,8 @@ class WorkflowEngine:
                                          }
                                          if prepared_reference is not None else None
                                      )})
+        self._iteration(record, store, "Run started", kind="start",
+                        sub=" ".join(record.request.split())[:200])
         return self.run(record)
 
     def resume(self, run_id: str) -> RunRecord:
@@ -183,6 +188,20 @@ class WorkflowEngine:
                                RunState.CONTEXT_EXPANDING}:
                     self._scope(record, store)
                 elif state is RunState.TASKS_READY:
+                    if not record.evidence.get("plan_approved"):
+                        decision = self.gates.plan_review(record, record.tasks)
+                        if decision.action == "rescope":
+                            self._rescope(record, store, decision.note)
+                            continue
+                        record.evidence["plan_approved"] = True
+                        store.append("human_plan_accepted", {"tasks": len(record.tasks)})
+                        self._iteration(record, store, "Plan approved",
+                                        kind="plan_approved",
+                                        sub=f"{len(record.tasks)} task"
+                                            f"{'s' if len(record.tasks) != 1 else ''}",
+                                        resume_state=RunState.TASKS_READY,
+                                        flags={"plan_approved": True})
+                        store.save_record(record)
                     if record.mode == "issue" and "pre_fix_reproduction" not in record.evidence:
                         self._reproduce_before_fix(record, store, Path(record.worktree))
                     self._implement(record, store, repair=False)
@@ -193,11 +212,21 @@ class WorkflowEngine:
                 elif state is RunState.REVIEWING:
                     self._review(record, store)
                 elif state is RunState.CHANGES_REQUESTED:
-                    self._repair_or_stop(record, store)
+                    decision = self.gates.review_findings(
+                        record, record.evidence.get("review", {}).get("findings", []))
+                    if decision.action == "rescope":
+                        self._rescope(record, store, decision.note)
+                    else:
+                        self._repair_or_stop(record, store)
                 elif state is RunState.TESTING:
                     self._test(record, store)
                 elif state is RunState.TEST_FAILED:
-                    self._repair_or_stop(record, store)
+                    decision = self.gates.test_failure(
+                        record, record.evidence.get("tests", {}).get("commands", []))
+                    if decision.action == "rescope":
+                        self._rescope(record, store, decision.note)
+                    else:
+                        self._repair_or_stop(record, store)
                 elif state is RunState.REPAIRING:
                     self._implement(record, store, repair=True)
                 elif state is RunState.VERIFIED:
@@ -326,6 +355,8 @@ class WorkflowEngine:
             self._move(record, store, RunState.REPAIRING, tree_hash=current.tree_hash)
             store.append("human_feedback", {"message": message.strip(),
                                             "tree_hash": current.tree_hash})
+            self._iteration(record, store, "Change requested", kind="feedback",
+                            sub=message.strip()[:200])
         return self.run(record)
 
     def cancel(self, run_id: str) -> RunRecord:
@@ -338,6 +369,7 @@ class WorkflowEngine:
                 return record
             self._move(record, store, RunState.CANCELLED, tree_hash=record.tree_hash)
             store.append("human_cancelled", {"retained_worktree": record.worktree})
+            self._iteration(record, store, "Discarded", kind="discarded")
             return record
 
     def cleanup_workspace(self, run_id: str) -> RunRecord:
@@ -574,16 +606,20 @@ class WorkflowEngine:
             "source_roots": list(self.config.source_roots),
             "test_roots": list(self.config.test_roots),
         }
+        rounds = int(record.evidence.get("plan_rounds", 0))
+        round_prefix = f"round-{rounds + 1}-" if rounds else ""
         for scope_attempt in range(1, 4):
-            response = self._exchange(record, store, "scope", f"scope-{scope_attempt}",
+            response = self._exchange(
+                record, store, "scope", f"{round_prefix}scope-{scope_attempt}",
                 SCOPE_INSTRUCTIONS,
                 {"mode": record.mode, "request": record.request,
                  "project_policy": scope_policy,
+                 "human_notes": list(record.evidence.get("rescope_notes", [])),
                  "context_expansions": expansions,
                  "repository_map": selector.repository_map(),
                  "candidate_files": [{"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
                                       "content": x.content} for x in disclosed.values()]},
-                conversation_suffix=f"scope-{scope_attempt}")
+                conversation_suffix=f"{round_prefix}scope-{scope_attempt}")
             tasks = response.get("tasks")
             referenced = {
                 str(path)
@@ -651,6 +687,7 @@ class WorkflowEngine:
                 "objective, allowed_files, done_when, verification, and depends_on.",
                 {"mode": record.mode, "request": record.request,
                  "project_policy": scope_policy,
+                 "human_notes": list(record.evidence.get("rescope_notes", [])),
                  "context_expansions": expansions,
                  "repository_map": selector.repository_map(),
                  "candidate_files": [{"path": x.path, "sha256": x.sha256,
@@ -710,7 +747,8 @@ class WorkflowEngine:
             "reduction_percent": (round((1 - disclosed_bytes / repository_bytes) * 100, 2)
                                   if repository_bytes else 0.0),
         }
-        artifact = store.write_artifact("context.json", [item.to_dict() for item in context])
+        artifact = store.write_artifact(f"{round_prefix}context.json",
+                                        [item.to_dict() for item in context])
         tasks = response.get("tasks")
         candidates = {item.path for item in context}
         if not isinstance(tasks, list) or not tasks:
@@ -748,8 +786,17 @@ class WorkflowEngine:
             seen.add(task_id)
         self._finish_exchange(record, store)
         record.tasks = tasks
-        task_artifact = store.write_artifact("tasks.json", tasks)
+        task_artifact = store.write_artifact(f"{round_prefix}tasks.json", tasks)
         self._move(record, store, RunState.TASKS_READY, artifacts=[artifact, task_artifact])
+        rounds = int(record.evidence.get("plan_rounds", 0)) + 1
+        record.evidence["plan_rounds"] = rounds
+        noun = "task" if len(tasks) == 1 else "tasks"
+        self._iteration(
+            record, store,
+            f"Plan {'changed' if rounds > 1 else 'proposed'} — {len(tasks)} {noun}",
+            kind="plan_proposed", resume_state=RunState.TASKS_READY,
+            tree_hash=self.workspaces.diff(Path(record.worktree)).tree_hash)
+        store.save_record(record)
         self.presenter.complete("PLAN", "The change plan is ready")
 
     def _validate_task_path(self, value: object, candidates: set[str],
@@ -797,7 +844,7 @@ class WorkflowEngine:
         if record.attempt > self.config.max_attempts:
             raise PolicyError("The repair limit is reached.")
         task = record.tasks[record.task_index]
-        attempt_dir = f"tasks/{task['id']}/attempt-{record.attempt}"
+        attempt_dir = self._attempt_dir(record, task["id"])
         paths = task["allowed_files"]
         files = {path: (Path(record.worktree) / path).read_text(encoding="utf-8")
                  for path in paths if (Path(record.worktree) / path).is_file()}
@@ -832,7 +879,8 @@ class WorkflowEngine:
                 "assistants return complete final files inline as specified in TASK.md. For an "
                 "issue, also return content.root_cause with statement and evidence_paths. Do not "
                 "use internet tools, claim local verification, or run MATLAB.", payload,
-                conversation_suffix=f"{task['id']}-attempt-{record.attempt}",
+                conversation_suffix=(f"{task['id']}-attempt-{record.attempt}"
+                                     f"{self._epoch_suffix(record)}"),
                 implementation_worktree=Path(record.worktree))
             workspace_edited = bool(content.pop("_maintain_workspace_edited", False))
             output_zip_name = content.pop("_maintain_output_zip", "")
@@ -898,6 +946,12 @@ class WorkflowEngine:
         self._move(record, store, RunState.IMPLEMENTED, tree_hash=diff.tree_hash,
                    artifacts=[patch_artifact, diff_artifact])
         noun = "file" if len(diff.paths) == 1 else "files"
+        self._iteration(
+            record, store,
+            f"{'Repair' if repair else 'Build'} applied — {len(diff.paths)} {noun}",
+            kind="repair_applied" if repair else "build_applied",
+            sub="isolated workspace", resume_state=RunState.REVIEWING,
+            tree_hash=diff.tree_hash)
         self.presenter.complete("CHANGE", f"Changed {len(diff.paths)} {noun}")
 
     def _review(self, record: RunRecord, store: AuditStore) -> None:
@@ -915,7 +969,8 @@ class WorkflowEngine:
             {"request": record.request, "tasks": record.tasks[:record.task_index + 1], "diff": diff.text,
              "files": review_files, "tree_hash": diff.tree_hash,
              "root_cause": record.evidence.get("root_cause")},
-            conversation_suffix=f"{task['id']}-review-{record.attempt}")
+            conversation_suffix=(f"{task['id']}-review-{record.attempt}"
+                                 f"{self._epoch_suffix(record)}"))
         decision = content.get("decision")
         if decision not in {"approve", "changes_requested"} and isinstance(
                 content.get("approved"), bool):
@@ -990,9 +1045,21 @@ class WorkflowEngine:
         record.evidence["review"] = {"decision": decision, "findings": findings,
                                      "tree_hash": diff.tree_hash}
         artifact = store.write_artifact(
-            f"tasks/{task['id']}/attempt-{record.attempt}/review.json", record.evidence["review"])
+            f"{self._attempt_dir(record, task['id'])}/review.json", record.evidence["review"])
         self._move(record, store, RunState.TESTING if decision == "approve" else RunState.CHANGES_REQUESTED,
                    artifacts=[artifact])
+        if decision == "approve":
+            self._iteration(record, store, "Review approved", kind="review_approved",
+                            resume_state=RunState.TESTING, tree_hash=diff.tree_hash,
+                            flags={"review": record.evidence["review"]})
+        else:
+            count = len(findings)
+            self._iteration(
+                record, store,
+                f"Review found {count} point{'s' if count != 1 else ''}",
+                kind="review_found", resume_state=RunState.CHANGES_REQUESTED,
+                tree_hash=diff.tree_hash,
+                flags={"review": record.evidence["review"]})
         self.presenter.complete(
             "REVIEW",
             ("The review found no required changes"
@@ -1055,7 +1122,7 @@ class WorkflowEngine:
         record.evidence["tests"] = evidence
         task_id = record.tasks[record.task_index]["id"]
         artifact = store.write_artifact(
-            f"tasks/{task_id}/attempt-{record.attempt}/tests.json", evidence)
+            f"{self._attempt_dir(record, task_id)}/tests.json", evidence)
         store.append("local_verification", {"tree_hash": diff.tree_hash, "passed": passed,
                                             "artifacts": [artifact]})
         unavailable_matlab = [result for result in results if result.matlab and result.exit_code == 127]
@@ -1066,6 +1133,15 @@ class WorkflowEngine:
             raise VerificationError("A verification command changed the isolated workspace.")
         if not passed:
             self._move(record, store, RunState.TEST_FAILED)
+            failed_names = [result.to_dict().get("name", "check")
+                            for result in results if result.exit_code != 0]
+            self._iteration(
+                record, store,
+                f"A check failed — {', '.join(failed_names) or 'workspace changed'}",
+                kind="checks_failed", resume_state=RunState.TEST_FAILED,
+                tree_hash=diff.tree_hash,
+                flags={"review": record.evidence.get("review", {}),
+                       "tests": evidence})
             return
         completed = record.evidence.setdefault("completed_tasks", [])
         completed.append({"task_id": record.tasks[record.task_index]["id"],
@@ -1091,6 +1167,10 @@ class WorkflowEngine:
             )
         record.tree_hash = diff.tree_hash
         self._move(record, store, RunState.VERIFIED, tree_hash=diff.tree_hash)
+        self._iteration(record, store, "All checks passed", kind="checks_passed",
+                        sub=", ".join(spec.name for spec in specs),
+                        resume_state=RunState.TESTING, tree_hash=diff.tree_hash,
+                        flags={"review": record.evidence.get("review", {})})
         self.presenter.complete("TEST", "All local checks passed")
 
     def _repair_or_stop(self, record: RunRecord, store: AuditStore) -> None:
@@ -1110,6 +1190,9 @@ class WorkflowEngine:
             f"maintain: {summary}", record.accepted_tree_hash)
         record.evidence["delivery"] = {"commit": commit, "tree_hash": record.accepted_tree_hash}
         self._move(record, store, RunState.DELIVERED)
+        self._iteration(record, store, "Saved", kind="saved",
+                        sub=f"branch {record.branch}",
+                        tree_hash=record.accepted_tree_hash)
         self.presenter.complete("DELIVER", f"Created the verified commit on {record.branch}")
 
     @staticmethod
@@ -1275,6 +1358,121 @@ class WorkflowEngine:
                 raise ProviderError(f"Provider {profile} cannot implement changes.")
         for provider in providers.values():
             provider.preflight()
+
+    @staticmethod
+    def _epoch_suffix(record: RunRecord) -> str:
+        epoch = int(record.evidence.get("timeline_epoch", 0))
+        return f"-e{epoch}" if epoch else ""
+
+    @staticmethod
+    def _attempt_dir(record: RunRecord, task_id: str) -> str:
+        """Per-attempt artifact directory; a new epoch after every go-back or
+        re-plan keeps the append-only audit inventory collision-free."""
+        return (f"tasks/{task_id}/attempt-{record.attempt}"
+                f"{WorkflowEngine._epoch_suffix(record)}")
+
+    def _iteration(self, record: RunRecord, store: AuditStore, label: str, *,
+                   kind: str, sub: str = "", resume_state: RunState | None = None,
+                   tree_hash: str = "", flags: dict | None = None,
+                   extra: dict | None = None) -> None:
+        """Record one user-facing iteration for the history timeline."""
+        store.append("iteration", {
+            "label": label, "sub": sub, "kind": kind,
+            "resume_state": str(resume_state) if resume_state else "",
+            "tree_hash": tree_hash,
+            "task_index": record.task_index, "attempt": record.attempt,
+            "completed_tasks": len(record.evidence.get("completed_tasks", [])),
+            "evidence_flags": flags or {},
+            **(extra or {}),
+        })
+
+    def _rescope(self, record: RunRecord, store: AuditStore, note: str) -> None:
+        """Start the plan again with a note. Applied work leaves the worktree;
+        the audit trail and artifacts keep the record."""
+        note = (note or "").strip()
+        worktree = Path(record.worktree)
+        git(worktree, "reset", "--hard", "HEAD")
+        git(worktree, "clean", "-fd")
+        if note:
+            record.evidence.setdefault("rescope_notes", []).append(note)
+        record.evidence["timeline_epoch"] = int(
+            record.evidence.get("timeline_epoch", 0)) + 1
+        for key in ("plan_approved", "review", "tests", "active_attempt",
+                    "_active_exchange", "completed_tasks", "changed_files",
+                    "root_cause", "pre_fix_reproduction", "verified_tree_hash"):
+            record.evidence.pop(key, None)
+        record.tasks = []
+        record.task_index = 0
+        record.attempt = 0
+        record.tree_hash = ""
+        store.append("human_rescope", {"note": note})
+        self._iteration(record, store, "Plan requested again", kind="rescope", sub=note)
+        self._move(record, store, RunState.SCOPING)
+        self.presenter.complete("PLAN", "Starting the plan again with your note")
+
+    def revert_to(self, run_id: str, sequence: int) -> RunRecord:
+        """Return the run to the state directly after a recorded iteration.
+
+        Nothing is deleted: the worktree files are reset to the recorded tree,
+        the run state moves to the iteration's resume point, and the audit
+        ledger only grows.
+        """
+        store = AuditStore(self.config.runtime_root, run_id)
+        self._require_saved_run(store)
+        with FileLock(store.run_dir / "run.lock", f"revert {run_id}"):
+            store.verify()
+            record = self._saved_record(store)
+            state = RunState(record.state)
+            if state in {RunState.ACCEPTED, RunState.DELIVERING, RunState.DELIVERED,
+                         RunState.NEEDS_HUMAN_DELIVERY, RunState.CANCELLED,
+                         RunState.FAILED}:
+                raise PolicyError(
+                    "This run is closed. To change a saved result, start a new change.")
+            target = None
+            for line in store.ledger.read_text(encoding="utf-8").splitlines():
+                event = json.loads(line)
+                if event.get("type") == "iteration" and event.get("sequence") == sequence:
+                    target = event
+                    break
+            if target is None:
+                raise PolicyError("The iteration does not exist in this run.")
+            payload = target.get("payload", {})
+            resume_value = str(payload.get("resume_state", ""))
+            if not resume_value:
+                raise PolicyError("This iteration is not a go-back point.")
+            resume_state = RunState(resume_value)
+            worktree = Path(record.worktree)
+            if not worktree.is_dir():
+                raise RecoveryError(
+                    "The isolated workspace is missing. Continue the run first.")
+            tree_hash = str(payload.get("tree_hash", ""))
+            self.workspaces.restore_tree(worktree, tree_hash)
+            for key in ("plan_approved", "review", "tests", "active_attempt",
+                        "_active_exchange", "verified_tree_hash"):
+                record.evidence.pop(key, None)
+            for key, value in dict(payload.get("evidence_flags", {})).items():
+                record.evidence[key] = value
+            completed = record.evidence.get("completed_tasks")
+            if isinstance(completed, list):
+                record.evidence["completed_tasks"] = completed[
+                    :int(payload.get("completed_tasks", 0))]
+            record.task_index = int(payload.get("task_index", 0))
+            record.attempt = int(payload.get("attempt", 0))
+            record.tree_hash = tree_hash
+            record.error = ""
+            record.evidence["timeline_epoch"] = int(
+                record.evidence.get("timeline_epoch", 0)) + 1
+            if state is not RunState.NEEDS_HUMAN:
+                self._move(record, store, RunState.NEEDS_HUMAN)
+            self._move(record, store, resume_state, tree_hash=tree_hash)
+            store.append("human_revert", {"target_sequence": sequence,
+                                          "tree_hash": tree_hash,
+                                          "from_state": str(state)})
+            self._iteration(record, store, "Went back", kind="revert",
+                            sub=str(payload.get("label", "")),
+                            extra={"target_sequence": sequence})
+            store.save_record(record)
+            return record
 
     def _move(self, record: RunRecord, store: AuditStore, target: RunState, tree_hash: str = "",
               artifacts: list[dict] | None = None) -> None:
