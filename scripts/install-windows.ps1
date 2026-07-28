@@ -461,7 +461,7 @@ cmd /k
     }
     Write-Host ""
     if ($null -eq $winner) {
-        Write-Host "A new terminal will find: nothing yet — sign out and back in if PATH does not refresh." -ForegroundColor Yellow
+        Write-Host "A new terminal will find: nothing yet - sign out and back in if PATH does not refresh." -ForegroundColor Yellow
     }
     elseif ((Split-Path -Parent $winner) -eq $installRoot) {
         Write-Host "A new terminal will run: $winner" -ForegroundColor Green

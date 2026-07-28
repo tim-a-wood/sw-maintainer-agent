@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -387,6 +388,68 @@ def test_installer_files_are_present():
     # The Windows installer verifies the runtime against pyproject's version.
     version = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert f'version = "{mod.VERSION}"' in version
+
+
+def test_windows_scripts_are_pure_ascii():
+    """Windows PowerShell reads .ps1 as ANSI unless it finds a BOM.
+
+    A UTF-8 em dash then decodes to a smart quote, which PowerShell treats
+    as a string delimiter, and the rest of the file is swallowed - the
+    script fails to parse before it runs a single line.
+    """
+    for relative in (
+        "scripts/install-windows.ps1",
+        "scripts/uninstall-windows.ps1",
+        "scripts/which-maintain.ps1",
+        "install-or-update-windows.cmd",
+        "uninstall-windows.cmd",
+        "which-maintain-windows.cmd",
+    ):
+        text = (PROJECT_ROOT / relative).read_text(encoding="utf-8")
+        offenders = sorted({character for character in text if ord(character) > 127})
+        assert not offenders, f"{relative} has non-ASCII characters: {offenders}"
+
+
+POWERSHELL = shutil.which("pwsh") or shutil.which("powershell") or "/opt/pwsh/pwsh"
+
+
+@pytest.mark.skipif(
+    not Path(POWERSHELL).is_file() if Path(POWERSHELL).is_absolute() else False,
+    reason="PowerShell is not available",
+)
+@pytest.mark.parametrize(
+    "script",
+    [
+        "scripts/install-windows.ps1",
+        "scripts/uninstall-windows.ps1",
+        "scripts/which-maintain.ps1",
+    ],
+)
+def test_powershell_scripts_parse(script):
+    """Parse each installer script; a syntax error means it never runs."""
+    path = PROJECT_ROOT / script
+    command = (
+        "$errors = $null; "
+        f"[System.Management.Automation.Language.Parser]::ParseFile('{path}', "
+        "[ref]$null, [ref]$errors) | Out-Null; "
+        "if ($errors) { $errors | ForEach-Object { "
+        "Write-Output ('line ' + $_.Extent.StartLineNumber + ': ' + $_.Message) }; exit 1 }"
+    )
+    proc = subprocess.run(
+        [POWERSHELL, "-NoProfile", "-Command", command],
+        capture_output=True, text=True,
+    )
+    if proc.returncode == 127 or "not found" in proc.stderr.lower():
+        pytest.skip("PowerShell is not available")
+    assert proc.returncode == 0, f"{script} does not parse:\n{proc.stdout}"
+
+
+def test_windows_here_strings_close_at_column_zero():
+    """A here-string terminator must start the line or the string runs on."""
+    text = (PROJECT_ROOT / "scripts/install-windows.ps1").read_text(encoding="utf-8")
+    opens = text.count("@'\n")
+    closes = len([line for line in text.split("\n") if line.startswith("'@")])
+    assert opens == closes, f"{opens} here-strings opened, {closes} closed at column 0"
 
 
 def test_command_aliases_match_their_originals(h):
