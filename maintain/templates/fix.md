@@ -22,6 +22,10 @@ Rules:
 - Produce exactly ONE fenced code block labelled `diff`, containing one
   unified Git diff with standard `diff --git a/path b/path` headers. No
   `index` lines. The patch must be accepted by `git apply`.
+- For every file the patch creates, include a `new file mode 100644` line
+  immediately after its `diff --git` header (use `deleted file mode 100644`
+  when a file is removed). `git apply` rejects created-file patches that lack
+  this line.
 - If the failure cannot be fixed within the approved scope, request a
   rescope instead using the alternative response format below.
 
@@ -82,6 +86,13 @@ diff --git a/path/to/file b/path/to/file
  context line
 -old line
 +new line
+diff --git a/path/to/new_file b/path/to/new_file
+new file mode 100644
+--- /dev/null
++++ b/path/to/new_file
+@@ -0,0 +1,2 @@
++first line
++second line
 ```
 
 If the problem cannot be fixed within the approved scope, reply instead with

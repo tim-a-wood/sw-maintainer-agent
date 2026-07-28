@@ -22,6 +22,10 @@ Rules:
   then `--- a/path` and `+++ b/path` (use `/dev/null` for created or deleted
   files), then `@@` hunks. Do not include `index` lines or commit metadata.
   The patch must be accepted by `git apply`.
+- For every file the patch creates, include a `new file mode 100644` line
+  immediately after its `diff --git` header (use `deleted file mode 100644`
+  when a file is removed). `git apply` rejects created-file patches that lack
+  this line.
 - Do not invent changes outside the scope, and do not reformat unrelated
   lines.
 - If the approved scope makes the task impossible, contradictory, or
@@ -80,6 +84,13 @@ diff --git a/path/to/file b/path/to/file
  context line
 -old line
 +new line
+diff --git a/path/to/new_file b/path/to/new_file
+new file mode 100644
+--- /dev/null
++++ b/path/to/new_file
+@@ -0,0 +1,2 @@
++first line
++second line
 ```
 
 If the approved scope is insufficient, reply instead with a first line of:

@@ -434,7 +434,7 @@ DIFF_BLOCK_RE = re.compile(
 def find_marker(text: str, name: str, values: list) -> Optional[str]:
     alternatives = "|".join(sorted(values, key=len, reverse=True))
     pattern = re.compile(
-        rf"^[ \t>]*\**[ \t]*{name}[ \t]*\**[ \t]*:[ \t]*\**[ \t]*({alternatives})\b",
+        rf"^[ \t>#]*\**[ \t]*{name}[ \t]*\**[ \t]*:[ \t]*\**[ \t]*({alternatives})\b",
         re.MULTILINE | re.IGNORECASE,
     )
     match = pattern.search(text)
@@ -442,13 +442,23 @@ def find_marker(text: str, name: str, values: list) -> Optional[str]:
 
 
 def extract_section(text: str, heading: str) -> Optional[str]:
-    pattern = re.compile(
-        rf"^#{{2,4}}[ \t]*\**[ \t]*{re.escape(heading)}[ \t]*\**[ \t]*:?[ \t]*\n"
-        rf"(.*?)(?=^#{{1,4}}[ \t]|\Z)",
-        re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    """Return the body of the section with the given heading.
+
+    The body runs until the next heading of the same or a higher level, so
+    deeper subheadings (for example ### under ##) stay inside the section.
+    """
+    heading_pattern = re.compile(
+        rf"^(#{{2,4}})[ \t]*\**[ \t]*{re.escape(heading)}[ \t]*\**[ \t]*:?[ \t]*\n",
+        re.MULTILINE | re.IGNORECASE,
     )
-    match = pattern.search(text)
-    return match.group(1).strip() if match else None
+    match = heading_pattern.search(text)
+    if not match:
+        return None
+    level = len(match.group(1))
+    stop = re.compile(rf"^#{{1,{level}}}[ \t]", re.MULTILINE)
+    end = stop.search(text, match.end())
+    body = text[match.end() : end.start()] if end else text[match.end() :]
+    return body.strip()
 
 
 def normalise_path(value: str) -> str:

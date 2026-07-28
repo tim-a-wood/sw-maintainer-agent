@@ -848,6 +848,18 @@ def test_parse_path_bullets_handles_common_bullet_shapes():
     ]
 
 
+def test_extract_section_keeps_subsections():
+    text = (
+        "## Proposed Changes\n\n"
+        "### snake.html (new file)\n\ndetails here\n\n"
+        "## Next Section\n\nother\n"
+    )
+    body = mod.extract_section(text, "Proposed Changes")
+    assert "snake.html" in body
+    assert "details here" in body
+    assert "other" not in body
+
+
 def test_extract_section_is_case_insensitive_and_bounded():
     text = (
         "## Allowed files:\n\nbody line\n\n"
@@ -870,6 +882,11 @@ def test_find_marker_tolerates_bold_and_quotes():
         == "CHANGES_REQUIRED"
     )
     assert mod.find_marker("status: rescoped", "STATUS", ["RESCOPED"]) == "RESCOPED"
+    assert (
+        mod.find_marker("## Verdict: CHANGES_REQUIRED", "VERDICT",
+                        ["APPROVE", "CHANGES_REQUIRED", "RESCOPE"])
+        == "CHANGES_REQUIRED"
+    )
     assert mod.find_marker("no marker here", "STATUS", ["SCOPE_COMPLETE"]) is None
 
 
