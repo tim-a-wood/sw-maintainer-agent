@@ -673,6 +673,20 @@ def test_every_waiting_stage_hands_its_package_to_the_clipboard(h, tmp_path):
     assert clipboard_holds_current_export()
 
 
+def test_the_package_reaches_the_clipboard_from_a_path_with_spaces(tmp_path):
+    """Repositories live where the user put them, spaces included."""
+    workspace = tmp_path / "my projects"
+    workspace.mkdir()
+    h = Harness(workspace)
+    copied = tmp_path / "copied.txt"
+    h.env["MAINTAIN_COPY_FILE_CMD"] = f"cp {{path}} {shlex.quote(str(copied))}"
+    h.setup()
+    out = h.run("new", "Fix the greeting").stdout
+    assert "copied to your clipboard" in out
+    assert copied.is_file(), "an unquoted path splits on the space and copies nothing"
+    assert "Maintain Handoff" in copied.read_text(encoding="utf-8")
+
+
 def test_clipboard_copy_failure_falls_back_to_instructions(h):
     h.env["MAINTAIN_COPY_FILE_CMD"] = "exit 1"
     h.setup()
@@ -1464,6 +1478,34 @@ def test_harden_packages_include_read_only_target_contents(h):
     assert "outside the approved scope" in proc.stdout
 
 
+def test_harden_does_not_warn_about_the_work_it_is_hardening(h):
+    """Closing a task leaves the change uncommitted, by design.
+
+    Running `harden` next is the documented flow, so the tree is expected to
+    be dirty — warning about it, and demanding a confirmation, means the
+    workflow objects to its own output.
+    """
+    h.setup()
+    h.run("new", "Fix the greeting")
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_DIRECT))
+    h.run("capture")
+    h.run("apply", input_text="y\n")
+    h.run("next")
+    h.set_clip(review_response("APPROVE"))
+    h.run("capture")
+    h.run("next", input_text="y\n")
+    assert h.git("status", "--porcelain").stdout.strip(), "the change is uncommitted"
+
+    out = h.run("harden").stdout                    # no confirmation supplied
+    assert "Created task:" in out
+    assert "Continue creating the task?" not in out
+    assert "Hardening the uncommitted work" in out
+    assert " M app.py" in out                       # says what it is hardening
+
+
 def test_harden_without_completed_tasks_targets_whole_repo(h):
     h.setup()
     h.run("harden")
@@ -1545,6 +1587,40 @@ def test_extract_diff_blocks_counts_blocks():
     two = one + "\n```diff\ndiff --git a/y b/y\n```\n"
     assert len(mod.extract_diff_blocks(two)) == 2
     assert mod.extract_diff_blocks("no fences") == []
+
+
+def test_diff_blocks_are_recognised_whatever_the_fence_says():
+    """Chatbots label a diff several ways; the body is what decides."""
+    body = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b"
+    for label in ("diff", "patch", "", "git-diff", "udiff"):
+        text = f"before\n```{label}\n{body}\n```\nafter\n"
+        assert len(mod.extract_diff_blocks(text)) == 1, label
+    # A fenced block that is not a diff is not mistaken for one.
+    assert mod.extract_diff_blocks("```python\nx = 1\n```\n") == []
+    assert mod.extract_diff_blocks("```\njust some notes\n```\n") == []
+
+
+def test_a_non_diff_fenced_block_survives_stripping():
+    """Only the patch is replaced; example code in the summary is kept."""
+    text = ("```python\nkeep = 1\n```\n\n"
+            "```patch\ndiff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n```\n")
+    stripped = mod.strip_diff_blocks(text)
+    assert "keep = 1" in stripped
+    assert "diff --git" not in stripped
+    assert "patch omitted" in stripped
+
+
+def test_patch_fence_reaches_apply(h):
+    """A ```patch fence is as good as ```diff, all the way through."""
+    h.setup()
+    h.run("new", "Fix the greeting")
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_DIRECT).replace("```diff", "```patch"))
+    out = h.run("capture").stdout
+    assert "Implementation response captured" in out
+    assert "Patch applied" in h.run("apply", input_text="y\n").stdout
 
 
 def test_patch_paths_extracts_and_validates():

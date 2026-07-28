@@ -26,10 +26,12 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -491,8 +493,13 @@ def copy_file_to_clipboard(path: Path) -> bool:
     """
     override = os.environ.get("MAINTAIN_COPY_FILE_CMD")
     if override:
+        # Quote the substitution: package paths sit under the repository, and
+        # a repository checked out somewhere with a space in its name would
+        # otherwise split into two arguments and silently fail.
+        quoted = (f'"{path}"' if platform.system() == "Windows"
+                  else shlex.quote(str(path)))
         proc = subprocess.run(
-            override.replace("{path}", str(path)), shell=True,
+            override.replace("{path}", quoted), shell=True,
             capture_output=True, text=True,
         )
         return proc.returncode == 0
@@ -509,6 +516,9 @@ def copy_file_to_clipboard(path: Path) -> bool:
         quoted = str(path).replace('"', '\\"')
         proc = run(["osascript", "-e", f'set the clipboard to (POSIX file "{quoted}")'])
         return proc.returncode == 0
+    # A uri-list entry is a URI, so spaces and other reserved characters have
+    # to be percent-encoded or the receiving application sees a truncated path.
+    uri = "file://" + urllib.parse.quote(str(path))
     for tool, args in (
         ("wl-copy", ["wl-copy", "--type", "text/uri-list"]),
         ("xclip", ["xclip", "-selection", "clipboard", "-t", "text/uri-list"]),
@@ -516,7 +526,7 @@ def copy_file_to_clipboard(path: Path) -> bool:
         if shutil.which(tool):
             try:
                 proc = subprocess.run(
-                    args, input=f"file://{path}\n", text=True, capture_output=True,
+                    args, input=f"{uri}\n", text=True, capture_output=True,
                 )
             except OSError:
                 continue
@@ -575,10 +585,20 @@ def next_free(path: Path, tag: str) -> Path:
 
 # Response parsing ----------------------------------------------------------
 
-DIFF_BLOCK_RE = re.compile(
-    r"^[ \t]{0,3}(?P<fence>`{3,})diff[^\n]*\n(?P<body>.*?)\n[ \t]{0,3}(?P=fence)[ \t]*$",
+# Any fenced block, so the label can be inspected rather than demanded.
+# Chatbots label a diff ```diff, ```patch, or nothing at all, and rejecting
+# correct work over the label is the wrong trade: the body is checked for a
+# unified diff instead, which is what actually matters.
+FENCED_BLOCK_RE = re.compile(
+    r"^[ \t]{0,3}(?P<fence>`{3,})[ \t]*(?P<lang>[A-Za-z0-9_.+-]*)[^\n]*\n"
+    r"(?P<body>.*?)\n[ \t]{0,3}(?P=fence)[ \t]*$",
     re.MULTILINE | re.DOTALL,
 )
+
+DIFF_LANGUAGES = {"", "diff", "patch", "udiff", "gitdiff", "git-diff", "git"}
+
+# A unified diff always opens with one of these; prose and source code do not.
+DIFF_BODY_RE = re.compile(r"^(diff --git |--- |\+\+\+ |@@ )", re.MULTILINE)
 
 
 def find_marker(text: str, name: str, values: list) -> Optional[str]:
@@ -645,12 +665,23 @@ def unsafe_path_reason(path: str) -> Optional[str]:
     return None
 
 
+def is_diff_block(match) -> bool:
+    """Whether a fenced block holds a unified diff."""
+    return (match.group("lang").lower() in DIFF_LANGUAGES
+            and bool(DIFF_BODY_RE.search(match.group("body"))))
+
+
 def extract_diff_blocks(text: str) -> list:
-    return [match.group("body") for match in DIFF_BLOCK_RE.finditer(text)]
+    return [match.group("body") for match in FENCED_BLOCK_RE.finditer(text)
+            if is_diff_block(match)]
 
 
 def strip_diff_blocks(text: str) -> str:
-    return DIFF_BLOCK_RE.sub("[patch omitted — preserved in the task's round directory]", text)
+    return FENCED_BLOCK_RE.sub(
+        lambda match: ("[patch omitted — preserved in the task's round directory]"
+                       if is_diff_block(match) else match.group(0)),
+        text,
+    )
 
 
 # Chatbots often omit the metadata line git requires for created or deleted
@@ -1540,7 +1571,17 @@ def create_task(
         for line in git_out(root, "status", "--porcelain").splitlines()
         if line.strip() and not line[3:].startswith(APP_DIR_NAME)
     ]
-    if dirty:
+    if dirty and kind == "harden":
+        # Hardening runs on work the workflow itself just applied and left
+        # uncommitted by design, so an uncommitted tree is the expected
+        # state here rather than something to warn about.
+        say("Hardening the uncommitted work in the tree:")
+        for line in dirty[:10]:
+            say(f"  {line}")
+        if len(dirty) > 10:
+            say(f"  ... and {len(dirty) - 10} more")
+        say("")
+    elif dirty:
         say("The working tree has uncommitted changes:")
         for line in dirty[:10]:
             say(f"  {line}")
@@ -1840,7 +1881,10 @@ def run_tests(task: Task, config: dict) -> None:
     except OSError as exc:
         exit_code = -1
         output = f"The test command could not run: {exc}"
+    # The reviewer is a chatbot reading this block cold, so state the verdict
+    # rather than leaving it to be inferred from the exit code.
     results_path.write_text(
+        f"Test status: {'PASSED' if exit_code == 0 else 'FAILED'}\n"
         f"Command: {command}\nExit code: {exit_code}\nRecorded: {timestamp}\n\n{output}",
         encoding="utf-8",
     )
@@ -2176,6 +2220,17 @@ def confirm_test_command(root: Path, view, command: str, source: str) -> bool:
         set_test_command(root, command)
         say(f"Tests: {command}   ({source}, and it passes)")
         return True
+
+    if result.get("code") == 5 and "pytest" in command:
+        # pytest exits 5 when it collected nothing. The command is not
+        # failing, it simply is not testing anything, and reporting it as a
+        # failure sends people looking for a bug that is not there.
+        say("")
+        say("warning: that command ran, but pytest found no tests to collect.")
+        say("Files named test_*.py that only assert at import are not collected —")
+        say("pytest needs test functions, or a different command.")
+        return False
+
     say("")
     say(f"warning: that command did not pass:")
     for line in (result["output"] or "(no output)").splitlines()[-8:]:
@@ -2189,11 +2244,13 @@ def confirm_test_command(root: Path, view, command: str, source: str) -> bool:
     return False
 
 
-def confirm_scaffold(root: Path, view, command: str) -> bool:
+def confirm_scaffold(root: Path, view, command: str, had_tests: bool = False) -> bool:
     """Record a freshly scaffolded command, which may not pass yet.
 
     On a new project the scaffolded test fails because there is nothing to
-    test — that is the point: the first task has to make it pass.
+    test — that is the point: the first task has to make it pass. On a
+    project that already had tests the failure means something else, so it
+    is not explained away.
     """
     testing = testing_module()
     say(f"Checking it works: {command}")
@@ -2207,8 +2264,13 @@ def confirm_scaffold(root: Path, view, command: str) -> bool:
     for line in (result["output"] or "(no output)").splitlines()[-6:]:
         say(f"  {line}")
     say("")
-    say("For a project with no code yet that is expected — the test becomes")
-    say("the goal your first task has to meet.")
+    if had_tests:
+        say("This command also runs the tests this project already had, and")
+        say("something there is failing. Fix that first, or choose a command")
+        say("that runs only the new harness.")
+    else:
+        say("For a project with no code yet that is expected — the test becomes")
+        say("the goal your first task has to meet.")
     answer = view.ask("Use this command? [Y/n]", "y").strip().lower()
     if answer.startswith("n"):
         return False
@@ -2253,17 +2315,29 @@ def configure_tests(root: Path, view) -> None:
                  "c": "a Makefile test target"}
     language = testing.guess_language(root)
     say("")
-    say("This project has no tests Maintain can run, and local verification is")
-    say("the one automatic check in the workflow.")
-    say("")
-    if language in LANGUAGES:
-        view.menu("1", "Set one up for me", f"looks like {language}: {LANGUAGES[language]}")
+    if detected:
+        # Something was found and did not work out. Saying the project has no
+        # tests would contradict what was on screen a moment ago, and setting
+        # up a harness is the wrong first suggestion when one already exists.
+        say("Maintain still needs a way to verify patches locally.")
+        say("")
+        view.menu("1", "Add a harness anyway", "beside the tests already here")
+        view.menu("2", "I have a command", "type it yourself")
+        view.menu("3", "Skip for now", "results recorded as NOT_CONFIGURED")
+        default = "2"
     else:
-        view.menu("1", "Set one up for me", "choose the language")
-    view.menu("2", "I have a command", "type it yourself")
-    view.menu("3", "Skip for now", "results recorded as NOT_CONFIGURED")
+        say("This project has no tests Maintain can run, and local verification is")
+        say("the one automatic check in the workflow.")
+        say("")
+        if language in LANGUAGES:
+            view.menu("1", "Set one up for me", f"looks like {language}: {LANGUAGES[language]}")
+        else:
+            view.menu("1", "Set one up for me", "choose the language")
+        view.menu("2", "I have a command", "type it yourself")
+        view.menu("3", "Skip for now", "results recorded as NOT_CONFIGURED")
+        default = "1"
     say("")
-    choice = view.ask("Choose", "1").strip()
+    choice = view.ask("Choose", default).strip()
 
     if choice.startswith("1"):
         if language not in LANGUAGES:
@@ -2280,7 +2354,7 @@ def configure_tests(root: Path, view) -> None:
         result = testing.scaffold_tests(root, language)
         for path in result["created"]:
             say(f"Created {path.relative_to(root)}")
-        if confirm_scaffold(root, view, result["command"]):
+        if confirm_scaffold(root, view, result["command"], had_tests=bool(detected)):
             return
         say("Next: Set \"test_command\" in .maintain/config.json when the "
             "project can run its tests.")
