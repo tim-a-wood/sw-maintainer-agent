@@ -262,6 +262,10 @@ isolated worktree, exactly as today.
 
 ## 10. UI design (R1, R4, R9, R12, R13)
 
+An interactive mockup of these screens, with a simulated Copilot window, is
+at `docs/mockup/simple-ui-mockup.html`. Open it in a browser and click
+through the full loop.
+
 Design rules:
 
 - One screen, one decision. No screen shows more than one primary action.
