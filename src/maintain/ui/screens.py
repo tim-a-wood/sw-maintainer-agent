@@ -22,9 +22,9 @@ from maintain.zip_package import global_prompt_text
 
 from .config_store import BUILTIN_PROMPTS, ConfigStore
 from .strings import text
-from .widgets import (ChoiceButton, DropZone, FileChips, NumberBadge,
-                      PacketCard, Spinner, StateChip, StatusLine, TimelineDot,
-                      button, label, run_state_chip)
+from .widgets import (ChoiceButton, DiffHighlighter, DropZone, FileChips,
+                      NumberBadge, PacketCard, Spinner, StateChip, StatusLine,
+                      TimelineDot, button, label, run_state_chip)
 
 TASK_TITLES = {"plan": "send.plan.title", "build": "send.build.title",
                "repair": "send.repair.title", "review": "send.review.title"}
@@ -601,6 +601,8 @@ class SaveScreen(Screen):
         self.diff_view.setReadOnly(True)
         self.diff_view.setVisible(False)
         self.diff_view.setMinimumHeight(180)
+        self.diff_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._diff_highlighter = DiffHighlighter(self.diff_view.document())
         self.add(self.diff_view)
         self.add_gap()
         self.add_row(button(text("save.accept"), "Primary", self.accept.emit))

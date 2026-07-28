@@ -227,6 +227,52 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     assert worktree_file.read_text(encoding="utf-8") == 'VALUE = "after"\n'
 
 
+def test_diff_line_kinds_cover_headers_changes_and_ambiguity():
+    from maintain.ui.widgets import diff_line_kind
+    assert diff_line_kind("diff --git a/x.py b/x.py") == "header"
+    assert diff_line_kind("index 3f1c2aa..9d0b1ef 100644") == "header"
+    assert diff_line_kind("--- a/src/loader.py") == "header"
+    assert diff_line_kind("+++ b/src/loader.py") == "header"
+    assert diff_line_kind("--- /dev/null") == "header"
+    assert diff_line_kind("+++ /dev/null") == "header"
+    assert diff_line_kind("@@ -39,6 +39,13 @@ def load_wind(records):") == "header"
+    assert diff_line_kind("new file mode 100644") == "header"
+    assert diff_line_kind("+    filtered.append(r)") == "added"
+    assert diff_line_kind("-    return [r for r in records]") == "removed"
+    # A removed SQL comment produces three dashes; it is not a file header.
+    assert diff_line_kind("--- select comment") == "removed"
+    assert diff_line_kind("+++ added plus line") == "added"
+    assert diff_line_kind("     context line") == "context"
+    assert diff_line_kind("") == "context"
+
+
+def test_save_screen_diff_view_highlights(qt_app, tmp_path, monkeypatch):
+    from PySide6.QtGui import QTextCursor
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    diff = ("diff --git a/app.py b/app.py\n"
+            "--- a/app.py\n"
+            "+++ b/app.py\n"
+            "@@ -1 +1 @@\n"
+            '-VALUE = "before"\n'
+            '+VALUE = "after"\n')
+    window.save.diff_view.setPlainText(diff)
+    qt_app.processEvents()
+    document = window.save.diff_view.document()
+
+    def line_color(number: int) -> str:
+        ranges = document.findBlockByNumber(number).layout().formats()
+        assert ranges, f"line {number} has no highlight"
+        line_format = ranges[0].format
+        return line_format.foreground().color().name()
+
+    assert line_color(4) == "#ff9b8f"   # removed
+    assert line_color(5) == "#7ce0a3"   # added
+    assert line_color(0) == "#8fb8e8"   # file header
+    assert line_color(3) == "#8fb8e8"   # hunk header
+
+
 def test_theme_defaults_dark_toggles_and_persists(qt_app, tmp_path, monkeypatch):
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)

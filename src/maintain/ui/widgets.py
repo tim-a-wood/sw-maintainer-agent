@@ -8,7 +8,8 @@ from typing import Callable
 from PySide6.QtCore import (QMimeData, QPoint, QRect, QSize, Qt, QTimer, QUrl,
                             Signal)
 from PySide6.QtGui import (QColor, QDrag, QDragEnterEvent, QDropEvent, QFont,
-                           QPainter, QPen, QPixmap)
+                           QPainter, QPen, QPixmap, QSyntaxHighlighter,
+                           QTextCharFormat)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLayout,
                                QPushButton, QSizePolicy, QVBoxLayout, QWidget)
@@ -563,3 +564,56 @@ class NumberBadge(QLabel):
         self.setObjectName("NumberBadge")
         self.setFixedSize(24, 24)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+
+# The diff colors from the mockup's code block, which is dark in both themes.
+DIFF_ADDED = "#7ce0a3"
+DIFF_REMOVED = "#ff9b8f"
+DIFF_HEADER = "#8fb8e8"
+
+_DIFF_HEADER_STARTS = ("diff --git", "index ", "@@", "new file mode",
+                       "deleted file mode", "old mode", "new mode",
+                       "similarity index", "rename from", "rename to",
+                       "Binary files")
+_DIFF_FILE_TARGETS = ("a/", "b/", '"a/', '"b/', "/dev/null")
+
+
+def diff_line_kind(line: str) -> str:
+    """Classify one unified-diff line: header, added, removed, or context.
+
+    A file header (``--- a/x``) and a removed line that itself starts with
+    two dashes (``--- comment``) are told apart by the header's target.
+    """
+    if line.startswith(_DIFF_HEADER_STARTS):
+        return "header"
+    if line.startswith(("+++ ", "--- ")):
+        target = line[4:]
+        if target.startswith(_DIFF_FILE_TARGETS):
+            return "header"
+        return "added" if line[0] == "+" else "removed"
+    if line in ("+++", "---"):
+        return "header"
+    if line.startswith("+"):
+        return "added"
+    if line.startswith("-"):
+        return "removed"
+    return "context"
+
+
+class DiffHighlighter(QSyntaxHighlighter):
+    """Colors added, removed, and header lines in a unified diff view."""
+
+    def highlightBlock(self, block_text: str) -> None:  # noqa: N802
+        kind = diff_line_kind(block_text)
+        if kind == "context":
+            return
+        line_format = QTextCharFormat()
+        if kind == "header":
+            line_format.setForeground(QColor(DIFF_HEADER))
+        elif kind == "added":
+            line_format.setForeground(QColor(DIFF_ADDED))
+            line_format.setBackground(QColor(124, 224, 163, 26))
+        else:
+            line_format.setForeground(QColor(DIFF_REMOVED))
+            line_format.setBackground(QColor(255, 155, 143, 26))
+        self.setFormat(0, len(block_text), line_format)
