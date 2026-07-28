@@ -172,7 +172,8 @@ def pytest_available() -> bool:
         if not shutil.which(executable):
             continue
         proc = subprocess.run(
-            [executable, "-m", "pytest", "--version"], capture_output=True, text=True,
+            [executable, "-m", "pytest", "--version"], capture_output=True,
+            stdin=subprocess.DEVNULL, text=True,
         )
         if proc.returncode == 0:
             return True
@@ -236,11 +237,15 @@ def scaffold_tests(root: Path, language: str) -> dict:
 
 
 def verify_command(root: Path, command: str, timeout: int = 120) -> dict:
-    """Run the command once so a broken one is caught during setup."""
+    """Run the command once so a broken one is caught during setup.
+
+    stdin is closed: setup is a sequence of prompts, and a command that
+    reads stdin would consume the answers meant for them.
+    """
     try:
         proc = subprocess.run(
             command, shell=True, cwd=str(root), capture_output=True,
-            text=True, timeout=timeout,
+            stdin=subprocess.DEVNULL, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "output": f"timed out after {timeout} seconds"}

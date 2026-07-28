@@ -46,6 +46,9 @@ DEFAULT_CONFIG = {
     "harden_command": None,
     "maximum_rounds": 3,
     "repomix_args": [],
+    # A suite that waits on a port, a prompt or the network would otherwise
+    # hang the whole workflow with nothing on screen. Generous, but bounded.
+    "test_timeout_seconds": 900,
 }
 
 # Workflow stages -----------------------------------------------------------
@@ -170,9 +173,12 @@ def quiet_guidance():
 
 
 def run(cmd: list, cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
+    """Run a helper program. stdin is closed: nothing Maintain shells out to
+    should ever prompt, and one that does would hang holding the terminal."""
     return subprocess.run(
         cmd,
         cwd=str(cwd) if cwd else None,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -180,17 +186,25 @@ def run(cmd: list, cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
     )
 
 
-def run_shell_combined(command: str, cwd: Path) -> subprocess.CompletedProcess:
-    """Run a shell command capturing stdout and stderr interleaved."""
+def run_shell_combined(command: str, cwd: Path,
+                       timeout: Optional[int] = None) -> subprocess.CompletedProcess:
+    """Run a shell command capturing stdout and stderr interleaved.
+
+    stdin is closed. A test command must never prompt, and one that reads
+    stdin would otherwise inherit the terminal — swallowing whatever the
+    user types next, or waiting for input that is never coming.
+    """
     return subprocess.run(
         command,
         shell=True,
         cwd=str(cwd),
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=timeout,
     )
 
 
@@ -274,7 +288,25 @@ class Task:
         self.dir = maintain_dir(root) / "tasks" / task_id
         self.state_file = self.dir / "state.json"
         if self.state_file.exists():
-            self.state = json.loads(self.state_file.read_text(encoding="utf-8"))
+            # Editing state.json by hand is a documented escape hatch — the
+            # round-limit message asks for it — so a syntax error there is a
+            # user mistake to explain, not an internal failure to crash on.
+            try:
+                self.state = json.loads(self.state_file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise MaintainError(
+                    f"The task state file is not valid JSON: "
+                    f"{self.state_file.relative_to(root) if root in self.state_file.parents else self.state_file}\n"
+                    f"{exc}",
+                    "Correct the file (a text editor will show the syntax error), or "
+                    "clear .maintain/current-task to set the task aside.",
+                ) from None
+            except OSError as exc:
+                raise MaintainError(
+                    f"The task state file could not be read: {exc}",
+                    "Check the file's permissions, or clear .maintain/current-task "
+                    "to set the task aside.",
+                ) from None
         else:
             self.state = {}
 
@@ -447,6 +479,7 @@ def read_clipboard() -> str:
         proc = subprocess.run(
             override,
             shell=True,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -500,7 +533,7 @@ def copy_file_to_clipboard(path: Path) -> bool:
                   else shlex.quote(str(path)))
         proc = subprocess.run(
             override.replace("{path}", quoted), shell=True,
-            capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
         )
         return proc.returncode == 0
 
@@ -814,6 +847,31 @@ def patch_paths(patch: str) -> list:
     return sorted(paths)
 
 
+def symlink_targets(patch: str) -> list:
+    """Symbolic links a patch creates, as (path, target) pairs.
+
+    A symlink passes the allowed-files check like any other path, but a
+    diffstat shows it as a one-line file and never says where it points.
+    """
+    found = []
+    for block in re.split(r"^(?=diff --git )", patch, flags=re.MULTILINE):
+        if "mode 120000" not in block:
+            continue
+        header = re.match(
+            r'^diff --git (?:"a/([^"]+)"|a/(\S+)) (?:"b/([^"]+)"|b/(\S+))', block)
+        if not header:
+            continue
+        name = next((group for group in header.groups()[2:] if group), None) \
+            or next((group for group in header.groups()[:2] if group), "")
+        target = next(
+            (line[1:] for line in block.splitlines()
+             if line.startswith("+") and not line.startswith("+++")),
+            "(unknown)",
+        )
+        found.append((normalise_path(name), target.strip()))
+    return found
+
+
 # Repository context --------------------------------------------------------
 
 
@@ -933,8 +991,35 @@ def wrapped_diff(diff: str) -> str:
     return f"````diff\n{diff.rstrip()}\n````"
 
 
+# A package is uploaded to a chatbot, so it has to stay a size one will
+# accept. A suite that logs every case can produce megabytes of output; the
+# head and the tail are where the useful part is, so the middle is dropped.
+OUTPUT_HEAD_LINES = 80
+OUTPUT_TAIL_LINES = 400
+
+
+OUTPUT_LINE_LIMIT = 2000
+
+
+def trim_output(text: str) -> str:
+    lines = [
+        line if len(line) <= OUTPUT_LINE_LIMIT
+        else line[:OUTPUT_LINE_LIMIT] + f"  [... {len(line) - OUTPUT_LINE_LIMIT} more characters ...]"
+        for line in text.rstrip().splitlines()
+    ]
+    if len(lines) <= OUTPUT_HEAD_LINES + OUTPUT_TAIL_LINES:
+        return "\n".join(lines)
+    dropped = len(lines) - OUTPUT_HEAD_LINES - OUTPUT_TAIL_LINES
+    return "\n".join(
+        lines[:OUTPUT_HEAD_LINES]
+        + ["", f"[... {dropped} lines omitted — the full output is in the task's "
+              f"round directory, test-results.txt ...]", ""]
+        + lines[-OUTPUT_TAIL_LINES:]
+    )
+
+
 def wrapped_output(text: str) -> str:
-    return f"````\n{text.rstrip()}\n````"
+    return f"````\n{trim_output(text)}\n````"
 
 
 def files_snapshot(task: Task, files: list) -> str:
@@ -1873,11 +1958,31 @@ def run_tests(task: Task, config: dict) -> None:
         say("Next: Run `maintain next` to generate the review package.")
         return
 
+    try:
+        timeout = max(1, int(config.get("test_timeout_seconds")
+                             or DEFAULT_CONFIG["test_timeout_seconds"]))
+    except (TypeError, ValueError):
+        timeout = DEFAULT_CONFIG["test_timeout_seconds"]
+
     say(f"Running tests: {command}")
     try:
-        proc = run_shell_combined(command, task.root)
+        proc = run_shell_combined(command, task.root, timeout=timeout)
         exit_code = proc.returncode
         output = proc.stdout or ""
+    except subprocess.TimeoutExpired as exc:
+        # A hang is a failed round, not a reason to stop: the correction
+        # package carries the timeout and the chatbot gets to address it.
+        partial = exc.output or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", "replace")
+        exit_code = -1
+        output = (f"The test command did not finish within {timeout} seconds "
+                  f"and was stopped.\n"
+                  f'Raise "test_timeout_seconds" in .maintain/config.json if the '
+                  f"suite is simply slow.\n\n" + partial)
+        say("")
+        say(f"warning: the test command did not finish within {timeout} seconds "
+            f"and was stopped.")
     except OSError as exc:
         exit_code = -1
         output = f"The test command could not run: {exc}"
@@ -2000,6 +2105,19 @@ def cmd_apply(root: Optional[Path] = None) -> None:
     if stat.returncode == 0 and stat.stdout.strip():
         say(stat.stdout.rstrip())
     say("git apply --check passed.")
+
+    # A symlink is a file like any other as far as the scope check goes, but
+    # it points somewhere, and where it points is not visible in a diffstat.
+    symlinks = symlink_targets(patch_text)
+    if symlinks:
+        say("")
+        say("warning: this patch creates symbolic links:")
+        for name, target in symlinks:
+            say(f"  {name} -> {target}")
+        say("A link can point outside the repository. Check these before continuing.")
+        if not confirm("Apply the patch even so?"):
+            say("Patch not applied. Nothing was changed.")
+            return
 
     # 6. Request confirmation.
     if not confirm("Apply this patch to the working tree?", routine=True):
@@ -2825,9 +2943,9 @@ def main(argv: Optional[list] = None) -> int:
         "start": "new",
         "home": "",
     }.get(args[0], args[0])
-    if command == "":
-        return cmd_home()
     try:
+        if command == "":
+            return cmd_home()
         if command == "init":
             cmd_init()
         elif command == "new":

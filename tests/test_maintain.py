@@ -1623,6 +1623,116 @@ def test_patch_fence_reaches_apply(h):
     assert "Patch applied" in h.run("apply", input_text="y\n").stdout
 
 
+SYMLINK_PATCH = '''diff --git a/link b/link
+new file mode 120000
+--- /dev/null
++++ b/link
+@@ -0,0 +1 @@
++/etc/passwd
+'''
+
+
+def test_enormous_test_output_does_not_become_an_unusable_package():
+    """Packages are uploaded to a chatbot, so they have to stay uploadable."""
+    small = "one\ntwo\nthree"
+    assert mod.wrapped_output(small) == f"````\n{small}\n````"
+
+    huge = "\n".join("y" * 200 for _ in range(20_000))     # about 4 MB
+    trimmed = mod.wrapped_output(huge)
+    assert len(trimmed) < 150_000, len(trimmed)
+    assert "lines omitted" in trimmed
+    assert "test-results.txt" in trimmed, "says where the full output is"
+    assert trimmed.count("\n") < 600
+
+    one_long_line = "z" * 500_000
+    assert len(mod.wrapped_output(one_long_line)) < 5_000
+
+
+def test_a_flooding_test_suite_still_produces_a_usable_package(h):
+    h.setup()
+    flood = (f"{shlex.quote(sys.executable)} -c "
+             '"import sys; [print(\'y\' * 200) for _ in range(20000)]; sys.exit(1)"')
+    h.config(test_command=flood)
+    h.run("new", "Fix the greeting")
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_DIRECT))
+    h.run("capture")
+    h.run("apply", input_text="y\n")
+    h.run("next")
+
+    results = (h.task_dir() / "rounds" / "01" / "test-results.txt").read_text()
+    assert len(results) > 1_000_000, "the full output is still recorded on disk"
+    package = (h.task_dir() / "rounds" / "02" / "fix-package.md").read_text()
+    assert len(package) < 300_000, f"package is {len(package)} characters"
+    assert "lines omitted" in package
+
+
+def test_symlink_targets_reads_where_a_link_points():
+    assert mod.symlink_targets(SYMLINK_PATCH) == [("link", "/etc/passwd")]
+    assert mod.symlink_targets(PATCH_DIRECT) == []
+    assert mod.symlink_targets(PATCH_DIRECT + SYMLINK_PATCH) == [("link", "/etc/passwd")]
+    quoted = SYMLINK_PATCH.replace("a/link b/link", '"a/with space/l" "b/with space/l"')
+    assert mod.symlink_targets(quoted) == [("with space/l", "/etc/passwd")]
+
+
+def test_apply_shows_where_a_new_symlink_points(h):
+    """A diffstat shows a symlink as a one-line file and hides its target."""
+    h.setup()
+    h.run("new", "Add a link")
+    h.set_clip(SCOPE_RESPONSE.replace("- app.py", "- app.py\n- link"))
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(SYMLINK_PATCH))
+    h.run("capture")
+
+    out = h.run("apply", input_text="n\n").stdout
+    assert "creates symbolic links" in out
+    assert "link -> /etc/passwd" in out
+    assert not (h.repo / "link").exists(), "declining must leave nothing behind"
+
+    out = h.run("apply", input_text="y\ny\n").stdout
+    assert "Patch applied" in out
+    assert (h.repo / "link").is_symlink()
+
+
+def test_corrupt_state_file_is_explained_not_crashed(h):
+    """state.json is a documented escape hatch, so a typo in it is a user error."""
+    h.setup()
+    h.run("new", "Fix the greeting")
+    (h.task_dir() / "state.json").write_text("{ nope", encoding="utf-8")
+
+    for args in (("status",), ("next",), ()):
+        proc = h.run(*args, input_text="q\n", expect=1)
+        assert "Traceback" not in proc.stdout + proc.stderr, args
+        assert "not valid JSON" in proc.stdout, args
+        assert "current-task" in proc.stdout, args
+
+
+def test_a_hanging_test_command_is_stopped_and_becomes_a_failed_round(h):
+    h.setup()
+    h.config(test_command="sleep 600", test_timeout_seconds=2)
+    h.run("new", "Fix the greeting")
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_DIRECT))
+    h.run("capture")
+
+    out = h.run("apply", input_text="y\n").stdout
+    assert "did not finish within 2 seconds" in out
+    assert "Tests: FAILED" in out
+    assert h.state()["test_status"] == "failed"
+    results = (h.task_dir() / "rounds" / "01" / "test-results.txt").read_text()
+    assert "test_timeout_seconds" in results, "the fix is named in the handoff"
+
+    # The correction package carries the timeout, so the chatbot can act on it.
+    h.run("next")
+    package = (h.task_dir() / "rounds" / "02" / "fix-package.md").read_text()
+    assert "did not finish within 2 seconds" in package
+
+
 def test_patch_paths_extracts_and_validates():
     assert mod.patch_paths(PATCH_TWO_FILES) == ["app.py", "extra.py"]
     quoted = 'diff --git "a/dir with space/f.py" "b/dir with space/f.py"\n'

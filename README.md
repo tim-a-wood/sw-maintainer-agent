@@ -275,9 +275,16 @@ conventions. `config.json` holds the result:
 {
   "test_command": "make test",
   "maximum_rounds": 3,
-  "repomix_args": []
+  "repomix_args": [],
+  "test_timeout_seconds": 900
 }
 ```
+
+`test_timeout_seconds` bounds the test command: a suite that waits on a port,
+a prompt or the network would otherwise hang the workflow with nothing on
+screen. Being stopped counts as a failed round, so the correction package
+carries the timeout and the chatbot gets a chance to address it. Raise it for
+a suite that is simply slow.
 
 `repomix_args` is passed through to every Repomix invocation (for example
 `["--compress"]` to shrink large repositories).
@@ -333,7 +340,8 @@ maintain apply    # after an implementation/fix response: validate, confirm, app
 2. Identifies the modified files.
 3. Rejects files outside the approved scope (from the scope response).
 4. Runs `git apply --check`.
-5. Shows a patch summary and asks for confirmation.
+5. Shows a patch summary, names any symbolic links it creates and where they
+   point, and asks for confirmation.
 6. Applies the patch to the working tree (never commits).
 7. Runs the configured test command and records the complete output.
 
@@ -483,4 +491,14 @@ python3 -m pytest tests/
 ```
 
 The test suite drives the real CLI end-to-end in temporary Git repositories,
-with a stub Repomix and a simulated clipboard.
+with a stub Repomix and a simulated clipboard. `tests/test_interactive.py`
+goes further and runs the CLI on a pseudo-terminal, because `isatty()`
+decides which branch Maintain takes: piped input means no colour, no menus,
+and setup that never blocks on a prompt, so the interactive paths — the ones
+a user actually touches — are only covered there.
+
+The test command always runs with stdin closed. A suite that prompts would
+otherwise inherit the terminal, swallowing whatever you type next or waiting
+for input that is never coming; closing stdin makes it fail immediately
+instead, and `test_timeout_seconds` bounds anything that hangs for another
+reason.
