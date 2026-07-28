@@ -280,6 +280,8 @@ class Harness:
         self.env = dict(os.environ)
         self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env.get('PATH', '')}"
         self.env["MAINTAIN_CLIPBOARD_CMD"] = f"cat {shlex.quote(str(self.clip))}"
+        self.registry = tmp_path / "projects.json"
+        self.env["MAINTAIN_REGISTRY_PATH"] = str(self.registry)
         self.git("init", "-q")
         self.git("config", "user.email", "test@example.com")
         self.git("config", "user.name", "Test User")
@@ -464,10 +466,10 @@ def test_command_aliases_match_their_originals(h):
 
 
 def test_home_screen_shows_task_and_next_action(h):
-    # No repository set up yet: offer to do it, and decline cleanly.
+    # Inside a repository that is not set up yet: offer to do it.
     out = h.run(input_text="q\n").stdout
     assert "MAINTAIN" in out
-    assert "Not set up in this repository" in out
+    assert "Not set up for Maintain yet" in out
 
     h.setup()
     out = h.run(input_text="q\n").stdout
@@ -485,6 +487,90 @@ def test_home_screen_shows_task_and_next_action(h):
     out = h.run(input_text="\n").stdout
     assert "Scope response captured" in out
     assert h.state()["stage"] == "scope_captured"
+
+
+def run_outside_repo(h, cwd, *args, input_text=""):
+    """Run maintain from a directory that is not a Git repository."""
+    return subprocess.run(
+        [sys.executable, str(MAINTAIN_PY), *args],
+        cwd=cwd, env=h.env, input=input_text, capture_output=True, text=True,
+    )
+
+
+def test_first_launch_offers_to_link_or_create(h, tmp_path):
+    empty = tmp_path / "elsewhere"
+    empty.mkdir()
+    out = run_outside_repo(h, empty, input_text="q\n").stdout
+    assert "None linked yet" in out
+    assert "Link a repository" in out
+    assert "Create a project" in out
+
+
+def test_first_launch_can_create_a_project(h, tmp_path):
+    empty = tmp_path / "elsewhere"
+    empty.mkdir()
+    destination = tmp_path / "brand-new"
+    proc = run_outside_repo(
+        h, empty, input_text=f"c\n{destination}\nBrand New\nq\n"
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Created Brand New" in proc.stdout
+    assert (destination / "README.md").is_file()
+    assert (destination / ".gitignore").is_file()
+    log = subprocess.run(
+        ["git", "-C", str(destination), "log", "--oneline"],
+        capture_output=True, text=True,
+    )
+    assert "Initial commit" in log.stdout
+    registry = json.loads(h.registry.read_text(encoding="utf-8"))
+    assert any(entry["name"] == "Brand New" for entry in registry["projects"])
+
+
+def test_first_launch_can_link_an_existing_repository(h, tmp_path):
+    empty = tmp_path / "elsewhere"
+    empty.mkdir()
+    proc = run_outside_repo(h, empty, input_text=f"l\n{h.repo}\nq\n")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Linked" in proc.stdout
+    registry = json.loads(h.registry.read_text(encoding="utf-8"))
+    assert any(entry["path"] == str(h.repo.resolve()) for entry in registry["projects"])
+
+
+def test_later_launches_list_configured_projects(h, tmp_path):
+    empty = tmp_path / "elsewhere"
+    empty.mkdir()
+    run_outside_repo(h, empty, input_text=f"l\n{h.repo}\nq\n")
+    second = tmp_path / "second-project"
+    run_outside_repo(h, empty, input_text=f"c\n{second}\nSecond\nq\n")
+
+    out = run_outside_repo(h, empty, input_text="q\n").stdout
+    assert "YOUR PROJECTS" in out
+    # Match on the paths: names like "repo" also occur in the menu wording.
+    assert str(second.resolve()) in out and str(h.repo.resolve()) in out
+    # Most recently opened first, and each row explains its state.
+    assert out.index(str(second.resolve())) < out.index(str(h.repo.resolve()))
+    assert "no active task" in out or "not set up" in out
+
+
+def test_picker_rejects_a_folder_that_is_not_a_repository(h, tmp_path):
+    empty = tmp_path / "elsewhere"
+    empty.mkdir()
+    plain = tmp_path / "just-a-folder"
+    plain.mkdir()
+    out = run_outside_repo(h, empty, input_text=f"l\n{plain}\nq\n").stdout
+    assert "not a Git repository" in out
+    if h.registry.exists():
+        assert json.loads(h.registry.read_text(encoding="utf-8"))["projects"] == []
+
+
+def test_opening_a_project_records_it_and_shows_its_task(h, tmp_path):
+    h.setup()
+    h.run("new", "Fix the greeting")          # registers h.repo by being inside it
+    empty = tmp_path / "elsewhere"
+    empty.mkdir()
+    out = run_outside_repo(h, empty, input_text="1\nq\n").stdout
+    assert "Fix the greeting" in out                     # the chosen project's task
+    assert "Waiting for the chatbot's scope reply" in out
 
 
 def test_output_is_plain_text_when_not_a_terminal(h):

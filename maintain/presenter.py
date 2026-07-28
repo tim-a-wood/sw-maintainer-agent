@@ -67,8 +67,10 @@ class Presenter:
             terminal = shutil.get_terminal_size((100, 24)).columns
             self.width = max(48, min(max_width, terminal))
         else:
-            # Not a terminal: never wrap, so captured output stays verbatim.
-            self.width = 10_000
+            # Not a terminal: a fixed, sane width so rules and tables stay
+            # readable. Message lines are printed with soft wrapping, so they
+            # are never broken regardless of this value.
+            self.width = 88
         self.console = Console(
             file=file,
             width=self.width,
@@ -216,6 +218,9 @@ class Presenter:
         text = Text(f"  {label:<20}", style="muted")
         text.append(value, style=style)
         self.console.print(text)
+
+    def heading(self, title: str) -> None:
+        self.console.print(Text(f"  {title}", style="brand"))
 
     def menu(self, key: str, title: str, detail: str = "") -> None:
         text = Text("  ")

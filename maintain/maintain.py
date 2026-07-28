@@ -173,8 +173,8 @@ def git_out(root: Path, *args: str) -> str:
 # Repository / configuration ------------------------------------------------
 
 
-def find_repo_root() -> Path:
-    proc = run(["git", "rev-parse", "--show-toplevel"])
+def find_repo_root(start: Optional[Path] = None) -> Path:
+    proc = run(["git", "rev-parse", "--show-toplevel"], cwd=start)
     if proc.returncode != 0:
         raise MaintainError(
             "No Git repository is present here. Maintain must run inside a Git repository.",
@@ -1268,8 +1268,8 @@ def commit_rescope_response(task: Task, data: dict, target: Path) -> list:
 # Commands ------------------------------------------------------------------
 
 
-def cmd_init() -> None:
-    root = find_repo_root()
+def cmd_init(root: Optional[Path] = None) -> None:
+    root = root or find_repo_root()
     directory = maintain_dir(root)
     if directory.exists():
         raise MaintainError(
@@ -1296,6 +1296,7 @@ def cmd_init() -> None:
         say("")
     say("Consider adding .maintain/ to .gitignore if you do not want task")
     say("artifacts in version control.")
+    remember_project(root)
     say("")
     say('Next: Edit the two files above, then run `maintain new "<request>"`.')
 
@@ -1312,8 +1313,8 @@ def make_task_id(root: Path) -> str:
     return f"{today}-{sequence + 1:03d}"
 
 
-def cmd_new(request: str) -> None:
-    root = find_repo_root()
+def cmd_new(request: str, root: Optional[Path] = None) -> None:
+    root = root or find_repo_root()
     require_initialised(root)
     config = load_config(root)
     create_task(root, config, request, kind="maintenance")
@@ -1339,8 +1340,8 @@ def harden_target_files(root: Path) -> list:
     return targets
 
 
-def cmd_harden(note: str) -> None:
-    root = find_repo_root()
+def cmd_harden(note: str, root: Optional[Path] = None) -> None:
+    root = root or find_repo_root()
     require_initialised(root)
     config = load_config(root)
     targets = harden_target_files(root)
@@ -1446,6 +1447,7 @@ def create_task(
         )
     task.save()
 
+    remember_project(root)
     say(f"Created task: {task.id}")
     say(f"Package: {task.rel(export_path)}")
     say(
@@ -1454,8 +1456,8 @@ def create_task(
     )
 
 
-def cmd_capture() -> None:
-    root = find_repo_root()
+def cmd_capture(root: Optional[Path] = None) -> None:
+    root = root or find_repo_root()
     require_initialised(root)
     task = load_active_task(root)
 
@@ -1610,8 +1612,8 @@ def close_task(task: Task) -> None:
     say(f"All packages, responses, patches and results are preserved under {task.rel(task.dir)}.")
 
 
-def cmd_next() -> None:
-    root = find_repo_root()
+def cmd_next(root: Optional[Path] = None) -> None:
+    root = root or find_repo_root()
     require_initialised(root)
     config = load_config(root)
     task = load_active_task(root)
@@ -1721,8 +1723,8 @@ def run_tests(task: Task, config: dict) -> None:
         say("Next: Run `maintain next` to generate a correction package.")
 
 
-def cmd_apply() -> None:
-    root = find_repo_root()
+def cmd_apply(root: Optional[Path] = None) -> None:
+    root = root or find_repo_root()
     require_initialised(root)
     config = load_config(root)
     task = load_active_task(root)
@@ -1846,8 +1848,8 @@ def cmd_apply() -> None:
     task.save()
 
 
-def cmd_status() -> None:
-    root = find_repo_root()
+def cmd_status(root: Optional[Path] = None) -> None:
+    root = root or find_repo_root()
     require_initialised(root)
     task_id = current_task_id(root)
     if not task_id:
@@ -1930,36 +1932,170 @@ STAGE_COMMAND = {
 }
 
 
+def remember_project(root: Path) -> None:
+    """Register a project so it appears in the launch picker."""
+    try:
+        projects = projects_module()
+        if not any(entry["path"] == root for entry in projects.list_projects()):
+            projects.link_project(root)
+        projects.touch_project(root)
+    except Exception:
+        # The registry is a convenience; never let it break a command.
+        pass
+
+
 def repo_label(root: Path) -> tuple:
     branch = git_run(root, "rev-parse", "--abbrev-ref", "HEAD")
     return root.name, (branch.stdout.strip() if branch.returncode == 0 else "")
 
 
-def cmd_home() -> int:
-    """Bare `maintain`: show where the task stands and offer the next step."""
-    view = presenter()
+def projects_module():
     try:
-        root = find_repo_root()
-    except MaintainError:
+        from . import projects
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import projects  # type: ignore
+    return projects
+
+
+def project_summary(root: Path) -> str:
+    """One line describing a project's branch and current task."""
+    if not root.is_dir():
+        return "folder is missing"
+    parts = []
+    branch = git_run(root, "rev-parse", "--abbrev-ref", "HEAD")
+    if branch.returncode == 0 and branch.stdout.strip():
+        parts.append(branch.stdout.strip())
+    if not maintain_dir(root).is_dir():
+        parts.append("not set up")
+        return "  ".join(parts)
+    task_id = current_task_id(root)
+    if not task_id:
+        parts.append("no active task")
+        return "  ".join(parts)
+    task = Task(root, task_id)
+    parts.append(stage_label(task) if task.state else "task state unreadable")
+    return "  ".join(parts)
+
+
+def choose_project(view) -> Optional[Path]:
+    """Ask which project to open, offering to link or create one."""
+    projects = projects_module()
+    while True:
+        entries = projects.list_projects()
+        view.console.print()
+        if entries:
+            view.heading("YOUR PROJECTS")
+            view.console.print()
+            for number, entry in enumerate(entries, 1):
+                label = entry["name"]
+                detail = project_summary(entry["path"])
+                if not entry["exists"]:
+                    detail = "folder is missing"
+                view.menu(str(number), label[:26], f"{entry['path']}   {detail}")
+            view.console.print()
+        else:
+            view.field("Projects", "None linked yet", style="muted")
+            view.console.print()
+        view.menu("l", "Link a repository", "Point Maintain at a folder you already have")
+        view.menu("c", "Create a project", "New folder, Git repository, first commit")
+        if entries:
+            view.menu("f", "Forget a project", "Remove one from this list")
+        view.menu("q", "Quit", "")
+        view.console.print()
+
+        default = "1" if entries else "l"
+        choice = view.ask("Choose", default).strip().lower()
+        view.console.print()
+
+        if choice in ("q", "quit"):
+            return None
+        if choice.isdigit() and entries:
+            index = int(choice) - 1
+            if 0 <= index < len(entries):
+                entry = entries[index]
+                if not entry["exists"]:
+                    say(f"Error: {entry['path']} no longer exists.")
+                    say("Next: Choose `f` to forget it, or restore the folder.")
+                    continue
+                projects.touch_project(entry["path"])
+                return entry["path"]
+            say(f"Error: there is no project {choice}.")
+            continue
+        if choice.startswith("l"):
+            raw = view.ask("Path to the repository").strip().strip('"')
+            if not raw:
+                continue
+            try:
+                linked = projects.link_project(raw)
+            except projects.ProjectError as exc:
+                say(f"Error: {exc}")
+                if exc.next_action:
+                    say(f"Next: {exc.next_action}")
+                continue
+            say(f"Linked {linked['name']} at {linked['path']}")
+            return linked["path"]
+        if choice.startswith("c"):
+            raw = view.ask("Folder for the new project").strip().strip('"')
+            if not raw:
+                continue
+            name = view.ask("Project name", Path(raw).expanduser().name).strip()
+            try:
+                created = projects.create_project(raw, name)
+            except projects.ProjectError as exc:
+                say(f"Error: {exc}")
+                if exc.next_action:
+                    say(f"Next: {exc.next_action}")
+                continue
+            say(f"Created {created['name']} at {created['path']}")
+            say("It has a README, a .gitignore and one commit.")
+            return created["path"]
+        if choice.startswith("f") and entries:
+            raw = view.ask("Forget which number").strip()
+            if raw.isdigit() and 0 < int(raw) <= len(entries):
+                target = entries[int(raw) - 1]
+                projects.forget_project(target["path"])
+                say(f"Forgot {target['name']}. The folder itself was not touched.")
+            continue
+        say("Error: unrecognised choice.")
+
+
+def cmd_home() -> int:
+    """Bare `maintain`: pick a project, then show where its task stands."""
+    view = presenter()
+    projects = projects_module()
+
+    # Inside a repository, work on it. Otherwise offer the linked projects.
+    root = None
+    here = find_repo_root_or_none()
+    if here is not None:
+        root = here
+        remember_project(here)
+
+    if root is None:
         view.brand(version=VERSION)
-        say("")
-        say("Maintain runs inside a Git repository, and this is not one.")
-        say("Next: Change into your project, or create one with `git init`.")
-        return 1
+        root = choose_project(view)
+        if root is None:
+            return 0
+        view.console.print()
 
     project, branch = repo_label(root)
     view.brand(project=project, branch=branch, version=VERSION)
 
     if not maintain_dir(root).is_dir():
         view.console.print()
-        view.field("Status", "Not set up in this repository", style="warning")
+        view.field("Status", "Not set up for Maintain yet", style="warning")
         view.console.print()
-        view.menu("i", "Set it up", "Run `maintain init`")
+        view.menu("i", "Set it up", "Create .maintain in this project")
+        view.menu("p", "Switch project", "")
         view.menu("q", "Quit", "")
         view.console.print()
-        if view.ask("Choose", "i").lower().startswith("i"):
-            view.console.print()
-            cmd_init()
+        choice = view.ask("Choose", "i").lower()
+        view.console.print()
+        if choice.startswith("i"):
+            cmd_init(root)
+        elif choice.startswith("p"):
+            return main([])
         return 0
 
     task_id = current_task_id(root)
@@ -1970,6 +2106,7 @@ def cmd_home() -> int:
         view.console.print()
         view.menu("n", "Start a task", "Describe the change you want")
         view.menu("h", "Harden the tests", "Coverage, mutations and end-to-end tests")
+        view.menu("p", "Switch project", "")
         view.menu("q", "Quit", "")
         view.console.print()
         choice = view.ask("Choose", "n").lower()
@@ -1977,10 +2114,13 @@ def cmd_home() -> int:
             request = view.ask("What needs changing?")
             if request:
                 view.console.print()
-                cmd_new(request)
+                cmd_new(request, root)
         elif choice.startswith("h"):
             view.console.print()
-            cmd_harden("")
+            cmd_harden("", root)
+        elif choice.startswith("p"):
+            view.console.print()
+            return open_another_project(view)
         return 0
 
     phase, done = STAGE_PHASES.get(task.stage, ("SCOPE", ()))
@@ -1991,7 +2131,7 @@ def cmd_home() -> int:
     view.console.print()
     view.field("Stage", stage_label(task))
     view.field("Round", f"{task.rounds_this_scope} of {task.maximum_rounds}"
-               + (f"   ·   scope revision {task.state.get('scope_revision', 1)}"
+               + (f"   .   scope revision {task.state.get('scope_revision', 1)}"
                   if int(task.state.get("scope_revision", 1)) > 1 else ""))
     tests = {
         "passed": ("Passed", "success"),
@@ -2015,6 +2155,7 @@ def cmd_home() -> int:
     if command:
         view.menu("", f"Press Enter to run `maintain {command}`")
     view.menu("s", "Show full status", "")
+    view.menu("p", "Switch project", "")
     view.menu("q", "Quit", "")
     view.console.print()
     choice = view.ask("Choose", "" if command else "q").lower()
@@ -2022,11 +2163,48 @@ def cmd_home() -> int:
     if choice in ("q", "quit"):
         return 0
     if choice in ("s", "status"):
-        cmd_status()
+        cmd_status(root)
         return 0
+    if choice.startswith("p"):
+        return open_another_project(view)
     if not choice and command:
-        return main([command])
+        return run_command(command, root)
     return 0
+
+
+def open_another_project(view) -> int:
+    """Show the picker even when the current directory is a repository."""
+    root = choose_project(view)
+    if root is None:
+        return 0
+    say(f"Next: Change to {root} and run `maintain` there.")
+    return 0
+
+
+def run_command(command: str, root: Path) -> int:
+    """Run one workflow command against the chosen project."""
+    try:
+        if command == "capture":
+            cmd_capture(root)
+        elif command == "next":
+            cmd_next(root)
+        elif command == "apply":
+            cmd_apply(root)
+        else:
+            cmd_status(root)
+    except MaintainError as exc:
+        say(f"Error: {exc}")
+        if exc.next_action:
+            say(f"Next: {exc.next_action}")
+        return 1
+    return 0
+
+
+def find_repo_root_or_none() -> Optional[Path]:
+    try:
+        return find_repo_root()
+    except MaintainError:
+        return None
 
 
 PROJECT_CONTEXT_STARTER = """\

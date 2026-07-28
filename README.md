@@ -180,10 +180,27 @@ repomix --version
 That is the whole interface. `maintain next` always knows what comes next;
 `maintain status` always tells you where you are.
 
-Running `maintain` with no arguments shows the home screen: the task, a
-progress trail across scope, implement, test and review, the current stage
-and test result, the file to upload next, and the single next action — press
-Enter to run it.
+Running `maintain` with no arguments opens the home screen.
+
+Outside a repository it asks which project to open. On the first launch
+there is nothing to list, so it offers to **link** a repository you already
+have or **create** a new one — a folder, a Git repository, a README, a
+`.gitignore` and a first commit. Later launches list every project you have
+configured, most recently opened first, each with its branch and what its
+task is waiting for. Pick a number to open it.
+
+Inside a repository it skips the picker and works on that repository,
+remembering it for next time.
+
+Once a project is open the home screen shows its task, a progress trail
+across scope, implement, test and review, the current stage and test result,
+the file to upload next, and the single next action — press Enter to run it.
+Choose `p` to switch project.
+
+The list of projects is stored per user in `~/.maintain/projects.json`
+(Windows: `%USERPROFILE%\.maintain\projects.json`), never inside the
+repositories being maintained. Forgetting a project only removes it from
+that list; the folder is untouched.
 
 `capture`, `continue` and `start` are accepted as aliases for `paste`,
 `next` and `new`, so earlier spellings keep working.
