@@ -290,6 +290,64 @@ def test_theme_defaults_dark_toggles_and_persists(qt_app, tmp_path, monkeypatch)
     assert load_ui_settings()["theme"] == "dark"
 
 
+def test_projects_screen_lists_creates_switches_and_removes(
+        qt_app, tmp_path, monkeypatch):
+    from maintain.repository_memory import remember_repository
+    from maintain.ui.strings import text as ui_text
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+
+    config = _project(tmp_path)
+    remember_repository(config.repository)
+    window = MainWindow(config)
+    toasts: list[str] = []
+    window.toast = toasts.append
+    window.ask_confirm = lambda *args, **kwargs: True
+
+    # The home screen offers Projects; the list shows the active project.
+    window.home.open_projects.emit()
+    assert _screen(window) == "projects"
+    assert window.projects._rows.count() == 1
+
+    # New project: a plain folder, no source control.
+    parent = tmp_path / "space"
+    parent.mkdir()
+    window.pick_directory = lambda: str(parent)
+    window.ask_text = lambda *args, **kwargs: "fresh"
+    window._new_project()
+    created = parent / "fresh"
+    assert created.is_dir()
+    assert not (created / ".git").exists()
+    assert window.projects._rows.count() == 2
+
+    # A folder without source control does not open.
+    window._open_project(str(created))
+    assert window.store.config.repository == config.repository
+    assert toasts[-1] == ui_text("projects.no_git.open")
+
+    # A missing folder does not open.
+    window._open_project(str(tmp_path / "nowhere"))
+    assert toasts[-1] == ui_text("projects.missing.open")
+
+    # A Git folder without configuration is set up after the confirm; it opens.
+    second = tmp_path / "second"
+    second.mkdir()
+    _git(second, "init", "-b", "main")
+    window._open_project(str(second))
+    assert (second / ".maintain.json").is_file()
+    assert window.store.config.repository == second.resolve()
+    assert _screen(window) == "home"
+    assert toasts[-1] == ui_text("projects.opened", name="second")
+
+    # The refreshed list has all three; remove keeps the files on disk.
+    window.show_projects()
+    assert window.projects._rows.count() == 3
+    window._remove_project(str(created))
+    assert window.projects._rows.count() == 2
+    assert created.is_dir()
+
+
 def test_stop_pauses_and_home_offers_continue(qt_app, tmp_path, monkeypatch):
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)

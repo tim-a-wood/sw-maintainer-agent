@@ -28,6 +28,8 @@ STR: dict[str, str] = {
     "home.fault.sub": "Fix a problem in the software.",
     "home.history": "History",
     "home.history.sub": "Runs, iterations, and go-back.",
+    "home.projects": "Projects",
+    "home.projects.sub": "Create, open, or remove projects.",
     "home.settings": "Settings",
     "home.settings.sub": "OneDrive, prompts, documents, package, checks.",
     "home.continue": "Continue run {run}",
@@ -152,6 +154,37 @@ STR: dict[str, str] = {
     "run.confirm.yes": "Go back",
     "run.confirm.no": "Stay here",
     "run.went_back": "Went back. The run continues from the restored point.",
+
+    # Projects
+    "projects.title": "Projects",
+    "projects.new": "New project…",
+    "projects.add": "Add a folder…",
+    "projects.empty": "No projects yet. Create one, or add a folder.",
+    "projects.state.ready": "Ready",
+    "projects.state.setup": "Needs setup",
+    "projects.state.no_git": "No source control",
+    "projects.state.missing": "Missing",
+    "projects.new.title": "New project",
+    "projects.new.body": "Write the project name. The tool creates a plain "
+                         "folder. Source control does not start here.",
+    "projects.created": "Created {name}. Add source control before you start "
+                        "a change.",
+    "projects.added": "Added {name} to the list.",
+    "projects.no_git.open": "This folder has no source control. The tool "
+                            "needs Git before a change can start.",
+    "projects.missing.open": "The folder is not on this computer. Remove it "
+                             "from the list, or restore the folder.",
+    "projects.setup.title": "Set up this project?",
+    "projects.setup.body": "The tool creates .maintain.json for the manual "
+                           "packet exchange. Your project files do not change.",
+    "projects.setup.yes": "Set up",
+    "projects.remove.title": "Remove {name} from the list?",
+    "projects.remove.body": "The folder and its files stay on the computer. "
+                            "Only the list entry goes away.",
+    "projects.remove.yes": "Remove",
+    "projects.removed": "Removed {name} from the list.",
+    "projects.opened": "Opened {name}.",
+    "projects.busy": "First stop the run. Then change the project.",
 
     # Theme
     "theme.to_light": "Light mode",

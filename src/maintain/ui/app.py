@@ -20,14 +20,15 @@ from maintain.repository_memory import load_ui_settings, save_ui_settings
 
 from . import theme as theme_module
 
+from . import projects as project_ops
 from .config_store import ConfigStore
 from .controller import Controller
 from .screens import (BusyScreen, ChecksPage, DescribeScreen, DoneScreen,
                       FindingsScreen, GlobalPage, HistoryScreen, HomeScreen,
                       OneDrivePage, PackagePage, PlanCheckScreen,
-                      ReceiveScreen, RunDetailScreen, SaveScreen,
-                      SettingsScreen, SendScreen, TasksPage, TestScreen,
-                      documents_count)
+                      ProjectsScreen, ReceiveScreen, RunDetailScreen,
+                      SaveScreen, SettingsScreen, SendScreen, TasksPage,
+                      TestScreen, documents_count)
 from .strings import text
 from .widgets import StageHeader
 
@@ -100,6 +101,7 @@ class MainWindow(QMainWindow):
     def _build_screens(self) -> None:
         config = self.store.config
         self.home = HomeScreen(config.name, str(config.repository))
+        self.projects = ProjectsScreen()
         self.describe = DescribeScreen()
         self.send = SendScreen()
         self.receive = ReceiveScreen()
@@ -118,7 +120,8 @@ class MainWindow(QMainWindow):
         self.page_package = PackagePage()
         self.page_checks = ChecksPage()
         for name, screen in [
-                ("home", self.home), ("describe", self.describe),
+                ("home", self.home), ("projects", self.projects),
+                ("describe", self.describe),
                 ("send", self.send), ("receive", self.receive),
                 ("plan", self.plan_check), ("findings", self.findings),
                 ("test", self.test), ("save", self.save), ("done", self.done),
@@ -134,7 +137,14 @@ class MainWindow(QMainWindow):
         self.home.new_change.connect(self._new_change)
         self.home.open_history.connect(self.show_history)
         self.home.open_settings.connect(lambda: self.show_screen("settings"))
+        self.home.open_projects.connect(self.show_projects)
         self.home.continue_run.connect(self._continue_run)
+
+        self.projects.open_project.connect(self._open_project)
+        self.projects.remove_project.connect(self._remove_project)
+        self.projects.new_project.connect(self._new_project)
+        self.projects.add_folder.connect(self._add_folder)
+        self.projects.back.connect(self.show_home)
 
         self.describe.start.connect(self._start_run)
         self.describe.back.connect(self.show_home)
@@ -239,6 +249,97 @@ class MainWindow(QMainWindow):
     def show_history(self) -> None:
         self.history.show_runs(self.controller.runs())
         self.show_screen("history")
+
+    def show_projects(self) -> None:
+        self.projects.show_rows(project_ops.project_rows())
+        self.show_screen("projects")
+
+    # ----- projects -----
+
+    def load_project(self, config: ProjectConfig) -> None:
+        """Switch the whole window to another project."""
+        if self.controller.busy:
+            self.toast(text("projects.busy"))
+            return
+        project_ops.add_existing(config.repository)
+        self.store = ConfigStore(config)
+        self.controller = Controller(config)
+        self.current_handoff = None
+        self.current_record = None
+        self._in_test = False
+        while self.stack.count():
+            widget = self.stack.widget(0)
+            self.stack.removeWidget(widget)
+            widget.setParent(None)
+            widget.deleteLater()
+        self.screens = {}
+        self._build_screens()
+        self._wire_controller()
+        self.setWindowTitle(f"{text('app.title')} — {config.name}")
+        self.show_home()
+
+    def _open_project(self, path_value: str) -> None:
+        if self.controller.busy:
+            self.toast(text("projects.busy"))
+            return
+        path = Path(path_value)
+        status = project_ops.classify(path)
+        if status == project_ops.MISSING:
+            self.toast(text("projects.missing.open"))
+            return
+        if status == project_ops.NO_SOURCE_CONTROL:
+            self.toast(text("projects.no_git.open"))
+            return
+        if status == project_ops.NEEDS_SETUP:
+            if not self.ask_confirm(text("projects.setup.title"),
+                                    text("projects.setup.body"),
+                                    text("projects.setup.yes"), text("stop.no")):
+                return
+            try:
+                project_ops.ensure_config(path)
+            except MaintainError as exc:
+                self.show_error(str(exc))
+                return
+        try:
+            config = project_ops.load_project_config(path)
+        except MaintainError as exc:
+            self.show_error(str(exc))
+            return
+        self.load_project(config)
+        self.toast(text("projects.opened", name=config.name))
+
+    def _new_project(self) -> None:
+        parent = self.pick_directory()
+        if not parent:
+            return
+        name = self.ask_text(text("projects.new.title"), text("projects.new.body"))
+        if not name:
+            return
+        try:
+            created = project_ops.create_project_dir(Path(parent), name)
+        except MaintainError as exc:
+            self.show_error(str(exc))
+            return
+        self.toast(text("projects.created", name=created.name))
+        self.show_projects()
+
+    def _add_folder(self) -> None:
+        selected = self.pick_directory()
+        if not selected:
+            return
+        row = project_ops.add_existing(Path(selected))
+        self.toast(text("projects.added", name=row.name))
+        self.show_projects()
+
+    def _remove_project(self, path_value: str) -> None:
+        path = Path(path_value)
+        if not self.ask_confirm(text("projects.remove.title", name=path.name),
+                                text("projects.remove.body"),
+                                text("projects.remove.yes"), text("stop.no")):
+            return
+        project_ops.remove_project(path)
+        self.toast(text("projects.removed", name=path.name))
+        self.show_projects()
 
     def _set_stage(self, index: int) -> None:
         self.stage_header.setVisible(True)
@@ -617,6 +718,14 @@ class MainWindow(QMainWindow):
     def pick_files(self) -> list[str]:
         paths, _ = QFileDialog.getOpenFileNames(self, text("describe.import"))
         return list(paths)
+
+    def pick_directory(self) -> str:
+        return QFileDialog.getExistingDirectory(self, text("projects.add"))
+
+    def ask_text(self, title: str, body: str) -> str | None:
+        value, accepted = QInputDialog.getText(self, title, body)
+        value = value.strip()
+        return value if accepted and value else None
 
     def pick_save(self, name: str) -> str:
         path, _ = QFileDialog.getSaveFileName(self, text("send.export"), name)

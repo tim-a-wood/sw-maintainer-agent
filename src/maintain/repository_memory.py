@@ -581,6 +581,45 @@ def _run_windows_picker(script: str, kind: str) -> Path | None:
     return Path(selected) if completed.returncode == 0 and selected else None
 
 
+def remember_any_project(path: Path) -> Path:
+    """Remember a project folder even when it has no source control yet.
+
+    A folder with Git becomes the active repository; a plain folder joins the
+    recent list without changing the active repository.
+    """
+
+    root = repository_root(path) or path.expanduser().resolve()
+    projects = load_recent_projects()
+    key = _path_key(root)
+    previous = next(
+        (project for project in projects if _path_key(project.path) == key),
+        None,
+    )
+    config_path = _resolved_config_path(root, None)
+    if (config_path is None and previous is not None
+            and previous.config_path is not None
+            and previous.config_path.is_file()):
+        config_path = previous.config_path
+    name = _project_name(
+        root, config_path,
+        fallback=previous.name if previous is not None else None,
+    )
+    entry = _build_entry(
+        root, name=name, last_opened_at=_timestamp(), config_path=config_path,
+        default_reference=(previous.default_reference
+                           if previous is not None else None),
+    )
+    ordered = [entry] + [
+        project for project in projects if _path_key(project.path) != key
+    ]
+    if (root / ".git").exists():
+        active = root
+    else:
+        active = _path_value(_active_value(_load_settings()))
+    _write_settings(active, ordered)
+    return root
+
+
 def load_ui_settings() -> dict[str, Any]:
     """Per-user desktop UI settings stored next to the recent projects."""
 

@@ -22,9 +22,9 @@ from maintain.zip_package import global_prompt_text
 
 from .config_store import BUILTIN_PROMPTS, ConfigStore
 from .strings import text
-from .widgets import (ChoiceButton, DiffHighlighter, DropZone, FileChips,
-                      NumberBadge, PacketCard, Spinner, StateChip, StatusLine,
-                      TimelineDot, button, label, run_state_chip)
+from .widgets import (ChoiceButton, DiffHighlighter, DropZone, ElidedLabel,
+                      FileChips, NumberBadge, PacketCard, Spinner, StateChip,
+                      StatusLine, TimelineDot, button, label, run_state_chip)
 
 TASK_TITLES = {"plan": "send.plan.title", "build": "send.build.title",
                "repair": "send.repair.title", "review": "send.review.title"}
@@ -85,6 +85,7 @@ class HomeScreen(Screen):
     new_change = Signal(str)     # mode
     open_history = Signal()
     open_settings = Signal()
+    open_projects = Signal()
     continue_run = Signal(str)   # run_id
 
     def __init__(self, project_name: str, project_path: str) -> None:
@@ -103,6 +104,8 @@ class HomeScreen(Screen):
                 ("!", "home.fault", "home.fault.sub",
                  lambda: self.new_change.emit("issue")),
                 ("↻", "home.history", "home.history.sub", self.open_history.emit),
+                ("⌂", "home.projects", "home.projects.sub",
+                 self.open_projects.emit),
                 ("⚙", "home.settings", "home.settings.sub",
                  self.open_settings.emit)):
             card = ChoiceButton(glyph, text(title_key), text(sub_key))
@@ -700,6 +703,92 @@ class HistoryRow(QFrame):
             self.clicked.emit()
             return
         super().keyPressEvent(event)
+
+
+PROJECT_STATE_CHIPS = {"ready": ("projects.state.ready", "pass"),
+                       "setup": ("projects.state.setup", "warn"),
+                       "no_git": ("projects.state.no_git", "wait"),
+                       "missing": ("projects.state.missing", "fail")}
+
+
+class ProjectRowWidget(QFrame):
+    open_requested = Signal()
+    remove_requested = Signal()
+
+    def __init__(self, name: str, path: str, status: str) -> None:
+        super().__init__()
+        self.setObjectName("Choice")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(15, 11, 11, 11)
+        row.setSpacing(12)
+        column = QVBoxLayout()
+        column.setSpacing(1)
+        title = QLabel(name)
+        title.setObjectName("ChoiceTitle")
+        sub = ElidedLabel(path, "MonoHint")
+        column.addWidget(title)
+        column.addWidget(sub)
+        row.addLayout(column, 1)
+        key, kind = PROJECT_STATE_CHIPS.get(status, ("projects.state.missing",
+                                                     "fail"))
+        row.addWidget(StateChip(text(key).upper(), kind))
+        remove = QPushButton("×")
+        remove.setObjectName("ChipRemove")
+        remove.setFixedSize(22, 22)
+        remove.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove.setAccessibleName(f"Remove {name} from the list")
+        remove.clicked.connect(self.remove_requested.emit)
+        row.addWidget(remove)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.open_requested.emit()
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.open_requested.emit()
+            return
+        super().keyPressEvent(event)
+
+
+class ProjectsScreen(Screen):
+    open_project = Signal(str)
+    remove_project = Signal(str)
+    new_project = Signal()
+    add_folder = Signal()
+    back = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.add(label(text("projects.title"), "Title"))
+        self._rows = QVBoxLayout()
+        self._rows.setSpacing(9)
+        holder = QWidget()
+        holder.setLayout(self._rows)
+        self.add(holder)
+        self.empty = label(text("projects.empty"), "Lead")
+        self.add(self.empty)
+        self.add_gap(2)
+        self.add_row(
+            button(text("projects.new"), "Primary", self.new_project.emit),
+            button(text("projects.add"), "Secondary", self.add_folder.emit))
+        self.add_gap()
+        self.add_row(button(text("history.back"), "Ghost", self.back.emit))
+
+    def show_rows(self, rows) -> None:
+        self.clear_layout(self._rows)
+        self.empty.setVisible(not rows)
+        for project in rows:
+            widget = ProjectRowWidget(project.name, str(project.path),
+                                      project.status)
+            widget.open_requested.connect(
+                lambda p=str(project.path): self.open_project.emit(p))
+            widget.remove_requested.connect(
+                lambda p=str(project.path): self.remove_project.emit(p))
+            self._rows.addWidget(widget)
 
 
 class HistoryScreen(Screen):

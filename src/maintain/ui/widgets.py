@@ -8,8 +8,8 @@ from typing import Callable
 from PySide6.QtCore import (QMimeData, QPoint, QRect, QSize, Qt, QTimer, QUrl,
                             Signal)
 from PySide6.QtGui import (QColor, QDrag, QDragEnterEvent, QDropEvent, QFont,
-                           QPainter, QPen, QPixmap, QSyntaxHighlighter,
-                           QTextCharFormat)
+                           QFontMetrics, QPainter, QPen, QPixmap,
+                           QSyntaxHighlighter, QTextCharFormat)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLayout,
                                QPushButton, QSizePolicy, QVBoxLayout, QWidget)
@@ -65,6 +65,25 @@ def label(content: str, name: str = "") -> QLabel:
         control.setFont(font)
     control.setWordWrap(True)
     return control
+
+
+class ElidedLabel(QLabel):
+    """A one-line label that elides long text in the middle, such as a path."""
+
+    def __init__(self, content: str, name: str = "") -> None:
+        super().__init__(content)
+        if name:
+            self.setObjectName(name)
+        self._full = content
+        self.setSizePolicy(QSizePolicy.Policy.Ignored,
+                           QSizePolicy.Policy.Preferred)
+        self.setToolTip(content)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        metrics = QFontMetrics(self.font())
+        self.setText(metrics.elidedText(
+            self._full, Qt.TextElideMode.ElideMiddle, max(0, self.width())))
+        super().resizeEvent(event)
 
 
 class FlowLayout(QLayout):

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
-from maintain.audit import atomic_write
-from maintain.config import CONFIG_NAME, ProjectConfig, default_config, find_config
+from maintain.config import ProjectConfig, find_config
 from maintain.errors import MaintainError
 from maintain.repository_memory import load_last_repository, remember_repository
 
@@ -29,17 +27,15 @@ def _ensure_config(repository: Path) -> Path:
     if existing is not None:
         return existing
     from PySide6.QtWidgets import QMessageBox
+    from .strings import text
     answer = QMessageBox.question(
-        None, "Set up this project?",
-        f"{repository}\n\nThe tool creates .maintain.json for the manual "
-        "packet exchange. Your project files do not change.",
+        None, text("projects.setup.title"),
+        f"{repository}\n\n" + text("projects.setup.body"),
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
     if answer != QMessageBox.StandardButton.Yes:
         raise SystemExit(0)
-    path = repository / CONFIG_NAME
-    rendered = json.dumps(default_config(repository, "manual-ui"), indent=2) + "\n"
-    atomic_write(path, rendered.encode())
-    return path
+    from .projects import ensure_config
+    return ensure_config(repository)
 
 
 def main(argv: list[str] | None = None) -> int:
