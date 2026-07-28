@@ -120,6 +120,7 @@ STR: dict[str, str] = {
 
     # Save
     "save.title": "All checks passed. {count} files changed.",
+    "save.title.one": "All checks passed. 1 file changed.",
     "save.diff": "Show the diff",
     "save.accept": "Accept and save",
     "save.accept.sub": "The tool makes the commit on a new branch. "

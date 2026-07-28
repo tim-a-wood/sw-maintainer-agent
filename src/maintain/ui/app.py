@@ -355,7 +355,7 @@ class MainWindow(QMainWindow):
         if label_key == "CHECK":
             if not self._in_test:
                 self._in_test = True
-                self.test.reset()
+                self.test.reset(self.store.checks())
                 self._set_stage(3)
                 self.show_screen("test")
             self.test.on_progress(phase, label_key, message)

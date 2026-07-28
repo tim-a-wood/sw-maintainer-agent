@@ -31,7 +31,7 @@ class Palette:
 
 
 LIGHT = Palette(
-    window="#dfe6ef", surface="#f8fafc", bar="#eef3f9", edge="#c9d5e3",
+    window="#dfe6ef", surface="#f8fafc", bar="#eef3f9", edge="#d3dde9",
     ink="#1b2534", dim="#5c6c81", faint="#8ba0b6",
     accent="#0b6fb8", accent_ink="#ffffff", accent_soft="#e3eef7",
     ok="#177245", ok_soft="#e2efe8", bad="#b23a2f", bad_soft="#f6e6e4",
@@ -50,78 +50,140 @@ DARK = Palette(
     drop="#1f2839",
 )
 
+# The palette the painted widgets read. main() sets it before any widget exists.
+ACTIVE: Palette = LIGHT
 
-def stylesheet(palette: Palette) -> str:
-    p = palette
+
+def set_active(palette: Palette) -> None:
+    global ACTIVE
+    ACTIVE = palette
+
+
+def stylesheet(p: Palette) -> str:
+    set_active(p)
     return f"""
-QMainWindow, QDialog {{ background: {p.window}; }}
-QWidget {{ color: {p.ink}; font-size: 13px; }}
+QMainWindow, QDialog {{ background: {p.surface}; }}
+QWidget {{ color: {p.ink}; font-size: 13px;
+           font-family: "Segoe UI Variable Text", "Segoe UI", "DejaVu Sans",
+                        system-ui, sans-serif; }}
 #Screen {{ background: {p.surface}; }}
-#StageBar {{ background: {p.surface}; }}
+#StageBar {{ background: {p.surface}; border-bottom: 1px solid {p.bar}; }}
 #FootBar {{ background: {p.bar}; border-top: 1px solid {p.edge}; }}
 #FootLabel {{ color: {p.dim}; font-size: 11px; }}
+QStatusBar {{ background: {p.bar}; color: {p.dim}; font-size: 11.5px; }}
 
 QLabel#Title {{ font-size: 19px; font-weight: 600; }}
-QLabel#Eyebrow {{ color: {p.accent}; font-size: 11px; font-weight: 700;
-                  letter-spacing: 1px; }}
+QLabel#Eyebrow {{ color: {p.accent}; font-size: 10px; font-weight: 700; }}
 QLabel#Lead {{ color: {p.dim}; font-size: 13px; }}
 QLabel#Hint {{ color: {p.faint}; font-size: 11px; }}
+QLabel#Dim {{ color: {p.dim}; font-size: 12px; }}
 QLabel#Ok {{ color: {p.ok}; font-weight: 600; }}
 QLabel#Bad {{ color: {p.bad}; font-weight: 600; }}
-QLabel#Mono {{ font-family: "Cascadia Mono", Consolas, monospace; }}
+QLabel#Mono {{ font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono",
+               monospace; font-size: 12px; }}
+QLabel#MonoHint {{ font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono",
+                   monospace; font-size: 11px; color: {p.faint}; }}
 
 QPushButton {{ border: 1px solid transparent; border-radius: 6px;
                padding: 8px 16px; font-weight: 600; background: transparent; }}
-QPushButton:focus {{ outline: none; border: 1px solid {p.accent}; }}
+QPushButton:focus {{ border: 1px solid {p.accent}; outline: none; }}
 QPushButton#Primary {{ background: {p.accent}; color: {p.accent_ink}; }}
+QPushButton#Primary:hover {{ background: {p.accent}; }}
 QPushButton#Primary:disabled {{ background: {p.chip}; color: {p.faint}; }}
 QPushButton#Secondary {{ border: 1px solid {p.edge}; background: {p.surface}; }}
 QPushButton#Secondary:hover {{ border-color: {p.accent}; background: {p.accent_soft}; }}
-QPushButton#Ghost {{ color: {p.dim}; }}
+QPushButton#Ghost {{ color: {p.dim}; padding: 8px 10px; }}
 QPushButton#Ghost:hover {{ color: {p.accent}; }}
-QPushButton#Danger {{ color: {p.dim}; }}
+QPushButton#Danger {{ color: {p.dim}; padding: 8px 10px; }}
 QPushButton#Danger:hover {{ color: {p.bad}; background: {p.bad_soft}; }}
 
-QPushButton#Choice {{ border: 1px solid {p.edge}; border-radius: 9px;
-                      background: {p.surface}; padding: 14px 16px; text-align: left;
-                      font-size: 14px; }}
-QPushButton#Choice:hover, QPushButton#Choice:focus {{
+QFrame#Choice {{ border: 1px solid {p.edge}; border-radius: 9px;
+                 background: {p.surface}; }}
+QFrame#Choice:hover, QFrame#Choice:focus {{
     border-color: {p.accent}; background: {p.accent_soft}; }}
+QLabel#ChoiceIcon {{ background: {p.accent_soft}; color: {p.accent};
+                     border-radius: 8px; font-size: 16px; font-weight: 600; }}
+QLabel#ChoiceIconWarn {{ background: {p.warn_soft}; color: {p.warn};
+                         border-radius: 8px; font-size: 16px; font-weight: 600; }}
+QLabel#ChoiceTitle {{ font-size: 14px; font-weight: 600; }}
+QLabel#ChoiceSub {{ font-size: 12px; color: {p.dim}; }}
 
-QFrame#Card {{ border: 1px solid {p.edge}; border-radius: 9px; background: {p.surface}; }}
-QFrame#PacketCard {{ border: 1px solid {p.accent}; border-radius: 10px;
-                     background: {p.accent_soft}; }}
+QFrame#Card {{ border: 1px solid {p.edge}; border-radius: 9px;
+               background: {p.surface}; }}
 QFrame#Finding {{ border: 1px solid {p.edge}; border-left: 3px solid {p.warn};
                   border-radius: 8px; background: {p.surface}; }}
+QFrame#PacketCard {{ border: 1px solid {p.accent}; border-radius: 10px;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 {p.accent_soft}, stop:1 {p.surface}); }}
+QLabel#PacketName {{ font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono",
+                     monospace; font-size: 12px; font-weight: 600; }}
+QLabel#PacketGrip {{ color: {p.faint}; font-size: 14px; }}
 
 QFrame#DropZone {{ border: 2px dashed {p.accent}; border-radius: 10px;
                    background: {p.drop}; }}
 QFrame#DropZone[active="true"] {{ background: {p.accent_soft}; }}
+QLabel#DropMain {{ font-weight: 600; font-size: 13px; }}
+QLabel#DropSlim {{ color: {p.dim}; font-size: 12px; }}
+
+QFrame#ChipFrame {{ background: {p.chip}; border: 1px solid {p.chip_edge};
+                    border-radius: 7px; }}
+QLabel#ChipName {{ font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono",
+                   monospace; font-size: 11px; }}
+QLabel#ChipSize {{ color: {p.faint}; font-size: 10.5px; }}
+QPushButton#ChipRemove {{ color: {p.faint}; font-size: 12px; font-weight: 700;
+                          border-radius: 4px; padding: 0; }}
+QPushButton#ChipRemove:hover {{ color: {p.bad}; background: {p.bad_soft}; }}
 
 QLineEdit, QPlainTextEdit, QSpinBox {{
     border: 1px solid {p.edge}; border-radius: 7px; padding: 7px 10px;
     background: {p.surface}; selection-background-color: {p.accent};
     selection-color: {p.accent_ink}; }}
+QLineEdit:focus, QPlainTextEdit:focus, QSpinBox:focus {{
+    border: 1px solid {p.accent}; }}
 QPlainTextEdit#Code {{ background: {p.code_bg}; color: {p.code_ink};
-                       font-family: "Cascadia Mono", Consolas, monospace;
-                       font-size: 11px; }}
-
-QListWidget {{ border: none; background: transparent; }}
+                       font-family: "Cascadia Mono", Consolas,
+                       "DejaVu Sans Mono", monospace; font-size: 11px;
+                       border: none; border-radius: 8px; }}
 
 QLabel#Chip {{ background: {p.chip}; border: 1px solid {p.chip_edge};
-               border-radius: 7px; padding: 5px 9px; font-size: 11px;
-               font-family: "Cascadia Mono", Consolas, monospace; }}
-QLabel#StatePass {{ background: {p.ok_soft}; color: {p.ok}; border-radius: 5px;
-                    padding: 2px 8px; font-size: 10px; font-weight: 700; }}
-QLabel#StateFail {{ background: {p.bad_soft}; color: {p.bad}; border-radius: 5px;
-                    padding: 2px 8px; font-size: 10px; font-weight: 700; }}
-QLabel#StateWait {{ background: {p.chip}; color: {p.faint}; border-radius: 5px;
-                    padding: 2px 8px; font-size: 10px; font-weight: 700; }}
-QLabel#StateWarn {{ background: {p.warn_soft}; color: {p.warn}; border-radius: 5px;
-                    padding: 2px 8px; font-size: 10px; font-weight: 700; }}
+               border-radius: 7px; padding: 5px 9px; font-size: 11px; }}
+QLabel#StatePass {{ background: {p.ok_soft}; color: {p.ok}; border-radius: 9px;
+                    padding: 2px 9px; font-size: 9px; font-weight: 700; }}
+QLabel#StateFail {{ background: {p.bad_soft}; color: {p.bad}; border-radius: 9px;
+                    padding: 2px 9px; font-size: 9px; font-weight: 700; }}
+QLabel#StateWait {{ background: {p.chip}; color: {p.faint}; border-radius: 9px;
+                    padding: 2px 9px; font-size: 9px; font-weight: 700; }}
+QLabel#StateWarn {{ background: {p.warn_soft}; color: {p.warn}; border-radius: 9px;
+                    padding: 2px 9px; font-size: 9px; font-weight: 700; }}
+QLabel#StateAccent {{ background: {p.accent_soft}; color: {p.accent};
+                      border-radius: 9px; padding: 2px 9px; font-size: 9px;
+                      font-weight: 700; }}
+QLabel#NumberBadge {{ background: {p.accent_soft}; color: {p.accent};
+                      border-radius: 12px; font-size: 11px; font-weight: 700; }}
+QLabel#DoneTick {{ background: {p.ok_soft}; color: {p.ok}; border-radius: 27px;
+                   font-size: 24px; font-weight: 700; }}
+QLabel#SevMinor {{ background: {p.warn_soft}; color: {p.warn}; border-radius: 9px;
+                   padding: 2px 9px; font-size: 9px; font-weight: 700; }}
+QLabel#SevMajor {{ background: {p.bad_soft}; color: {p.bad}; border-radius: 9px;
+                   padding: 2px 9px; font-size: 9px; font-weight: 700; }}
+QLabel#TagSuper {{ color: {p.faint}; border: 1px solid {p.chip_edge};
+                   border-radius: 8px; padding: 1px 7px; font-size: 8.5px;
+                   font-weight: 700; }}
+
+QRadioButton {{ spacing: 9px; font-weight: 600; }}
+QRadioButton::indicator {{ width: 15px; height: 15px; }}
 
 QScrollArea {{ border: none; background: transparent; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
+QScrollBar:vertical {{ background: transparent; width: 9px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: {p.chip_edge}; border-radius: 4px;
+                               min-height: 30px; }}
+QScrollBar::handle:vertical:hover {{ background: {p.faint}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+QScrollBar:horizontal {{ background: transparent; height: 9px; margin: 2px; }}
+QScrollBar::handle:horizontal {{ background: {p.chip_edge}; border-radius: 4px;
+                                 min-width: 30px; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 """
 
 
