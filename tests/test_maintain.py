@@ -427,6 +427,9 @@ def test_full_workflow_with_fix_round_and_review_round(h):
     text = impl_package.read_text(encoding="utf-8")
     assert "STATUS: IMPLEMENTATION_COMPLETE" in text
     assert "- app.py" in text
+    # The full repository structure is included so the implementer can rely
+    # on files outside the allowed list existing.
+    assert "test_app.py" in text
     assert h.state()["implementation_round"] == 1
 
     # 5. Capture a wrong implementation and apply it; tests fail.

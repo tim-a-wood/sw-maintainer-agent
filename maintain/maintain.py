@@ -738,6 +738,7 @@ def build_implementation_package(task: Task, config: dict, round_number: int) ->
         {
             "round": str(round_number),
             "cumulative_diff": wrapped_diff(cumulative_diff(task)),
+            "repo_structure": repo_structure(task.root),
             "repomix_context": repomix_for_allowed_files(task.root, config, task.allowed_files),
         }
     )
@@ -795,6 +796,7 @@ def build_fix_package(task: Task, config: dict, round_number: int) -> str:
         {
             "round": str(round_number),
             "cumulative_diff": wrapped_diff(cumulative_diff(task)),
+            "repo_structure": repo_structure(task.root),
             "repomix_context": repomix_for_allowed_files(task.root, config, task.allowed_files),
             "feedback": latest_feedback(task),
             "previous_summary": latest_implementation_summary(task),
@@ -1782,6 +1784,10 @@ def main(argv: Optional[list] = None) -> int:
     except KeyboardInterrupt:
         say("\nAborted.")
         return 130
+    except BrokenPipeError:
+        # stdout was closed early (for example `maintain status | head`).
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 141
     return 0
 
 
