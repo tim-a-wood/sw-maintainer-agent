@@ -62,16 +62,29 @@ python3 maintain/maintain.py --help
 
 | Command | Responsibility |
 | --- | --- |
+| `maintain` | Show where the task stands and run the next step |
 | `maintain init` | Create Maintain configuration and project context |
 | `maintain new "<request>"` | Create a task and generate its scope package |
 | `maintain harden ["notes"]` | Create a test-hardening task for completed work |
-| `maintain capture` | Read and store the expected chatbot response from the clipboard |
+| `maintain paste` | Store the chatbot's reply from the clipboard |
 | `maintain next` | Generate the next appropriate handoff package |
 | `maintain apply` | Validate, confirm, apply and test a patch |
 | `maintain status` | Display current task state and next action |
 
 That is the whole interface. `maintain next` always knows what comes next;
 `maintain status` always tells you where you are.
+
+Running `maintain` with no arguments shows the home screen: the task, a
+progress trail across scope, implement, test and review, the current stage
+and test result, the file to upload next, and the single next action — press
+Enter to run it.
+
+`paste`, `continue` and `start` are aliases for `capture`, `next` and `new`;
+both spellings work everywhere.
+
+Colour is used when the output is a terminal and dropped otherwise, so piped
+or redirected output stays byte-identical plain text — which matters because
+Maintain's own output gets quoted back into handoff packages.
 
 ## Walkthrough
 
@@ -132,7 +145,7 @@ Upload the package to a **fresh** chatbot conversation, copy the chatbot's
 entire reply to the clipboard, then:
 
 ```sh
-maintain capture
+maintain paste
 ```
 
 Maintain knows from the workflow state which response type to expect, stores

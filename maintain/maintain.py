@@ -63,20 +63,20 @@ S_LIMIT_REACHED = "round_limit_reached"
 S_COMPLETE = "complete"
 
 STAGE_LABELS = {
-    S_AWAIT_SCOPE: "Waiting for scope response",
-    S_SCOPE_CAPTURED: "Scope captured",
-    S_AWAIT_IMPL: "Waiting for implementation response",
-    S_IMPL_CAPTURED: "Implementation captured",
-    S_PATCH_REJECTED: "Patch rejected",
+    S_AWAIT_SCOPE: "Waiting for the chatbot's scope reply",
+    S_SCOPE_CAPTURED: "Scope approved and recorded",
+    S_AWAIT_IMPL: "Waiting for the chatbot's patch",
+    S_IMPL_CAPTURED: "Patch ready to apply",
+    S_PATCH_REJECTED: "Patch refused by validation",
     S_TESTS_FAILED: "Tests failed",
-    S_READY_FOR_REVIEW: "Ready for review",
-    S_AWAIT_REVIEW: "Waiting for review response",
+    S_READY_FOR_REVIEW: "Tests passed — ready for review",
+    S_AWAIT_REVIEW: "Waiting for the reviewer's verdict",
     S_REVIEW_APPROVED: "Review approved",
-    S_REVIEW_CHANGES: "Review requested changes",
-    S_RESCOPE_NEEDED: "Rescope required",
-    S_AWAIT_RESCOPE: "Waiting for rescope response",
+    S_REVIEW_CHANGES: "Reviewer asked for changes",
+    S_RESCOPE_NEEDED: "Scope needs revising",
+    S_AWAIT_RESCOPE: "Waiting for the revised scope",
     S_RESCOPED: "Scope revised",
-    S_LIMIT_REACHED: "Round limit reached",
+    S_LIMIT_REACHED: "Stopped — round limit reached",
     S_COMPLETE: "Complete",
 }
 
@@ -107,8 +107,26 @@ class MaintainError(RuntimeError):
         self.next_action = next_action
 
 
+_PRESENTER = None
+
+
+def presenter():
+    """The shared terminal presenter, created on first use."""
+    global _PRESENTER
+    if _PRESENTER is None:
+        try:
+            from .presenter import Presenter
+        except ImportError:
+            # Running the file directly rather than as an installed package.
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from presenter import Presenter  # type: ignore
+
+        _PRESENTER = Presenter()
+    return _PRESENTER
+
+
 def say(message: str = "") -> None:
-    print(message)
+    presenter().line(message)
 
 
 # Subprocess helpers --------------------------------------------------------
@@ -1873,6 +1891,144 @@ def cmd_status() -> None:
     say(f"Next action: {stage_next_action(task)}")
 
 
+# Home screen ---------------------------------------------------------------
+
+# Which of the four trail phases each stage belongs to, and which are behind it.
+STAGE_PHASES = {
+    S_AWAIT_SCOPE: ("SCOPE", ()),
+    S_SCOPE_CAPTURED: ("IMPLEMENT", ("SCOPE",)),
+    S_RESCOPED: ("IMPLEMENT", ("SCOPE",)),
+    S_AWAIT_IMPL: ("IMPLEMENT", ("SCOPE",)),
+    S_IMPL_CAPTURED: ("IMPLEMENT", ("SCOPE",)),
+    S_PATCH_REJECTED: ("IMPLEMENT", ("SCOPE",)),
+    S_TESTS_FAILED: ("TEST", ("SCOPE", "IMPLEMENT")),
+    S_READY_FOR_REVIEW: ("REVIEW", ("SCOPE", "IMPLEMENT", "TEST")),
+    S_AWAIT_REVIEW: ("REVIEW", ("SCOPE", "IMPLEMENT", "TEST")),
+    S_REVIEW_CHANGES: ("IMPLEMENT", ("SCOPE",)),
+    S_REVIEW_APPROVED: ("REVIEW", ("SCOPE", "IMPLEMENT", "TEST")),
+    S_RESCOPE_NEEDED: ("SCOPE", ()),
+    S_AWAIT_RESCOPE: ("SCOPE", ()),
+    S_LIMIT_REACHED: ("IMPLEMENT", ("SCOPE",)),
+    S_COMPLETE: ("REVIEW", ("SCOPE", "IMPLEMENT", "TEST", "REVIEW")),
+}
+
+# The command the home screen offers to run for each stage.
+STAGE_COMMAND = {
+    S_AWAIT_SCOPE: "capture",
+    S_SCOPE_CAPTURED: "next",
+    S_AWAIT_IMPL: "capture",
+    S_IMPL_CAPTURED: "apply",
+    S_PATCH_REJECTED: "next",
+    S_TESTS_FAILED: "next",
+    S_READY_FOR_REVIEW: "next",
+    S_AWAIT_REVIEW: "capture",
+    S_REVIEW_APPROVED: "next",
+    S_REVIEW_CHANGES: "next",
+    S_RESCOPE_NEEDED: "next",
+    S_AWAIT_RESCOPE: "capture",
+    S_RESCOPED: "next",
+}
+
+
+def repo_label(root: Path) -> tuple:
+    branch = git_run(root, "rev-parse", "--abbrev-ref", "HEAD")
+    return root.name, (branch.stdout.strip() if branch.returncode == 0 else "")
+
+
+def cmd_home() -> int:
+    """Bare `maintain`: show where the task stands and offer the next step."""
+    view = presenter()
+    try:
+        root = find_repo_root()
+    except MaintainError:
+        view.brand(version=VERSION)
+        say("")
+        say("Maintain runs inside a Git repository, and this is not one.")
+        say("Next: Change into your project, or create one with `git init`.")
+        return 1
+
+    project, branch = repo_label(root)
+    view.brand(project=project, branch=branch, version=VERSION)
+
+    if not maintain_dir(root).is_dir():
+        view.console.print()
+        view.field("Status", "Not set up in this repository", style="warning")
+        view.console.print()
+        view.menu("i", "Set it up", "Run `maintain init`")
+        view.menu("q", "Quit", "")
+        view.console.print()
+        if view.ask("Choose", "i").lower().startswith("i"):
+            view.console.print()
+            cmd_init()
+        return 0
+
+    task_id = current_task_id(root)
+    task = Task(root, task_id) if task_id else None
+    if task is None or not task.state:
+        view.console.print()
+        view.field("Active task", "None", style="muted")
+        view.console.print()
+        view.menu("n", "Start a task", "Describe the change you want")
+        view.menu("h", "Harden the tests", "Coverage, mutations and end-to-end tests")
+        view.menu("q", "Quit", "")
+        view.console.print()
+        choice = view.ask("Choose", "n").lower()
+        if choice.startswith("n"):
+            request = view.ask("What needs changing?")
+            if request:
+                view.console.print()
+                cmd_new(request)
+        elif choice.startswith("h"):
+            view.console.print()
+            cmd_harden("")
+        return 0
+
+    phase, done = STAGE_PHASES.get(task.stage, ("SCOPE", ()))
+    view.console.print()
+    view.field("Task", f"{task.id}   {task.request_text().splitlines()[0][:52]}")
+    view.console.print()
+    view.trail(phase if task.stage != S_COMPLETE else "", done)
+    view.console.print()
+    view.field("Stage", stage_label(task))
+    view.field("Round", f"{task.rounds_this_scope} of {task.maximum_rounds}"
+               + (f"   ·   scope revision {task.state.get('scope_revision', 1)}"
+                  if int(task.state.get("scope_revision", 1)) > 1 else ""))
+    tests = {
+        "passed": ("Passed", "success"),
+        "failed": ("Failed", "danger"),
+        "not_configured": ("Not configured", "warning"),
+        None: ("Not run yet", "muted"),
+    }.get(task.state.get("test_status"), (str(task.state.get("test_status")), "label"))
+    view.field("Tests", tests[0], style=tests[1])
+    if task.state.get("review_verdict"):
+        verdict = task.state["review_verdict"]
+        view.field("Review", verdict, style="success" if verdict == "APPROVE" else "warning")
+    if task.stage in (S_AWAIT_SCOPE, S_AWAIT_IMPL, S_AWAIT_REVIEW, S_AWAIT_RESCOPE):
+        if task.state.get("current_export"):
+            view.field("Upload this", task.state["current_export"], style="accent")
+
+    view.console.print()
+    say(f"Next: {stage_next_action(task)}")
+    view.console.print()
+
+    command = STAGE_COMMAND.get(task.stage)
+    if command:
+        view.menu("", f"Press Enter to run `maintain {command}`")
+    view.menu("s", "Show full status", "")
+    view.menu("q", "Quit", "")
+    view.console.print()
+    choice = view.ask("Choose", "" if command else "q").lower()
+    view.console.print()
+    if choice in ("q", "quit"):
+        return 0
+    if choice in ("s", "status"):
+        cmd_status()
+        return 0
+    if not choice and command:
+        return main([command])
+    return 0
+
+
 PROJECT_CONTEXT_STARTER = """\
 # Project Context
 
@@ -1903,16 +2059,18 @@ Maintain {VERSION} — local handoff and workflow coordinator for
 chatbot-assisted software maintenance.
 
 Usage:
+  maintain                  Show where the task stands and what to do next
   maintain init             Create Maintain configuration and project context
   maintain new "<request>"  Create a task and generate its scope package
   maintain harden ["notes"] Create a test-hardening task for completed work
                             (100% coverage, mutation-resistant assertions,
                             end-to-end tests; gated by "harden_command")
-  maintain capture          Read and store the expected chatbot response
-                            from the clipboard
+  maintain paste            Store the chatbot's reply from the clipboard
   maintain next             Generate the next appropriate handoff package
   maintain apply            Validate, confirm, apply and test a patch
   maintain status           Display current task state and next action
+
+Aliases: paste = capture, continue = next, start = new
 
 Workflow:
   scope -> implement -> apply and test -> review
@@ -1922,14 +2080,33 @@ Workflow:
 
 def main(argv: Optional[list] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] in ("-h", "--help", "help"):
+    if not args:
+        try:
+            return cmd_home()
+        except MaintainError as exc:
+            say(f"Error: {exc}")
+            if exc.next_action:
+                say(f"Next: {exc.next_action}")
+            return 1
+        except KeyboardInterrupt:
+            say("")
+            return 130
+    if args[0] in ("-h", "--help", "help"):
         say(USAGE)
         return 0
     if args[0] in ("-V", "--version", "version"):
         say(f"maintain {VERSION}")
         return 0
 
-    command = args[0]
+    # Friendlier names for the same actions; the originals keep working.
+    command = {
+        "paste": "capture",
+        "continue": "next",
+        "start": "new",
+        "home": "",
+    }.get(args[0], args[0])
+    if command == "":
+        return cmd_home()
     try:
         if command == "init":
             cmd_init()

@@ -355,10 +355,54 @@ def h(tmp_path):
 
 
 def test_usage_version_and_unknown_command(h):
-    out = h.run().stdout
-    assert "maintain init" in out and "maintain capture" in out
+    out = h.run("--help").stdout
+    assert "maintain init" in out and "maintain paste" in out
     assert "0.1.0" in h.run("--version").stdout
     assert h.run("frobnicate", expect=2).returncode == 2
+
+
+def test_command_aliases_match_their_originals(h):
+    h.setup()
+    h.run("start", "Fix the greeting")          # alias for `new`
+    assert h.state()["stage"] == "awaiting_scope_response"
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("paste")                              # alias for `capture`
+    assert h.state()["stage"] == "scope_captured"
+    h.run("continue")                           # alias for `next`
+    assert h.state()["stage"] == "awaiting_implementation_response"
+
+
+def test_home_screen_shows_task_and_next_action(h):
+    # No repository set up yet: offer to do it, and decline cleanly.
+    out = h.run(input_text="q\n").stdout
+    assert "MAINTAIN" in out
+    assert "Not set up in this repository" in out
+
+    h.setup()
+    out = h.run(input_text="q\n").stdout
+    assert "Active task" in out and "None" in out
+
+    h.run("new", "Fix the greeting shown at startup")
+    out = h.run(input_text="q\n").stdout
+    assert "Fix the greeting shown at startup" in out
+    assert "SCOPE" in out and "IMPLEMENT" in out      # the workflow trail
+    assert "Waiting for the chatbot's scope reply" in out
+    assert "maintain capture" in out                  # offered next command
+
+    # Pressing Enter runs the offered command; here that is `capture`.
+    h.set_clip(SCOPE_RESPONSE)
+    out = h.run(input_text="\n").stdout
+    assert "Scope response captured" in out
+    assert h.state()["stage"] == "scope_captured"
+
+
+def test_output_is_plain_text_when_not_a_terminal(h):
+    """Captured output must stay verbatim — packages quote it back."""
+    h.setup()
+    out = h.run("new", "Fix the greeting").stdout
+    assert "\x1b[" not in out
+    long_line = [line for line in out.split("\n") if line.startswith("Next:")][0]
+    assert long_line.endswith("run `maintain capture`.")  # not wrapped
 
 
 def test_init_requires_git_repository(tmp_path):
@@ -802,7 +846,7 @@ def test_status_reports_state_and_next_action(h):
     h.setup()
     h.run("new", "Fix the greeting")
     out = h.run("status").stdout
-    assert "Waiting for scope response" in out
+    assert "Waiting for the chatbot's scope reply" in out
     assert "Implementation round: 0 of 3" in out
     assert "Scope revision: 1" in out
     assert "Next action:" in out
@@ -812,7 +856,7 @@ def test_status_reports_state_and_next_action(h):
     h.run("capture")
     h.run("next")
     out = h.run("status").stdout
-    assert "Waiting for implementation response (round 1)" in out
+    assert "Waiting for the chatbot's patch (round 1)" in out
     assert "Implementation round: 1 of 3" in out
 
 
