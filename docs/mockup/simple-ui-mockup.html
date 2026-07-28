@@ -392,7 +392,7 @@
   .chat.over{box-shadow:inset 0 0 0 2.5px var(--acc); border-radius:0 0 4px 4px}
 
   /* ---------- toasts & modal ---------- */
-  .toasts{position:fixed; right:18px; bottom:18px; display:flex; flex-direction:column; gap:8px; z-index:60}
+  .toasts{position:fixed; right:18px; bottom:18px; display:flex; flex-direction:column; gap:8px; z-index:60; pointer-events:none}
   .toast{
     background:var(--ink); color:var(--win); font-size:12.5px; font-weight:500;
     border-radius:8px; padding:10px 15px; max-width:340px; box-shadow:0 8px 24px rgba(0,0,0,.25);
@@ -404,6 +404,7 @@
     position:fixed; inset:0; background:rgba(10,20,35,.45); z-index:50;
     display:flex; align-items:center; justify-content:center; padding:20px;
   }
+  .overlay[hidden]{display:none !important}
   .modal{
     background:var(--win); border:1px solid var(--win-edge); border-radius:10px; box-shadow:var(--shadow);
     width:min(480px,100%); max-height:86vh; overflow-y:auto; padding:20px 22px; display:flex; flex-direction:column; gap:12px;
@@ -1388,7 +1389,7 @@ function initStateKeepChat(){
   S.settings = keepSettings; S.lastConvRole = keepConv;
 }
 
-$("#mBody").addEventListener("click", e => {
+$(".win-m").addEventListener("click", e => {
   const n = e.target.closest("[data-act]"); if (!n) return;
   if (S.screen === "describe") saveRequestDraft();
   handleAction(n.getAttribute("data-act"), n);
@@ -1403,7 +1404,7 @@ $("#mBody").addEventListener("input", e => {
     if (p) p.textContent = e.target.value.replace(/\/+$/, "") + "/maintain-0143-plan.zip";
   }
 });
-$("#mBody").addEventListener("keydown", e => {
+$("#overlay").addEventListener("keydown", e => {
   if (e.key === "Enter" && e.target.matches(".dlpick .chip")) e.target.click();
 });
 
