@@ -143,6 +143,31 @@ maintain --version
 
 Follow-up commands displayed by Maintain on Windows use PowerShell syntax.
 
+## Maintain Simple UI (desktop)
+
+Maintain Simple UI is a small desktop application over the same engine. It
+guides one person through the loop — plan, build, review, test, save — with a
+manual packet exchange: the tool builds one ZIP packet per step, the person
+moves it to Microsoft 365 Copilot and brings the reply back. No browser
+automation runs in this mode.
+
+- Start it with `maintain-ui` (installed by the `ui` extra:
+  `python -m pip install '.[ui]'`). The Windows installer also creates the
+  **Maintain UI** shortcut.
+- Set up a project for it with `maintain init /path/to/project --provider
+  manual-ui`, or let the UI create the configuration on first open.
+- The primary transport is the OneDrive link: the tool copies the packet into
+  a configured folder, watches synchronization, and puts the link in the
+  clipboard. Drag and drop, file copy, and export stay available.
+- Every run records an iteration timeline. You can go back to any anchor
+  iteration; later iterations stay in the history as superseded.
+- Boilerplate prompts and standards documents are configurable per project
+  and per task type in Settings. Attachments can be added to every packet.
+- Try one packet without the UI: `maintain package "Describe the change"`.
+
+The requirements are in `docs/simple-ui-prd.md`; the interactive mockup in
+`docs/mockup/simple-ui-mockup.html` shows the intended screens.
+
 ## Open, switch, and create projects
 
 Launch without a path to reopen the most recently used project:

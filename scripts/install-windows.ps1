@@ -282,6 +282,14 @@ try {
     & $venvPython -m playwright install chromium
     Assert-NativeCommand -Action "Installing Chromium"
 
+    Write-Host "Installing the Maintain desktop UI..."
+    & $venvPython -m pip install --disable-pip-version-check --no-cache-dir `
+        "PySide6-Essentials>=6.6,<7"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "The desktop UI could not be installed; the CLI still works." `
+            -ForegroundColor Yellow
+    }
+
     if (-not (Test-Path -LiteralPath $iconSource)) {
         throw "The Maintain icon is missing from the installer package: $iconSource"
     }
@@ -366,6 +374,21 @@ exit /b %MAINTAIN_EXIT%
     New-Item -ItemType Directory -Force -Path $startMenuFolder | Out-Null
     $startMenuShortcut = Join-Path $startMenuFolder "Maintain.lnk"
     New-MaintainShortcut -Path $startMenuShortcut
+
+    $uiExecutable = Join-Path (Split-Path -Parent $venvPython) "maintain-ui.exe"
+    if (Test-Path -LiteralPath $uiExecutable) {
+        foreach ($uiShortcutPath in @(
+                (Join-Path $desktop "Maintain UI.lnk"),
+                (Join-Path $startMenuFolder "Maintain UI.lnk"))) {
+            $uiShell = New-Object -ComObject WScript.Shell
+            $uiShortcut = $uiShell.CreateShortcut($uiShortcutPath)
+            $uiShortcut.TargetPath = $uiExecutable
+            $uiShortcut.WorkingDirectory = $env:USERPROFILE
+            $uiShortcut.IconLocation = "$iconPath,0"
+            $uiShortcut.Description = "Maintain Simple UI - the guided packet exchange"
+            $uiShortcut.Save()
+        }
+    }
 
     $pinned = Try-PinTaskbar -ShortcutPath $startMenuShortcut
 

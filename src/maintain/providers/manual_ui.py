@@ -88,7 +88,7 @@ class ManualUiProvider(Provider):
         if self.attachment_source is not None:
             attachments = self.attachment_source(request)
         packet = build_packet(
-            request, self.evidence_dir / "packets",
+            request, self._packet_dir(),
             policy=self.policy, repository=self.repository, config_dir=self.config_dir,
             attachments=attachments)
         reply_kind = "zip" if request.role == "implement" else "json"
@@ -124,6 +124,14 @@ class ManualUiProvider(Provider):
             provider=self.name,
             conversation_id=conversation,
         )
+
+    def _packet_dir(self) -> Path:
+        """A fresh directory per exchange keeps the audit inventory append-only."""
+        root = self.evidence_dir / "packets"
+        counter = 1
+        while (root / f"exchange-{counter:03d}").exists():
+            counter += 1
+        return root / f"exchange-{counter:03d}"
 
     def _store_output_zip(self, source: Path, request: ProviderRequest) -> Path:
         self.evidence_dir.mkdir(parents=True, exist_ok=True)

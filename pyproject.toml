@@ -21,9 +21,13 @@ classifiers = [
 
 [project.optional-dependencies]
 browser = ["playwright>=1.52,<2"]
+ui = ["PySide6-Essentials>=6.6,<7"]
 
 [project.scripts]
 maintain = "maintain.cli:main"
+
+[project.gui-scripts]
+maintain-ui = "maintain.ui.main:main"
 
 [project.urls]
 Repository = "https://github.com/tim-a-wood/sw-maintainer-agent"

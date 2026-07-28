@@ -43,6 +43,20 @@ PROVIDER_SAFETY_HEADER = (
     "dependencies, expose secrets, run MATLAB, or claim local verification."
 )
 
+IMPLEMENT_INSTRUCTIONS = (
+    "Implement the complete authorized task and follow the provider-specific output "
+    "contract exactly. Patch providers return content.patch as a complete unified "
+    "diff. Workspace-edit providers edit only the isolated worktree. Browser "
+    "assistants return complete final files inline as specified in TASK.md. For an "
+    "issue, also return content.root_cause with statement and evidence_paths. Do not "
+    "use internet tools, claim local verification, or run MATLAB."
+)
+
+REVIEW_INSTRUCTIONS = (
+    "Independently review the actual diff. Return content.decision as approve or "
+    "changes_requested and content.findings as structured evidence."
+)
+
 SCOPE_INSTRUCTIONS = (
     "Define the smallest complete tasks in dependency order. Use exact supplied paths "
     "for existing files. When project_policy.allow_new_files is true and the request "
@@ -873,12 +887,7 @@ class WorkflowEngine:
                               "media_type": "text/x-diff"}
         else:
             content = self._exchange(record, store, "implement", str(task["id"]),
-                "Implement the complete authorized task and follow the provider-specific output "
-                "contract exactly. Patch providers return content.patch as a complete unified "
-                "diff. Workspace-edit providers edit only the isolated worktree. Browser "
-                "assistants return complete final files inline as specified in TASK.md. For an "
-                "issue, also return content.root_cause with statement and evidence_paths. Do not "
-                "use internet tools, claim local verification, or run MATLAB.", payload,
+                IMPLEMENT_INSTRUCTIONS, payload,
                 conversation_suffix=(f"{task['id']}-attempt-{record.attempt}"
                                      f"{self._epoch_suffix(record)}"),
                 implementation_worktree=Path(record.worktree))
@@ -964,8 +973,7 @@ class WorkflowEngine:
             for path in task["allowed_files"] if (Path(record.worktree) / path).is_file()
         }
         content = self._exchange(record, store, "review", task["id"],
-            "Independently review the actual diff. Return content.decision as approve or "
-            "changes_requested and content.findings as structured evidence.",
+            REVIEW_INSTRUCTIONS,
             {"request": record.request, "tasks": record.tasks[:record.task_index + 1], "diff": diff.text,
              "files": review_files, "tree_hash": diff.tree_hash,
              "root_cause": record.evidence.get("root_cause")},

@@ -1,6 +1,7 @@
 # Maintain Simple UI — Product Requirements
 
-- Status: PRD v1.1, for review
+- Status: PRD v1.1 — implemented on this branch (see section 10; M1 and M2
+  are complete, M3 is complete except the on-Windows verification pass)
 - Branch: `maintain-simple-ui`
 - Date: 2026-07-28
 - Interactive reference: `docs/mockup/simple-ui-mockup.html` (snapshot at
