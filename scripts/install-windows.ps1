@@ -136,11 +136,18 @@ function Test-LegacyRuntime {
 }
 
 function Add-UserPath {
+    # Prepend, and move an existing entry to the front. A pip install of the
+    # 0.9 package leaves a maintain.exe in Python's Scripts directory, which
+    # is also on the user PATH; appending would let that copy win.
     param([string]$Directory)
     $current = [Environment]::GetEnvironmentVariable("Path", "User")
-    $parts = @($current -split ";" | Where-Object { $_ })
-    if ($parts -notcontains $Directory) {
-        $updated = (@($parts) + $Directory) -join ";"
+    $separator = [IO.Path]::DirectorySeparatorChar
+    $normalized = $Directory.TrimEnd($separator)
+    $parts = @($current -split ";" | Where-Object {
+        $_ -and $_.Trim().TrimEnd($separator) -ne $normalized
+    })
+    $updated = (@($Directory) + $parts) -join ";"
+    if ($updated -ne $current) {
         [Environment]::SetEnvironmentVariable("Path", $updated, "User")
     }
 }
@@ -366,13 +373,12 @@ cmd /k
         Write-Host "A new terminal will run: $winner" -ForegroundColor Green
     }
     else {
-        Write-Host "PROBLEM: a different 'maintain' comes first on your PATH." -ForegroundColor Red
-        Write-Host "  A new terminal will run: $winner" -ForegroundColor Red
-        Write-Host "  This installer put the new one at: $launcherPath" -ForegroundColor Red
-        Write-Host ""
-        Write-Host "  That other copy is probably an earlier pip install. Remove it with:" -ForegroundColor Yellow
-        Write-Host "      py -3 -m pip uninstall -y sw-maintainer-agent maintain" -ForegroundColor Yellow
-        Write-Host "  or delete the file above, then open a new terminal." -ForegroundColor Yellow
+        Write-Host "NOTE: another 'maintain' is also on your PATH:" -ForegroundColor Yellow
+        Write-Host "  $winner" -ForegroundColor Yellow
+        Write-Host "This installer moved its own folder to the front of your user PATH," -ForegroundColor Yellow
+        Write-Host "so a new terminal should now run: $launcherPath" -ForegroundColor Yellow
+        Write-Host "If the old one still wins, remove it with:" -ForegroundColor Yellow
+        Write-Host "    py -3 -m pip uninstall -y sw-maintainer-agent maintain" -ForegroundColor Yellow
     }
     Write-Host ""
     Write-Host "Confirm with: maintain --version   (expects: maintain $expectedVersion)"
