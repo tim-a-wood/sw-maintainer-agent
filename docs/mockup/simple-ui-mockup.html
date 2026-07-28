@@ -458,7 +458,9 @@
 <div class="overlay" id="overlay" hidden></div>
 
 <script>
+(function(){
 "use strict";
+function main(){
 /* ================= helpers ================= */
 const $ = s => document.querySelector(s);
 const esc = t => String(t).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -1425,6 +1427,21 @@ function seedChat(){
 initState();
 seedChat();
 render();
+}
+function start(){
+  try{ main(); }
+  catch(err){
+    var d = document.createElement("div");
+    d.style.cssText = "position:fixed;left:12px;bottom:12px;z-index:99;background:#7a1f16;color:#fff;" +
+      "font:12px/1.5 system-ui,sans-serif;padding:10px 14px;border-radius:8px;max-width:420px";
+    d.textContent = "The mockup script stopped: " + (err && err.message ? err.message : err);
+    document.body.appendChild(d);
+    throw err;
+  }
+}
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+else start();
+})();
 </script>
 </body>
 </html>
