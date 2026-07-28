@@ -6,15 +6,19 @@ import shutil
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QInputDialog, QLabel,
-                               QMainWindow, QMessageBox, QPushButton,
-                               QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout,
+                               QInputDialog, QLabel, QMainWindow, QMessageBox,
+                               QPushButton, QStackedWidget, QVBoxLayout,
+                               QWidget)
 
 from maintain.config import ProjectConfig
 from maintain.errors import MaintainError
 from maintain.gates import GateDecision
 from maintain.models import RunRecord, RunState
 from maintain.providers.manual_ui import PacketHandoff
+from maintain.repository_memory import load_ui_settings, save_ui_settings
+
+from . import theme as theme_module
 
 from .config_store import ConfigStore
 from .controller import Controller
@@ -30,11 +34,18 @@ from .widgets import StageHeader
 STAGE_FOR_TASK = {"plan": 0, "build": 1, "repair": 1, "review": 2}
 
 
+def saved_theme() -> str:
+    value = str(load_ui_settings().get("theme", "dark"))
+    return value if value in {"light", "dark"} else "dark"
+
+
 class MainWindow(QMainWindow):
     def __init__(self, config: ProjectConfig) -> None:
         super().__init__()
         self.setWindowTitle(f"{text('app.title')} — {config.name}")
         self.resize(640, 760)
+        self._theme = saved_theme()
+        self.apply_theme(self._theme, persist=False)
         self.store = ConfigStore(config)
         self.controller = Controller(config)
         self.current_handoff: PacketHandoff | None = None
@@ -69,6 +80,12 @@ class MainWindow(QMainWindow):
         self.foot_label.setObjectName("FootLabel")
         row.addWidget(self.foot_label)
         row.addStretch(1)
+        self.foot_theme = QPushButton(
+            text("theme.to_light" if self._theme == "dark" else "theme.to_dark"))
+        self.foot_theme.setObjectName("Ghost")
+        self.foot_theme.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.foot_theme.clicked.connect(self.toggle_theme)
+        row.addWidget(self.foot_theme)
         self.foot_history = QPushButton(text("home.history"))
         self.foot_history.setObjectName("Ghost")
         self.foot_history.clicked.connect(self._open_live_timeline)
@@ -184,6 +201,28 @@ class MainWindow(QMainWindow):
         self.controller.progress_event.connect(self._progress)
         self.controller.run_settled.connect(self._run_settled)
         self.controller.run_error.connect(self._run_failed)
+
+    # ----- theme -----
+
+    def apply_theme(self, name: str, persist: bool = True) -> None:
+        palette = theme_module.palette_for(name == "dark")
+        application = QApplication.instance()
+        if application is not None:
+            application.setStyleSheet(theme_module.stylesheet(palette))
+        self._theme = name
+        if persist:
+            values = load_ui_settings()
+            values["theme"] = name
+            save_ui_settings(values)
+        if hasattr(self, "foot_theme"):
+            self.foot_theme.setText(
+                text("theme.to_light" if name == "dark" else "theme.to_dark"))
+        if hasattr(self, "stage_header"):
+            self.stage_header.update()
+        self.update()
+
+    def toggle_theme(self) -> None:
+        self.apply_theme("light" if self._theme == "dark" else "dark")
 
     # ----- navigation -----
 

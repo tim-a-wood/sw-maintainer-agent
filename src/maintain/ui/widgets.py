@@ -397,8 +397,10 @@ class FileChips(QWidget):
     def set_files(self, names: list[str], removable: bool = True) -> None:
         while self._flow.count():
             item = self._flow.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
         for index, name in enumerate(names):
             chip = Chip(name, removable=removable)
             chip.removed.connect(lambda i=index: self.removed.emit(i))

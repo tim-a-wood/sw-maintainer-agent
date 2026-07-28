@@ -75,8 +75,10 @@ class Screen(QWidget):
     def clear_layout(layout) -> None:
         while layout.count():
             item = layout.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
 
 
 class HomeScreen(Screen):
@@ -1115,6 +1117,7 @@ class ChecksPage(Screen):
 
     def load(self, rows: list[tuple[str, str]]) -> None:
         for _, _, holder in self._editors:
+            holder.setParent(None)
             holder.deleteLater()
         self._editors = []
         self.message.setText("")

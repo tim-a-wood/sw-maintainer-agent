@@ -227,6 +227,23 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     assert worktree_file.read_text(encoding="utf-8") == 'VALUE = "after"\n'
 
 
+def test_theme_defaults_dark_toggles_and_persists(qt_app, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    assert window._theme == "dark"
+    assert window.foot_theme.text() == "Light mode"
+    window.toggle_theme()
+    assert window._theme == "light"
+    assert window.foot_theme.text() == "Dark mode"
+    from maintain.repository_memory import load_ui_settings
+    assert load_ui_settings()["theme"] == "light"
+    second = MainWindow(config)
+    assert second._theme == "light"
+    second.toggle_theme()
+    assert load_ui_settings()["theme"] == "dark"
+
+
 def test_stop_pauses_and_home_offers_continue(qt_app, tmp_path, monkeypatch):
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)

@@ -47,15 +47,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", help="Project repository path")
     args = parser.parse_args(argv)
 
-    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication, QMessageBox
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Maintain")
 
+    from .app import saved_theme
     from .theme import palette_for, stylesheet
-    scheme = app.styleHints().colorScheme()
-    dark = scheme == Qt.ColorScheme.Dark
-    app.setStyleSheet(stylesheet(palette_for(dark)))
+    app.setStyleSheet(stylesheet(palette_for(saved_theme() == "dark")))
 
     repository = _pick_repository(args.repo)
     if repository is None:

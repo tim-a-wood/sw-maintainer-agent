@@ -153,6 +153,10 @@ STR: dict[str, str] = {
     "run.confirm.no": "Stay here",
     "run.went_back": "Went back. The run continues from the restored point.",
 
+    # Theme
+    "theme.to_light": "Light mode",
+    "theme.to_dark": "Dark mode",
+
     # Stop / pause
     "stop.button": "Stop",
     "stop.title": "Stop the run?",
