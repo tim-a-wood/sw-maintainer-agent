@@ -222,9 +222,19 @@ for example:
 
 Everything else is the ordinary workflow: correction rounds when the gate
 fails, independent review when it passes, your confirmation to close.
-Mutation testing tools (for example `mutmut`) can be chained into
-`harden_command` when their exit codes are reliable in your environment, or
-run manually as an advisory check.
+Coverage proves the tests execute the code; it cannot prove they pin its
+behaviour. `experiments/mutation_check.py` measures that directly — it
+applies small source mutations to a throwaway copy of the repository and
+reports which ones the suite fails to catch:
+
+```sh
+python3 experiments/mutation_check.py --gate
+```
+
+Run it after a hardening task to check the result, or chain it into
+`harden_command` once you trust its results in your project. External
+mutation tools (for example `mutmut`) work the same way when their exit
+codes are reliable in your environment.
 
 ## Task storage
 

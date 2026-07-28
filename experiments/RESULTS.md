@@ -57,6 +57,42 @@ directional except where a change moves a cell end to end (0/N → N/N).
   harness supports that by hand-saving each chatbot reply under
   `replies/<cell>/<n>.md` and re-running `grade.py`.
 
+## Round 3 (2026-07-28) — the harden workflow, measured on a real task
+
+`maintain harden` was exercised on the `minisite` demo (a 3-task static site
+generator): 4 implementation rounds, 1 rescope, 2 independent reviews.
+
+| Measure | Before | After |
+| --- | --- | --- |
+| Line + branch coverage of targets | 98% | 100% (gate-enforced) |
+| Tests | 57 | 78 |
+| Mutation score (40 sampled mutants) | 60% | 85–87% |
+| Target source files modified | — | none |
+
+Two findings shaped the tool:
+
+1. **A passing coverage gate is not a passing review.** Round 2 reached 100%
+   coverage and the independent reviewer still returned CHANGES_REQUIRED,
+   catching a tautological assertion (`assert str(parse_error.value) in err`
+   — both sides derived from the same code path, so it cannot fail),
+   unanchored `match="title"` patterns, and promised exact-document tests
+   downgraded to substring checks. An independent mutation run agreed: the
+   surviving mutants were precisely the template lines the reviewer flagged.
+   The correction round moved the mutation score from 60% to ~86%.
+2. **Hardening packages were missing their targets** (fixed). Packages pack
+   Repomix context for the allowed files, which for a hardening task means
+   the test files; the read-only target sources the new tests must assert
+   against were absent, and the implementer correctly escalated
+   RESCOPE_REQUIRED rather than invent expected strings. This is the same
+   failure mode as round 2's I3 cell — packages under-supplying context —
+   and is worth checking first whenever a new stage is added.
+
+Residual on `minisite`: every remaining survivor is a `.strip()` removal, so
+whitespace tolerance is genuinely untested in both modules — a gap neither
+100% branch coverage nor a thorough reviewer surfaced, and the clearest
+argument for treating mutation results as a gate rather than a footnote.
+The measurement tool is `mutation_check.py` in this directory.
+
 ## Reproducing
 
 ```sh
