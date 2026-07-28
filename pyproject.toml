@@ -1,32 +1,32 @@
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sw-maintainer-agent"
-version = "0.9.1"
-description = "Auditable, provider-neutral software maintenance workflows"
+name = "maintain"
+version = "0.1.0"
+description = "Local handoff and workflow coordinator for chatbot-assisted software maintenance"
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = ["rich>=13.9,<15"]
-keywords = ["ai", "cli", "copilot", "maintenance", "software-engineering"]
+requires-python = ">=3.9"
+dependencies = ["pyperclip>=1.8"]
+keywords = ["cli", "chatbot", "maintenance", "workflow", "git"]
 classifiers = [
   "Environment :: Console",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
 ]
 
 [project.optional-dependencies]
-browser = ["playwright>=1.52,<2"]
+dev = ["pytest>=7"]
 
 [project.scripts]
-maintain = "maintain.cli:main"
+maintain = "maintain.maintain:main"
 
 [project.urls]
 Repository = "https://github.com/tim-a-wood/sw-maintainer-agent"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+packages = ["maintain"]
+
+[tool.setuptools.package-data]
+maintain = ["templates/*.md"]
