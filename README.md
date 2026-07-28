@@ -9,9 +9,12 @@ applies them through Git, runs local tests, and supports bounded correction
 and rescope loops.
 
 Maintain is **not** an AI agent and does not communicate with a chatbot
-automatically. You upload each package to a chatbot yourself (Microsoft 365
-Copilot, or any chatbot that accepts Markdown file uploads and returns text),
-copy the reply, and let Maintain do the bookkeeping, validation, and Git work.
+automatically. Each package is put on your clipboard as a file the moment it
+is generated, so sending it is `Ctrl+V` in a fresh chatbot conversation
+(Microsoft 365 Copilot, or any chatbot that accepts Markdown file uploads and
+returns text). Copy the reply, press Enter in Maintain, and it does the
+bookkeeping, validation, and Git work — including generating and copying the
+next package.
 
 ```text
 Scope
@@ -202,8 +205,21 @@ was never written.
 
 Once a project is open the home screen shows its task, a progress trail
 across scope, implement, test and review, the current stage and test result,
-the file to upload next, and the single next action — press Enter to run it.
+the file to send next, and the single next action — press Enter to run it.
 Choose `p` to switch project.
+
+Opening a project that is waiting on the chatbot puts its package back on
+your clipboard, so resuming is `Ctrl+V` in the chatbot rather than a hunt
+through folders. `c` copies it again and `o` opens its folder if you would
+rather attach it by hand.
+
+One keypress carries as far as it sensibly can. Pressing Enter on a waiting
+stage captures the reply, generates whatever package comes next, and copies
+that to your clipboard; pressing Enter on a captured patch validates it,
+applies it, runs the tests, and generates the review or correction package
+that follows. Because the menu names the action, it is not asked again as a
+`[y/N]` prompt — run `maintain apply` directly and the confirmation is still
+there.
 
 The list of projects is stored per user in `~/.maintain/projects.json`
 (Windows: `%USERPROFILE%\.maintain\projects.json`), never inside the
@@ -276,8 +292,9 @@ maintain new "Correct the greeting shown at startup"
 
 ```text
 Created task: 20260728-001
-Package: .maintain/tasks/20260728-001/exports/maintain-20260728-001-scope.md
-Next: Upload the package to a fresh chatbot conversation, copy the complete reply, then run `maintain paste`.
+Package: .maintain/tasks/20260728-001/exports/maintain-20260728-001-scope.md   (copied to your clipboard)
+Next: Switch to your chatbot, press Ctrl+V to attach it, and send.
+      Then copy the whole reply and come back here.
 ```
 
 The scope package contains the scoping role instructions, your request, the
@@ -286,12 +303,17 @@ and the exact response format the chatbot must follow.
 
 ### 3. Capture each response
 
-Upload the package to a **fresh** chatbot conversation, copy the chatbot's
-entire reply to the clipboard, then:
+The package is already on your clipboard: press `Ctrl+V` in a **fresh**
+chatbot conversation to attach it, send, copy the chatbot's entire reply,
+then press Enter on the Maintain home screen — or run:
 
 ```sh
 maintain paste
 ```
+
+Where the clipboard cannot hold a file (a terminal with no clipboard tool,
+or an unusual desktop), Maintain prints the path and you attach it yourself;
+`MAINTAIN_COPY_FILE_CMD` overrides how the copy is done.
 
 Maintain knows from the workflow state which response type to expect, stores
 the raw reply before parsing it, validates the required markers and sections,
@@ -323,9 +345,10 @@ intervention instead of looping forever.
 
 ### 5. Review and finish
 
-When tests pass, `maintain next` generates an independent review package.
-Upload it to a **fresh** conversation — the reviewer must not share context
-with the implementer. The reviewer returns `VERDICT: APPROVE`,
+When tests pass, `maintain next` generates an independent review package and
+copies it to your clipboard. Send it to a **fresh** conversation — the
+reviewer must not share context with the implementer. The reviewer returns
+`VERDICT: APPROVE`,
 `VERDICT: CHANGES_REQUIRED`, or `VERDICT: RESCOPE`.
 
 On `APPROVE`, `maintain next` closes the task after a final confirmation. The
@@ -414,11 +437,12 @@ under numbered names.
 └── exports/          # the upload files: maintain-<id>-scope.md, -implement-01.md, ...
 ```
 
-Upload the files under `exports/`; the rest is the audit trail.
+The files under `exports/` are the ones that go to the chatbot; the rest is
+the audit trail.
 
 ## Clipboard configuration
 
-Capture tries, in order:
+Reading a response back tries, in order:
 
 1. `MAINTAIN_CLIPBOARD_CMD` — a shell command that prints the clipboard to
    stdout. Useful under WSL:
@@ -428,6 +452,18 @@ Capture tries, in order:
    `powershell.exe Get-Clipboard` (Windows/WSL)
 
 Captured text is normalised to LF line endings before storage and parsing.
+
+Copying a package **as a file** — so `Ctrl+V` attaches it rather than pasting
+its text — uses:
+
+1. `MAINTAIN_COPY_FILE_CMD` — a shell command with `{path}` substituted, for
+   example under WSL:
+   `export MAINTAIN_COPY_FILE_CMD='powershell.exe -NoProfile -Command "Set-Clipboard -LiteralPath \"$(wslpath -w {path})\""'`
+2. `Set-Clipboard -LiteralPath` (Windows), `osascript` with a POSIX file
+   (macOS), `wl-copy` or `xclip` with `text/uri-list` (Linux)
+
+When none of these works Maintain says so and prints the path instead — the
+workflow is unchanged, you just attach the file yourself.
 
 ## Failure behaviour
 

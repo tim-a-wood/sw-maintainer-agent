@@ -21,8 +21,10 @@ Commands:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -125,8 +127,41 @@ def presenter():
     return _PRESENTER
 
 
+_QUIET_GUIDANCE = False
+_SKIPPING_GUIDANCE = False
+
+
 def say(message: str = "") -> None:
+    """Print one line.
+
+    Inside the home screen the "Next:" guidance is dropped: the commands are
+    being chained on the user's behalf, so advice about running the next one
+    is already out of date by the time it is printed, and the screen that
+    re-renders straight afterwards carries the current advice.
+    """
+    global _SKIPPING_GUIDANCE
+    if _QUIET_GUIDANCE:
+        stripped = message.strip()
+        if stripped.startswith("Next:"):
+            _SKIPPING_GUIDANCE = True
+            return
+        if _SKIPPING_GUIDANCE and stripped and message.startswith("  "):
+            return          # a continuation line of the guidance just dropped
+        _SKIPPING_GUIDANCE = False
     presenter().line(message)
+
+
+@contextlib.contextmanager
+def quiet_guidance():
+    """Suppress "Next:" advice for commands the home screen runs itself."""
+    global _QUIET_GUIDANCE, _SKIPPING_GUIDANCE
+    previous = _QUIET_GUIDANCE
+    _QUIET_GUIDANCE = True
+    try:
+        yield
+    finally:
+        _QUIET_GUIDANCE = previous
+        _SKIPPING_GUIDANCE = False
 
 
 # Subprocess helpers --------------------------------------------------------
@@ -341,12 +376,36 @@ def stage_next_action(task: Task) -> str:
 # Interaction ---------------------------------------------------------------
 
 
-def confirm(prompt: str) -> bool:
+_ALREADY_CONFIRMED = False
+
+
+def confirm(prompt: str, routine: bool = False) -> bool:
+    """Ask a yes/no question.
+
+    A `routine` question is one the caller has already been asked in another
+    form — the home screen names the action on the key the user pressed, so
+    asking again is a second keystroke for a decision already made. Questions
+    about something unexpected (a dirty tree, a moved HEAD) are never routine.
+    """
+    if routine and _ALREADY_CONFIRMED:
+        return True
     try:
         answer = input(f"{prompt} [y/N] ").strip().lower()
     except EOFError:
         return False
     return answer in ("y", "yes")
+
+
+@contextlib.contextmanager
+def already_confirmed():
+    """Treat routine confirmations as answered, for the home screen."""
+    global _ALREADY_CONFIRMED
+    previous = _ALREADY_CONFIRMED
+    _ALREADY_CONFIRMED = True
+    try:
+        yield
+    finally:
+        _ALREADY_CONFIRMED = previous
 
 
 def ask_keep_or_reset(recommendation: str) -> str:
@@ -422,6 +481,78 @@ def read_clipboard() -> str:
         "command that prints the clipboard contents (for example `powershell.exe -NoProfile "
         "-Command Get-Clipboard -Raw` under WSL).",
     )
+
+
+def copy_file_to_clipboard(path: Path) -> bool:
+    """Put the file itself on the clipboard, so Ctrl+V attaches it.
+
+    This is what removes the navigate-to-folder-and-drag step: every chatbot
+    that takes file attachments also accepts a pasted file.
+    """
+    override = os.environ.get("MAINTAIN_COPY_FILE_CMD")
+    if override:
+        proc = subprocess.run(
+            override.replace("{path}", str(path)), shell=True,
+            capture_output=True, text=True,
+        )
+        return proc.returncode == 0
+
+    system = platform.system()
+    if system == "Windows":
+        quoted = str(path).replace("'", "''")
+        proc = run([
+            "powershell.exe", "-NoProfile", "-Command",
+            f"Set-Clipboard -LiteralPath '{quoted}'",
+        ])
+        return proc.returncode == 0
+    if system == "Darwin":
+        quoted = str(path).replace('"', '\\"')
+        proc = run(["osascript", "-e", f'set the clipboard to (POSIX file "{quoted}")'])
+        return proc.returncode == 0
+    for tool, args in (
+        ("wl-copy", ["wl-copy", "--type", "text/uri-list"]),
+        ("xclip", ["xclip", "-selection", "clipboard", "-t", "text/uri-list"]),
+    ):
+        if shutil.which(tool):
+            try:
+                proc = subprocess.run(
+                    args, input=f"file://{path}\n", text=True, capture_output=True,
+                )
+            except OSError:
+                continue
+            if proc.returncode == 0:
+                return True
+    return False
+
+
+def reveal_in_file_manager(path: Path) -> bool:
+    """Open the folder containing a file, selecting it where possible."""
+    system = platform.system()
+    try:
+        if system == "Windows":
+            # explorer returns non-zero even on success, so do not check it.
+            subprocess.Popen(["explorer", f"/select,{path}"])
+            return True
+        if system == "Darwin":
+            return run(["open", "-R", str(path)]).returncode == 0
+        if shutil.which("xdg-open"):
+            return run(["xdg-open", str(path.parent)]).returncode == 0
+    except OSError:
+        return False
+    return False
+
+
+def offer_package(task: Task, path: Path) -> bool:
+    """Hand the generated package straight to the clipboard."""
+    if copy_file_to_clipboard(path):
+        say(f"Package: {task.rel(path)}   (copied to your clipboard)")
+        say("Next: Switch to your chatbot, press Ctrl+V to attach it, and send.")
+        say("      Then copy the whole reply and come back here.")
+        return True
+    say(f"Package: {task.rel(path)}")
+    say("Next: Upload that file to a fresh chatbot conversation, copy the "
+        "complete reply, then run `maintain paste`.")
+    return False
 
 
 def normalise_text(text: str) -> str:
@@ -815,11 +946,7 @@ def write_export(task: Task, export_name: str, content: str) -> Path:
 
 def announce_package(task: Task, export_path: Path, note: str) -> None:
     say(note)
-    say(f"Package: {task.rel(export_path)}")
-    say(
-        "Next: Upload the package to a fresh chatbot conversation, copy the complete "
-        "reply, then run `maintain paste`."
-    )
+    offer_package(task, export_path)
 
 
 def base_mapping(task: Task) -> dict:
@@ -1473,11 +1600,7 @@ def create_task(
 
     remember_project(root)
     say(f"Created task: {task.id}")
-    say(f"Package: {task.rel(export_path)}")
-    say(
-        "Next: Upload the package to a fresh chatbot conversation, copy the complete "
-        "reply, then run `maintain paste`."
-    )
+    offer_package(task, export_path)
 
 
 def cmd_capture(root: Optional[Path] = None) -> None:
@@ -1623,7 +1746,7 @@ def stop_at_round_limit(task: Task) -> None:
 
 
 def close_task(task: Task) -> None:
-    if not confirm("The reviewer approved the change. Close the task?"):
+    if not confirm("The reviewer approved the change. Close the task?", routine=True):
         say("Task left open. Run `maintain next` when you are ready to close it.")
         return
     task.state["stage"] = S_COMPLETE
@@ -1835,7 +1958,7 @@ def cmd_apply(root: Optional[Path] = None) -> None:
     say("git apply --check passed.")
 
     # 6. Request confirmation.
-    if not confirm("Apply this patch to the working tree?"):
+    if not confirm("Apply this patch to the working tree?", routine=True):
         say("Patch not applied. Nothing was changed.")
         say("Run `maintain apply` again when you are ready.")
         return
@@ -1948,6 +2071,49 @@ STAGE_COMMAND = {
     S_AWAIT_RESCOPE: "capture",
     S_RESCOPED: "next",
 }
+
+# What pressing Enter actually does, for the stages that are not waiting on
+# the chatbot. Naming the effect is what lets the keypress stand in for the
+# command's own confirmation prompt.
+STAGE_ENTER_LABEL = {
+    S_IMPL_CAPTURED: "Press Enter to apply the patch and run the tests",
+    S_REVIEW_APPROVED: "Press Enter to close the task",
+    S_SCOPE_CAPTURED: "Press Enter to build the implementation package",
+    S_RESCOPED: "Press Enter to build the implementation package",
+    S_PATCH_REJECTED: "Press Enter to build a correction package",
+    S_TESTS_FAILED: "Press Enter to build a correction package",
+    S_REVIEW_CHANGES: "Press Enter to build a correction package",
+    S_READY_FOR_REVIEW: "Press Enter to build the review package",
+    S_RESCOPE_NEEDED: "Press Enter to build the rescope package",
+}
+
+
+# Stages where the only sensible next move is to build a package, so the
+# workflow does it without being asked.
+AUTO_ADVANCE = (
+    S_SCOPE_CAPTURED, S_RESCOPED, S_PATCH_REJECTED, S_TESTS_FAILED,
+    S_READY_FOR_REVIEW, S_REVIEW_CHANGES, S_RESCOPE_NEEDED,
+)
+
+
+def advance_packages(root: Path) -> None:
+    """Generate whatever package the new state calls for, without prompting."""
+    for _ in range(4):
+        task = Task(root, current_task_id(root) or "")
+        if not task.state or task.stage not in AUTO_ADVANCE:
+            return
+        before = task.stage
+        try:
+            with quiet_guidance():
+                cmd_next(root)
+        except MaintainError as exc:
+            say(f"Error: {exc}")
+            if exc.next_action:
+                say(f"Next: {exc.next_action}")
+            return
+        after = Task(root, current_task_id(root) or "").stage
+        if after == before:
+            return
 
 
 def ensure_repomix(view) -> bool:
@@ -2399,33 +2565,78 @@ def cmd_home() -> int:
     if task.state.get("review_verdict"):
         verdict = task.state["review_verdict"]
         view.field("Review", verdict, style="success" if verdict == "APPROVE" else "warning")
-    if task.stage in (S_AWAIT_SCOPE, S_AWAIT_IMPL, S_AWAIT_REVIEW, S_AWAIT_RESCOPE):
-        if task.state.get("current_export"):
-            view.field("Upload this", task.state["current_export"], style="accent")
-
-    view.console.print()
-    say(f"Next: {stage_next_action(task)}")
-    view.console.print()
-
+    waiting = task.stage in (S_AWAIT_SCOPE, S_AWAIT_IMPL, S_AWAIT_REVIEW, S_AWAIT_RESCOPE)
+    package = task.state.get("current_export")
+    package_path = (root / package) if package else None
     command = STAGE_COMMAND.get(task.stage)
-    if command:
-        view.menu("", f"Press Enter to run `maintain {command}`")
-    view.menu("s", "Show full status", "")
-    view.menu("p", "Switch project", "")
-    view.menu("q", "Quit", "")
+
+    # Resuming a waiting task puts its package straight back on the clipboard,
+    # so picking the work up again is one keystroke rather than a hunt through
+    # folders for the right file.
+    on_clipboard = bool(waiting and package_path and copy_file_to_clipboard(package_path))
+    if waiting and package:
+        view.field("Send this", package, style="accent")
+
     view.console.print()
-    choice = view.ask("Choose", "" if command else "q").lower()
+    if on_clipboard:
+        say("Next: Switch to your chatbot, press Ctrl+V to attach the package, and send.")
+        say("      Then copy the whole reply and come back here.")
+    elif task.stage not in STAGE_ENTER_LABEL:
+        # Otherwise the menu below already names the action Enter performs.
+        say(f"Next: {stage_next_action(task)}")
     view.console.print()
-    if choice in ("q", "quit"):
+
+    while True:
+        if waiting:
+            view.menu("", "Press Enter once you have copied the chatbot's reply")
+            view.menu("c", "Copy the package again", "puts the file on your clipboard")
+            view.menu("o", "Open its folder", "")
+        elif command:
+            view.menu("", STAGE_ENTER_LABEL.get(
+                task.stage, f"Press Enter to run `maintain {command}`"))
+        view.menu("s", "Show full status", "")
+        view.menu("p", "Switch project", "")
+        view.menu("q", "Quit", "")
+        view.console.print()
+        choice = view.ask("Choose", "" if command else "q").lower()
+        view.console.print()
+
+        if getattr(view, "eof", False):
+            return 0
+        if choice in ("q", "quit"):
+            return 0
+        if choice in ("s", "status"):
+            cmd_status(root)
+            return 0
+        if choice.startswith("p"):
+            return open_another_project(view)
+        if choice.startswith("c") and waiting and package_path:
+            if copy_file_to_clipboard(package_path):
+                say(f"Copied {package_path.name} to your clipboard.")
+                say("Next: Switch to your chatbot and press Ctrl+V to attach it.")
+            else:
+                say(f"Error: the file could not be copied to the clipboard.")
+                say(f"Next: Attach it yourself from {package_path}")
+            view.console.print()
+            continue
+        if choice.startswith("o") and waiting and package_path:
+            if reveal_in_file_manager(package_path):
+                say(f"Opened {package_path.parent}")
+            else:
+                say(f"Error: the folder could not be opened.")
+                say(f"Next: Open it yourself: {package_path.parent}")
+            view.console.print()
+            continue
+        if not choice and command:
+            # The menu named the action, so Enter is the confirmation.
+            with already_confirmed():
+                status = run_command(command, root)
+                if status != 0:
+                    return status
+                advance_packages(root)
+            view.console.print()
+            return cmd_home()          # re-render with the new state
         return 0
-    if choice in ("s", "status"):
-        cmd_status(root)
-        return 0
-    if choice.startswith("p"):
-        return open_another_project(view)
-    if not choice and command:
-        return run_command(command, root)
-    return 0
 
 
 def open_another_project(view) -> int:
@@ -2440,14 +2651,15 @@ def open_another_project(view) -> int:
 def run_command(command: str, root: Path) -> int:
     """Run one workflow command against the chosen project."""
     try:
-        if command == "capture":
-            cmd_capture(root)
-        elif command == "next":
-            cmd_next(root)
-        elif command == "apply":
-            cmd_apply(root)
-        else:
-            cmd_status(root)
+        with quiet_guidance():
+            if command == "capture":
+                cmd_capture(root)
+            elif command == "next":
+                cmd_next(root)
+            elif command == "apply":
+                cmd_apply(root)
+            else:
+                cmd_status(root)
     except MaintainError as exc:
         say(f"Error: {exc}")
         if exc.next_action:

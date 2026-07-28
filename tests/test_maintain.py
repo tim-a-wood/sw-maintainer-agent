@@ -480,13 +480,18 @@ def test_home_screen_shows_task_and_next_action(h):
     assert "Fix the greeting shown at startup" in out
     assert "SCOPE" in out and "IMPLEMENT" in out      # the workflow trail
     assert "Waiting for the chatbot's scope reply" in out
-    assert "maintain capture" in out                  # offered next command
+    assert "once you have copied the chatbot's reply" in out
+    assert "Copy the package again" in out            # no navigating to folders
+    assert "Open its folder" in out
 
-    # Pressing Enter runs the offered command; here that is `capture`.
+    # One keypress carries the whole round: the reply is captured, the next
+    # package is generated, and it is handed to the clipboard.
     h.set_clip(SCOPE_RESPONSE)
     out = h.run(input_text="\n").stdout
     assert "Scope response captured" in out
-    assert h.state()["stage"] == "scope_captured"
+    assert "Generated implementation package" in out
+    assert h.state()["stage"] == "awaiting_implementation_response"
+    assert (h.repo / h.state()["current_export"]).is_file()
 
 
 def run_outside_repo(h, cwd, *args, input_text=""):
@@ -615,6 +620,127 @@ def test_resume_rebuilds_a_missing_review_package(h):
     out = h.run(input_text="q\n").stdout
     assert "review package was missing" in out
     assert export.is_file() and review.is_file()
+
+
+def test_package_is_put_on_the_clipboard_when_generated(h, tmp_path):
+    """The file itself goes to the clipboard, so Ctrl+V attaches it."""
+    copied = tmp_path / "copied.txt"
+    h.env["MAINTAIN_COPY_FILE_CMD"] = f"printf '%s' {{path}} > {shlex.quote(str(copied))}"
+    h.setup()
+    out = h.run("new", "Fix the greeting").stdout
+    assert "copied to your clipboard" in out
+    assert "press Ctrl+V to attach" in out
+    # The path handed over is the export the user must upload.
+    assert copied.read_text(encoding="utf-8").endswith(
+        h.state()["current_export"].split("/")[-1]
+    )
+
+
+def test_every_waiting_stage_hands_its_package_to_the_clipboard(h, tmp_path):
+    """Scope, implementation and review packages all reach the clipboard.
+
+    Only `new` used to copy; the packages generated afterwards printed a
+    path and left the user to go and find the file. Every stage that waits
+    on the chatbot must hand over its own package.
+    """
+    copied = tmp_path / "copied.txt"
+    h.env["MAINTAIN_COPY_FILE_CMD"] = f"printf '%s' {{path}} > {shlex.quote(str(copied))}"
+    h.setup()
+
+    def clipboard_holds_current_export():
+        assert copied.is_file(), "no package was copied to the clipboard"
+        return Path(copied.read_text(encoding="utf-8")).name == Path(
+            h.state()["current_export"]
+        ).name
+
+    out = h.run("new", "Fix the greeting").stdout
+    assert "copied to your clipboard" in out
+    assert clipboard_holds_current_export()
+
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    copied.unlink()
+    out = h.run("next").stdout                       # implementation package
+    assert "copied to your clipboard" in out
+    assert clipboard_holds_current_export()
+
+    h.set_clip(impl_response(PATCH_DIRECT))
+    h.run("capture")
+    h.run("apply", input_text="y\n")
+    copied.unlink()
+    out = h.run("next").stdout                       # review package
+    assert "copied to your clipboard" in out
+    assert clipboard_holds_current_export()
+
+
+def test_clipboard_copy_failure_falls_back_to_instructions(h):
+    h.env["MAINTAIN_COPY_FILE_CMD"] = "exit 1"
+    h.setup()
+    out = h.run("new", "Fix the greeting").stdout
+    assert "Upload that file" in out
+    assert "copied to your clipboard" not in out
+
+
+def test_home_screen_enter_applies_without_a_second_confirmation(h):
+    """The menu names the action, so Enter is the confirmation."""
+    h.setup()
+    h.run("new", "Fix the greeting")
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_DIRECT))
+    h.run("capture")
+
+    out = h.run(input_text="\nq\n").stdout        # one Enter, no y
+    assert "Press Enter to apply the patch and run the tests" in out
+    assert "Apply this patch to the working tree?" not in out
+    assert "Patch applied" in out and "Tests: PASSED" in out
+    # ...and it carried straight on to the next package.
+    assert "Generated independent review package" in out
+    assert h.state()["stage"] == "awaiting_review_response"
+
+
+def test_apply_still_confirms_when_run_as_a_command(h):
+    """Typed blind at the shell, `maintain apply` keeps its safety prompt."""
+    h.setup()
+    h.run("new", "Fix the greeting")
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_DIRECT))
+    h.run("capture")
+
+    out = h.run("apply", input_text="\n").stdout
+    assert "Apply this patch to the working tree?" in out
+    assert "Patch not applied" in out
+    assert 'Helo, world' in (h.repo / "app.py").read_text(encoding="utf-8")
+
+
+def test_resuming_a_waiting_task_puts_the_package_back_on_the_clipboard(h, tmp_path):
+    """Coming back to a task should not mean going to find the file again."""
+    copied = tmp_path / "copied.txt"
+    h.env["MAINTAIN_COPY_FILE_CMD"] = f"printf '%s' {{path}} > {shlex.quote(str(copied))}"
+    h.setup()
+    h.run("new", "Fix the greeting")
+    copied.unlink()
+
+    out = h.run(input_text="q\n").stdout               # resume, then quit
+    assert copied.is_file(), "resuming must re-copy the waiting package"
+    assert Path(copied.read_text(encoding="utf-8")).name == Path(
+        h.state()["current_export"]
+    ).name
+    assert "press Ctrl+V to attach the package" in out
+
+
+def test_home_screen_can_recopy_the_package(h, tmp_path):
+    copied = tmp_path / "copied.txt"
+    h.env["MAINTAIN_COPY_FILE_CMD"] = f"printf '%s' {{path}} > {shlex.quote(str(copied))}"
+    h.setup()
+    h.run("new", "Fix the greeting")
+    copied.unlink()
+    out = h.run(input_text="c\nq\n").stdout      # resume, then re-copy
+    assert "Copied" in out and "clipboard" in out
+    assert copied.is_file(), "pressing c must put the file back on the clipboard"
 
 
 def test_output_is_plain_text_when_not_a_terminal(h):

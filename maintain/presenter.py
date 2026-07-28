@@ -83,6 +83,7 @@ class Presenter:
         )
         self.plain = colors_disabled
         self.interactive = is_tty
+        self.eof = False
 
     # -- primitives ---------------------------------------------------
 
@@ -142,6 +143,8 @@ class Presenter:
         try:
             return input("").strip() or default
         except EOFError:
+            # No more input: callers use this to stop rather than loop.
+            self.eof = True
             return default
 
     # -- brand --------------------------------------------------------
