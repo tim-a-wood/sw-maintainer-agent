@@ -1081,9 +1081,76 @@ def test_status_reports_state_and_next_action(h):
     assert "Implementation round: 1 of 3" in out
 
 
-def test_no_test_command_records_not_configured(h):
+def test_scaffolding_creates_a_working_c_harness(tmp_path):
+    """The scaffold must be a real check, not a placeholder."""
+    testing = mod.testing_module()
+    project = tmp_path / "chello"
+    project.mkdir()
+    (project / "README.md").write_text("# chello\n", encoding="utf-8")
+
+    result = testing.scaffold_tests(project, "c")
+    assert result["command"] == "make test"
+    assert (project / "Makefile").is_file()
+    assert (project / "tests" / "run-tests.sh").is_file()
+
+    # With no source yet it fails: that is the goal the first task must meet.
+    assert not testing.verify_command(project, result["command"])["ok"]
+
+    (project / "hello.c").write_text(
+        '#include <stdio.h>\n\nint main(void) { printf("Hello World!\\n"); return 0; }\n',
+        encoding="utf-8",
+    )
+    assert testing.verify_command(project, result["command"])["ok"]
+
+
+def test_detection_recognises_common_ecosystems(tmp_path):
+    testing = mod.testing_module()
+    node = tmp_path / "node"
+    node.mkdir()
+    (node / "package.json").write_text('{"scripts": {"test": "jest"}}', encoding="utf-8")
+    assert testing.detect_test_command(node)["command"] == "npm test"
+
+    rust = tmp_path / "rust"
+    rust.mkdir()
+    (rust / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+    assert testing.detect_test_command(rust)["command"] == "cargo test"
+
+    make = tmp_path / "make"
+    make.mkdir()
+    (make / "Makefile").write_text("test:\n\t@echo ok\n", encoding="utf-8")
+    assert testing.detect_test_command(make)["command"] == "make test"
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert testing.detect_test_command(empty) is None
+
+
+def test_setup_detects_how_the_project_is_tested(h):
+    """A project is not set up until Maintain knows how to verify it."""
+    h.run("init")                                  # no test_command written
+    config = json.loads((h.mdir / "config.json").read_text(encoding="utf-8"))
+    # The fixture has test_app.py, so setup finds it without being told.
+    assert config["test_command"], "init should have detected the Python tests"
+    assert "pytest" in config["test_command"] or "unittest" in config["test_command"]
+
+
+def test_task_creation_configures_tests_when_setup_did_not(h):
     h.setup(test_command=None)
-    h.run("new", "Fix the greeting")
+    out = h.run("new", "Fix the greeting").stdout
+    assert "no test command" in out.lower()
+    config = json.loads((h.mdir / "config.json").read_text(encoding="utf-8"))
+    assert config["test_command"], "creating a task should have configured tests"
+
+
+def test_no_test_command_records_not_configured(h, tmp_path):
+    # A project with nothing testable: detection finds nothing to configure.
+    (h.repo / "test_app.py").unlink()
+    h.git("add", "-A")
+    h.git("commit", "-qm", "remove tests")
+    h.setup(test_command=None)
+    out = h.run("new", "Fix the greeting").stdout
+    assert "NOT_CONFIGURED" in out
+    h.run("new", "unused", expect=1)               # one active task at a time
     h.set_clip(SCOPE_RESPONSE)
     h.run("capture")
     h.run("next")

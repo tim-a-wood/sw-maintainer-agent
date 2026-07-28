@@ -236,19 +236,33 @@ This creates:
 └── tasks/
 ```
 
-Edit `project-context.md` to describe project-specific rules and conventions,
-and set the test command in `config.json`:
+Setup works out how to test the project, because local verification is the
+one automatic check in the workflow. It looks for the usual conventions — a
+`package.json` test script, `Cargo.toml`, `go.mod`, a `Makefile` test
+target, Python test files, Maven or Gradle — and proposes what it finds,
+running it once to confirm it works.
+
+If the project has no tests, it offers to set a harness up: a pytest or
+unittest suite for Python, `node --test` for JavaScript, or a `Makefile`
+test target that builds and runs a C program. On a brand-new project that
+scaffolded test fails at first, which is the point — it becomes the goal the
+first task has to meet. You can also type your own command, or skip and
+record results as `NOT_CONFIGURED`.
+
+Run non-interactively (in a script or a pipe), setup detects a command
+silently and never blocks on a prompt.
+
+Then edit `project-context.md` to describe project-specific rules and
+conventions. `config.json` holds the result:
 
 ```json
 {
-  "test_command": "pytest",
+  "test_command": "make test",
   "maximum_rounds": 3,
   "repomix_args": []
 }
 ```
 
-If no test command is configured, test results are recorded as
-`NOT_CONFIGURED` and you may still proceed to review after a warning.
 `repomix_args` is passed through to every Repomix invocation (for example
 `["--compress"]` to shrink large repositories).
 

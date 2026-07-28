@@ -1285,7 +1285,7 @@ def cmd_init(root: Optional[Path] = None) -> None:
     say(f"Initialised Maintain in {directory}")
     say("")
     say("Created:")
-    say("  .maintain/config.json         — set \"test_command\" (for example \"pytest\")")
+    say("  .maintain/config.json         — test command and round limit")
     say("  .maintain/project-context.md  — describe project rules and conventions")
     say("  .maintain/current-task")
     say("  .maintain/tasks/")
@@ -1297,8 +1297,10 @@ def cmd_init(root: Optional[Path] = None) -> None:
     say("Consider adding .maintain/ to .gitignore if you do not want task")
     say("artifacts in version control.")
     remember_project(root)
+    configure_tests(root, presenter())
     say("")
-    say('Next: Edit the two files above, then run `maintain new "<request>"`.')
+    say("Next: Edit .maintain/project-context.md with your project's rules,")
+    say('then run `maintain new "<request>"`.')
 
 
 def make_task_id(root: Path) -> str:
@@ -1406,6 +1408,12 @@ def create_task(
         say("validated against it.")
         if not confirm("Continue creating the task?"):
             raise MaintainError("Task creation aborted.", "Commit or stash your changes first.")
+
+    if not config.get("test_command"):
+        say("This project has no test command, so patches cannot be verified.")
+        configure_tests(root, presenter())
+        config = load_config(root)
+        say("")
 
     task = Task(root, make_task_id(root))
     task.dir.mkdir(parents=True)
@@ -1924,6 +1932,149 @@ STAGE_COMMAND = {
     S_AWAIT_RESCOPE: "capture",
     S_RESCOPED: "next",
 }
+
+
+def testing_module():
+    try:
+        from . import testing
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import testing  # type: ignore
+    return testing
+
+
+def set_test_command(root: Path, command: Optional[str]) -> None:
+    path = maintain_dir(root) / "config.json"
+    config = load_config(root)
+    config["test_command"] = command
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+
+
+def confirm_test_command(root: Path, view, command: str, source: str) -> bool:
+    """Check a command really runs before committing to it."""
+    testing = testing_module()
+    say(f"Checking it works: {command}")
+    result = testing.verify_command(root, command)
+    if result["ok"]:
+        set_test_command(root, command)
+        say(f"Tests: {command}   ({source}, and it passes)")
+        return True
+    say("")
+    say(f"warning: that command did not pass:")
+    for line in (result["output"] or "(no output)").splitlines()[-8:]:
+        say(f"  {line}")
+    say("")
+    keep = view.ask("Use it anyway? Maintain will treat a failure as a failed round [y/N]", "n")
+    if keep.strip().lower().startswith("y"):
+        set_test_command(root, command)
+        say(f"Tests: {command}   (recorded; it is currently failing)")
+        return True
+    return False
+
+
+def confirm_scaffold(root: Path, view, command: str) -> bool:
+    """Record a freshly scaffolded command, which may not pass yet.
+
+    On a new project the scaffolded test fails because there is nothing to
+    test — that is the point: the first task has to make it pass.
+    """
+    testing = testing_module()
+    say(f"Checking it works: {command}")
+    result = testing.verify_command(root, command)
+    if result["ok"]:
+        set_test_command(root, command)
+        say(f"Tests: {command}   (set up, and it passes)")
+        return True
+    say("")
+    say("It does not pass yet:")
+    for line in (result["output"] or "(no output)").splitlines()[-6:]:
+        say(f"  {line}")
+    say("")
+    say("For a project with no code yet that is expected — the test becomes")
+    say("the goal your first task has to meet.")
+    answer = view.ask("Use this command? [Y/n]", "y").strip().lower()
+    if answer.startswith("n"):
+        return False
+    set_test_command(root, command)
+    say(f"Tests: {command}   (set up; it fails until the code exists)")
+    return True
+
+
+def configure_tests(root: Path, view) -> None:
+    """Establish how this project is tested, as part of setting it up."""
+    testing = testing_module()
+    say("")
+    detected = testing.detect_test_command(root)
+
+    if not getattr(view, "interactive", True):
+        # Scripted use must never block on a prompt.
+        if detected:
+            set_test_command(root, detected["command"])
+            say(f"Tests: {detected['command']}   ({detected['reason']})")
+        else:
+            set_test_command(root, None)
+            say("No test command was detected; results will be recorded as")
+            say("NOT_CONFIGURED. Run `maintain init` in a terminal to set one up.")
+        return
+
+    if detected:
+        say(f"Found how this project is tested: {detected['reason']}.")
+        answer = view.ask(f"Use `{detected['command']}`? [Y/n/other]", "y").strip().lower()
+        if answer.startswith("y") or not answer:
+            if confirm_test_command(root, view, detected["command"], detected["reason"]):
+                return
+        elif answer.startswith("o"):
+            custom = view.ask("Test command").strip()
+            if custom and confirm_test_command(root, view, custom, "you chose it"):
+                return
+        else:
+            set_test_command(root, None)
+            say("No test command set. Maintain will record results as NOT_CONFIGURED.")
+            return
+
+    LANGUAGES = {"python": "pytest or unittest", "node": "node --test",
+                 "c": "a Makefile test target"}
+    language = testing.guess_language(root)
+    say("")
+    say("This project has no tests Maintain can run, and local verification is")
+    say("the one automatic check in the workflow.")
+    say("")
+    if language in LANGUAGES:
+        view.menu("1", "Set one up for me", f"looks like {language}: {LANGUAGES[language]}")
+    else:
+        view.menu("1", "Set one up for me", "choose the language")
+    view.menu("2", "I have a command", "type it yourself")
+    view.menu("3", "Skip for now", "results recorded as NOT_CONFIGURED")
+    say("")
+    choice = view.ask("Choose", "1").strip()
+
+    if choice.startswith("1"):
+        if language not in LANGUAGES:
+            # A new project has no source files to judge by, so ask.
+            answer = view.ask("Which language? [python/node/c]", "python").strip().lower()
+            language = {"py": "python", "python": "python", "js": "node",
+                        "node": "node", "javascript": "node", "c": "c",
+                        "c++": "c", "cpp": "c"}.get(answer, "")
+            if not language:
+                say(f"Error: no harness available for {answer!r}.")
+                say("Next: Choose `2` and type the command your project uses.")
+                set_test_command(root, None)
+                return
+        result = testing.scaffold_tests(root, language)
+        for path in result["created"]:
+            say(f"Created {path.relative_to(root)}")
+        if confirm_scaffold(root, view, result["command"]):
+            return
+        say("Next: Set \"test_command\" in .maintain/config.json when the "
+            "project can run its tests.")
+        return
+    if choice.startswith("2"):
+        custom = view.ask("Test command").strip()
+        if custom and confirm_test_command(root, view, custom, "you chose it"):
+            return
+    set_test_command(root, None)
+    say("No test command set. Maintain will record results as NOT_CONFIGURED,")
+    say("and you can add one later in .maintain/config.json.")
 
 
 def ensure_current_package(task: Task, config: dict) -> bool:

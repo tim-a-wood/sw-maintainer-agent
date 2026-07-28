@@ -82,6 +82,7 @@ class Presenter:
             theme=THEME,
         )
         self.plain = colors_disabled
+        self.interactive = is_tty
 
     # -- primitives ---------------------------------------------------
 
