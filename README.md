@@ -67,8 +67,10 @@ is uninstalled, and the install folder is moved to the front of your user
 PATH. A `maintain` it cannot identify as this tool is reported and left
 alone.
 
-The installer warns if Repomix is missing but still completes; install
-Node.js and run `npm install -g repomix` before your first task.
+It installs [Repomix](https://github.com/yamadashy/repomix) too, which
+Maintain shells out to for every handoff package. That needs Node.js: if
+Node is missing the installer says so and finishes, and you can install Node
+then run the installer again.
 
 To remove the command and its shortcuts, double-click
 `uninstall-windows.cmd`. Task history stays with each project, under its
@@ -80,8 +82,9 @@ To remove the command and its shortcuts, double-click
 ./scripts/install-unix.sh
 ```
 
-Installs into `~/.local/share/maintain` and links the command into
-`~/.local/bin`. Re-run it to update.
+Installs into `~/.local/share/maintain`, links the command into
+`~/.local/bin`, and installs Repomix when Node.js is available. Re-run it to
+update.
 
 ### Manual alternatives
 
@@ -191,6 +194,11 @@ task is waiting for. Pick a number to open it.
 
 Inside a repository it skips the picker and works on that repository,
 remembering it for next time.
+
+Resuming is automatic: if the package for the current stage is not on disk
+— for example the first attempt failed because Repomix was missing — it is
+rebuilt when you open the project, rather than pointing you at a file that
+was never written.
 
 Once a project is open the home screen shows its task, a progress trail
 across scope, implement, test and review, the current stage and test result,

@@ -126,10 +126,23 @@ case ":$PATH:" in
         ;;
 esac
 
+# Maintain shells out to Repomix for every handoff package, so install it here
+# rather than leaving the first task to fail.
 if ! command -v repomix >/dev/null 2>&1; then
-    echo
-    echo "warning: Repomix was not found. Maintain needs it to build handoff packages." >&2
-    echo "Install Node.js, then run: npm install -g repomix" >&2
+    if command -v npm >/dev/null 2>&1; then
+        echo
+        echo "Installing Repomix (used to build every handoff package)..."
+        if npm install -g repomix --silent >/dev/null 2>&1; then
+            echo "Repomix: $(command -v repomix || echo 'installed; open a new terminal for it to appear on PATH')"
+        else
+            echo "warning: npm could not install Repomix automatically." >&2
+            echo "Run this yourself, then start Maintain again:  npm install -g repomix" >&2
+        fi
+    else
+        echo
+        echo "warning: Repomix is missing and Node.js was not found, so it cannot be installed." >&2
+        echo "Install Node.js from https://nodejs.org/ and run this script again." >&2
+    fi
 else
     echo "Repomix: $(command -v repomix)"
 fi

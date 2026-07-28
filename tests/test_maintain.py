@@ -573,6 +573,50 @@ def test_opening_a_project_records_it_and_shows_its_task(h, tmp_path):
     assert "Waiting for the chatbot's scope reply" in out
 
 
+def test_resume_rebuilds_a_package_that_was_never_written(h):
+    """Package generation can fail after the task exists (no Repomix).
+
+    Resuming must not tell you to upload a file that is not there.
+    """
+    h.setup()
+    h.run("new", "Fix the greeting")
+    package = h.task_dir() / "scope" / "package.md"
+    export = h.repo / h.state()["current_export"]
+    package.unlink()
+    export.unlink()
+
+    out = h.run(input_text="q\n").stdout          # bare `maintain`
+    assert "was missing, so it was rebuilt" in out
+    assert package.is_file() and export.is_file()
+
+    # `maintain next` repairs it too, rather than only reporting.
+    package.unlink()
+    export.unlink()
+    out = h.run("next").stdout
+    assert "generated again" in out
+    assert package.is_file() and export.is_file()
+
+
+def test_resume_rebuilds_a_missing_review_package(h):
+    h.setup()
+    h.run("new", "Fix the greeting")
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_DIRECT))
+    h.run("capture")
+    h.run("apply", input_text="y\n")
+    h.run("next")                                  # review package
+    export = h.repo / h.state()["current_export"]
+    review = h.task_dir() / "rounds" / "01" / "review-package.md"
+    export.unlink()
+    review.unlink()
+
+    out = h.run(input_text="q\n").stdout
+    assert "review package was missing" in out
+    assert export.is_file() and review.is_file()
+
+
 def test_output_is_plain_text_when_not_a_terminal(h):
     """Captured output must stay verbatim — packages quote it back."""
     h.setup()

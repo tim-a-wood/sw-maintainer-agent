@@ -240,6 +240,59 @@ function Remove-ShadowingInstall {
     return $removedAny
 }
 
+function Find-Repomix {
+    $found = Get-Command "repomix.cmd" -ErrorAction SilentlyContinue
+    if ($null -eq $found) {
+        $found = Get-Command "repomix" -ErrorAction SilentlyContinue
+    }
+    if ($null -eq $found) { return $null }
+    return $found.Source
+}
+
+function Install-Repomix {
+    # Maintain shells out to Repomix for every handoff package, so install it
+    # here rather than leaving the first task to fail.
+    $existing = Find-Repomix
+    if ($null -ne $existing) {
+        Write-Host "Repomix: $existing"
+        return $existing
+    }
+    $npm = Get-Command "npm.cmd" -ErrorAction SilentlyContinue
+    if ($null -eq $npm) {
+        $npm = Get-Command "npm" -ErrorAction SilentlyContinue
+    }
+    if ($null -eq $npm) {
+        Write-Host "Repomix is missing and Node.js was not found, so it cannot be installed." -ForegroundColor Yellow
+        Write-Host "Install Node.js from https://nodejs.org/ and run this installer again." -ForegroundColor Yellow
+        return $null
+    }
+    Write-Host "Installing Repomix (used to build every handoff package)..."
+    & $npm.Source install -g repomix --silent
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "npm could not install Repomix automatically." -ForegroundColor Yellow
+        Write-Host "Run this yourself, then start Maintain again:  npm install -g repomix" -ForegroundColor Yellow
+        return $null
+    }
+    # npm installs into a folder that may not be on this session's PATH yet.
+    $installed = Find-Repomix
+    if ($null -eq $installed) {
+        $prefix = (& $npm.Source prefix -g | Out-String).Trim()
+        if ($prefix) {
+            $candidate = Join-Path $prefix "repomix.cmd"
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                $installed = $candidate
+            }
+        }
+    }
+    if ($null -ne $installed) {
+        Write-Host "Repomix: $installed" -ForegroundColor Green
+    }
+    else {
+        Write-Host "Repomix was installed; open a new terminal for it to appear on PATH." -ForegroundColor Yellow
+    }
+    return $installed
+}
+
 function New-MaintainShortcut {
     param([string]$Path)
     $shell = New-Object -ComObject WScript.Shell
@@ -412,8 +465,7 @@ cmd /k
 
     $pinned = Try-PinTaskbar -ShortcutPath $startMenuShortcut
 
-    $repomix = Get-Command "repomix.cmd", "repomix" -ErrorAction SilentlyContinue |
-        Select-Object -First 1
+    $repomix = Install-Repomix
 
     # Older copies of Maintain elsewhere on PATH would answer `maintain`
     # instead of the one just installed, so remove them here rather than
@@ -450,14 +502,6 @@ cmd /k
     else {
         Write-Host "Windows did not allow automatic taskbar pinning." -ForegroundColor Yellow
         Write-Host "Right-click the Maintain desktop shortcut and choose 'Pin to taskbar'." -ForegroundColor Yellow
-    }
-    if ($null -eq $repomix) {
-        Write-Host ""
-        Write-Host "Repomix was not found. Maintain needs it to build handoff packages." -ForegroundColor Yellow
-        Write-Host "Install Node.js from https://nodejs.org/ then run: npm install -g repomix" -ForegroundColor Yellow
-    }
-    else {
-        Write-Host "Repomix: $($repomix.Source)" -ForegroundColor Green
     }
     Write-Host ""
     if ($null -eq $winner) {

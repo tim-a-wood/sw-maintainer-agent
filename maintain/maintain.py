@@ -1619,15 +1619,13 @@ def cmd_next(root: Optional[Path] = None) -> None:
     task = load_active_task(root)
     stage = task.stage
 
-    if stage == S_AWAIT_SCOPE:
-        if not (task.scope_dir / "package.md").exists():
-            export_path = build_scope_package(task, config)
-            task.save()
-            announce_package(task, export_path, "Generated scope package.")
-        else:
-            say(f"Waiting for the scope response. {stage_next_action(task)}")
-            if task.state.get("current_export"):
-                say(f"Package: {task.state['current_export']}")
+    if stage in (S_AWAIT_SCOPE, S_AWAIT_IMPL, S_AWAIT_REVIEW, S_AWAIT_RESCOPE):
+        rebuilt = ensure_current_package(task, config)
+        say(f"{stage_label(task)}. {stage_next_action(task)}")
+        if task.state.get("current_export"):
+            say(f"Package: {task.state['current_export']}")
+        if rebuilt:
+            say("The previous copy was missing, so it was generated again.")
     elif stage in (S_SCOPE_CAPTURED, S_RESCOPED):
         start_round(task, config, "implementation")
     elif stage in (S_PATCH_REJECTED, S_TESTS_FAILED, S_REVIEW_CHANGES, S_LIMIT_REACHED):
@@ -1641,10 +1639,6 @@ def cmd_next(root: Optional[Path] = None) -> None:
         generate_rescope_package(task, config)
     elif stage == S_REVIEW_APPROVED:
         close_task(task)
-    elif stage in (S_AWAIT_IMPL, S_AWAIT_REVIEW, S_AWAIT_RESCOPE):
-        say(f"{stage_label(task)}. {stage_next_action(task)}")
-        if task.state.get("current_export"):
-            say(f"Package: {task.state['current_export']}")
     elif stage == S_IMPL_CAPTURED:
         say(f"A patch is already captured. {stage_next_action(task)}")
     elif stage == S_COMPLETE:
@@ -1932,6 +1926,58 @@ STAGE_COMMAND = {
 }
 
 
+def ensure_current_package(task: Task, config: dict) -> bool:
+    """Rebuild the package for the current stage if it is not on disk.
+
+    Package generation can fail after a task exists — Repomix missing is the
+    common case — which would otherwise leave the workflow telling you to
+    upload a file that was never written.
+    """
+    if task.stage not in (S_AWAIT_SCOPE, S_AWAIT_IMPL, S_AWAIT_REVIEW, S_AWAIT_RESCOPE):
+        return False
+    export = task.state.get("current_export")
+    if export and (task.root / export).is_file():
+        return False
+
+    number = task.implementation_round
+    if task.stage == S_AWAIT_SCOPE:
+        build_scope_package(task, config)
+        rebuilt = "scope"
+    elif task.stage == S_AWAIT_IMPL:
+        round_dir = task.round_dir(number)
+        round_dir.mkdir(parents=True, exist_ok=True)
+        first_round = not (round_dir / "fix-package.md").exists() and number <= 1
+        if first_round:
+            content = build_implementation_package(task, config, number)
+            (round_dir / "implementation-package.md").write_text(content, encoding="utf-8")
+            name = f"maintain-{task.id}-implement-{number:02d}.md"
+        else:
+            content = build_fix_package(task, config, number)
+            (round_dir / "fix-package.md").write_text(content, encoding="utf-8")
+            name = f"maintain-{task.id}-fix-{number:02d}.md"
+        write_export(task, name, content)
+        rebuilt = "implementation"
+    elif task.stage == S_AWAIT_REVIEW:
+        round_dir = task.round_dir(number)
+        round_dir.mkdir(parents=True, exist_ok=True)
+        content = build_review_package(task, config)
+        (round_dir / "review-package.md").write_text(content, encoding="utf-8")
+        write_export(task, f"maintain-{task.id}-review-{number:02d}.md", content)
+        rebuilt = "review"
+    else:
+        rescope = int(task.state.get("current_rescope") or 1)
+        rescope_dir = task.rescope_dir(rescope)
+        rescope_dir.mkdir(parents=True, exist_ok=True)
+        content = build_rescope_package(task, config)
+        (rescope_dir / "package.md").write_text(content, encoding="utf-8")
+        write_export(task, f"maintain-{task.id}-rescope-{rescope:02d}.md", content)
+        rebuilt = "rescope"
+
+    task.save()
+    say(f"note: the {rebuilt} package was missing, so it was rebuilt.")
+    return True
+
+
 def remember_project(root: Path) -> None:
     """Register a project so it appears in the launch picker."""
     try:
@@ -2122,6 +2168,14 @@ def cmd_home() -> int:
             view.console.print()
             return open_another_project(view)
         return 0
+
+    try:
+        ensure_current_package(task, load_config(root))
+    except MaintainError as exc:
+        say(f"Error: {exc}")
+        if exc.next_action:
+            say(f"Next: {exc.next_action}")
+        return 1
 
     phase, done = STAGE_PHASES.get(task.stage, ("SCOPE", ()))
     view.console.print()
