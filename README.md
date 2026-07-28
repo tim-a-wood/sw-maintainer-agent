@@ -46,10 +46,43 @@ Review
 ## Install
 
 You run `maintain` **inside the project you are maintaining**, not inside
-this repository, so the command has to be on your PATH. Install it once,
-from your clone of this repository.
+this repository, so the command has to be on your PATH.
 
-### Recommended: pipx, editable
+### Windows: double-click
+
+```text
+install-or-update-windows.cmd
+```
+
+It checks Python and Git, pulls this clone up to date when the working tree
+is clean, installs Maintain into a private environment under
+`%LOCALAPPDATA%\Programs\Maintain`, adds that folder to your user PATH, and
+creates or refreshes the desktop and Start Menu shortcuts with the Maintain
+icon. **Run the same file again to update** — it replaces the runtime and
+repoints the existing shortcut, so there is nothing to clean up first.
+
+The installer warns if Repomix is missing but still completes; install
+Node.js and run `npm install -g repomix` before your first task.
+
+To remove the command and its shortcuts, double-click
+`uninstall-windows.cmd`. Task history stays with each project, under its
+`.maintain` folder.
+
+### macOS and Linux: one script
+
+```sh
+./scripts/install-unix.sh
+```
+
+Installs into `~/.local/share/maintain` and links the command into
+`~/.local/bin`. Re-run it to update.
+
+### Manual alternatives
+
+<details>
+<summary>pipx or a virtual environment</summary>
+
+#### pipx, editable
 
 [pipx](https://pipx.pypa.io) keeps the tool in its own environment but puts
 the command on your PATH. `--editable` means a `git pull` updates the
@@ -66,7 +99,7 @@ maintain --version
 On Windows, use `py -3 -m pip install --user pipx` first if you do not have
 pipx, then the same commands.
 
-### Alternative: a virtual environment
+#### A virtual environment
 
 ```sh
 python3 -m venv .venv
@@ -80,7 +113,7 @@ The command then lives at `.venv/bin/maintain` (Windows:
 activating the environment each time, add that directory to your PATH — or
 use pipx above, which does it for you.
 
-### Without installing anything
+#### Without installing anything
 
 ```sh
 python3 /path/to/sw-maintainer-agent/maintain/maintain.py --help
@@ -89,7 +122,16 @@ python3 /path/to/sw-maintainer-agent/maintain/maintain.py --help
 This works from any directory, but you must install `rich` and `pyperclip`
 yourself.
 
+</details>
+
 ## Update
+
+On Windows, double-click `install-or-update-windows.cmd` again. On macOS or
+Linux, run `./scripts/install-unix.sh` again. Both pull this clone up to
+date first (when the working tree is clean), reinstall the runtime, and
+leave your shortcuts pointing at the new version.
+
+### Updating a manual install
 
 ```sh
 cd /path/to/sw-maintainer-agent

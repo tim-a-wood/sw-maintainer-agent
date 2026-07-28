@@ -361,6 +361,32 @@ def test_usage_version_and_unknown_command(h):
     assert h.run("frobnicate", expect=2).returncode == 2
 
 
+def test_package_is_runnable_as_a_module():
+    """The Windows launcher runs `python -m maintain`."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "maintain", "--version"],
+        cwd=PROJECT_ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == f"maintain {mod.VERSION}"
+
+
+def test_installer_files_are_present():
+    """The installer is what users run; keep its pieces together."""
+    for relative in (
+        "install-or-update-windows.cmd",
+        "uninstall-windows.cmd",
+        "scripts/install-windows.ps1",
+        "scripts/uninstall-windows.ps1",
+        "scripts/install-unix.sh",
+        "assets/maintain.ico.b64",
+    ):
+        assert (PROJECT_ROOT / relative).is_file(), relative
+    # The Windows installer verifies the runtime against pyproject's version.
+    version = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert f'version = "{mod.VERSION}"' in version
+
+
 def test_command_aliases_match_their_originals(h):
     h.setup()
     h.run("start", "Fix the greeting")          # alias for `new`
