@@ -48,6 +48,8 @@ Rules:
 
 {{allowed_files}}
 
+{{read_only_context}}
+
 ## Changes Already Applied in This Task
 
 If a diff is shown here, it is already present in the repository state below.

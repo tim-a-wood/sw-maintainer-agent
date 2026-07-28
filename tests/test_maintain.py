@@ -921,6 +921,51 @@ def test_harden_workflow_uses_gate_command_and_targets(h):
     assert "HARDEN GATE OK" in results  # the gate ran, not test_command
 
 
+def test_harden_packages_include_read_only_target_contents(h):
+    """Hardening tests assert against the targets, so their contents must ship.
+
+    The targets stay off the allowed list (they must not be modified), which
+    is exactly why packing only the allowed files left the implementer
+    unable to write exact-value assertions.
+    """
+    h.setup()
+    h.run("new", "Fix the greeting")
+    h.set_clip(SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+    h.set_clip(impl_response(PATCH_DIRECT))
+    h.run("capture")
+    h.run("apply", input_text="y\n")
+    h.run("next")
+    h.set_clip(review_response("APPROVE"))
+    h.run("capture")
+    h.run("next", input_text="y\n")
+    h.git("add", "-A")
+    h.git("commit", "-qm", "accepted")
+
+    h.run("harden")
+    assert h.state()["harden_targets"] == ["app.py"]
+    h.set_clip(HARDEN_SCOPE_RESPONSE)
+    h.run("capture")
+    h.run("next")
+
+    package = (
+        h.task_dir() / "rounds" / "01" / "implementation-package.md"
+    ).read_text(encoding="utf-8")
+    assert "READ-ONLY" in package
+    # Repomix is stubbed in these tests, so assert the wiring: app.py is a
+    # context file even though only test_hardening.py is writable.
+    assert "- test_hardening.py" in package
+    state = h.state()
+    assert "app.py" not in state["allowed_files"]
+
+    # A patch touching the read-only target is still rejected.
+    h.set_clip(impl_response(PATCH_DOCSTRING, summary="Edit the target."))
+    h.run("capture")
+    proc = h.run("apply", expect=1)
+    assert "outside the approved scope" in proc.stdout
+
+
 def test_harden_without_completed_tasks_targets_whole_repo(h):
     h.setup()
     h.run("harden")

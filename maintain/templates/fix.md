@@ -45,6 +45,8 @@ Rules:
 
 {{allowed_files}}
 
+{{read_only_context}}
+
 ## What Went Wrong
 
 {{feedback}}

@@ -627,14 +627,28 @@ def run_repomix(root: Path, config: dict, include: Optional[list] = None) -> str
     return content
 
 
-def repomix_for_allowed_files(root: Path, config: dict, allowed: list) -> str:
-    existing = [path for path in allowed if (root / path).exists() and "," not in path]
+def repomix_for_files(root: Path, config: dict, files: list) -> str:
+    existing = [path for path in files if (root / path).exists() and "," not in path]
     if not existing:
         return (
             "(None of the allowed files exist in the repository yet; "
             "they are all new files to be created.)"
         )
     return run_repomix(root, config, include=existing)
+
+
+def task_context_files(task: Task) -> list:
+    """Files whose contents belong in this task's implementation packages.
+
+    The allowed files always qualify. A hardening task also needs the
+    contents of its read-only targets: its tests assert against them, so it
+    cannot be written without seeing them.
+    """
+    files = list(task.allowed_files)
+    for path in task.state.get("harden_targets", []):
+        if path not in files:
+            files.append(path)
+    return files
 
 
 def cumulative_diff(task: Task) -> str:
@@ -715,6 +729,15 @@ def base_mapping(task: Task) -> dict:
         or "(no acceptance criteria captured)",
         "allowed_files": "\n".join(f"- {path}" for path in task.allowed_files)
         or "(no allowed files)",
+        "read_only_context": (
+            "The repository context below also contains these files. They are "
+            "READ-ONLY: this task's tests assert against them, so you need "
+            "their exact contents, but a patch that modifies them will be "
+            "rejected.\n\n"
+            + "\n".join(f"- {path}" for path in task.state.get("harden_targets", []))
+            if task.state.get("harden_targets")
+            else ""
+        ),
     }
 
 
@@ -749,7 +772,7 @@ def build_implementation_package(task: Task, config: dict, round_number: int) ->
             "round": str(round_number),
             "cumulative_diff": wrapped_diff(cumulative_diff(task)),
             "repo_structure": repo_structure(task.root),
-            "repomix_context": repomix_for_allowed_files(task.root, config, task.allowed_files),
+            "repomix_context": repomix_for_files(task.root, config, task_context_files(task)),
         }
     )
     return render_template("implement.md", mapping)
@@ -807,7 +830,7 @@ def build_fix_package(task: Task, config: dict, round_number: int) -> str:
             "round": str(round_number),
             "cumulative_diff": wrapped_diff(cumulative_diff(task)),
             "repo_structure": repo_structure(task.root),
-            "repomix_context": repomix_for_allowed_files(task.root, config, task.allowed_files),
+            "repomix_context": repomix_for_files(task.root, config, task_context_files(task)),
             "feedback": latest_feedback(task),
             "previous_summary": latest_implementation_summary(task),
         }
@@ -1250,10 +1273,16 @@ def cmd_harden(note: str) -> None:
         "Target files:\n" + target_text + "\n\n"
         "User notes: " + (note.strip() or "(none)")
     )
-    create_task(root, config, request, kind="harden")
+    create_task(root, config, request, kind="harden", harden_targets=targets)
 
 
-def create_task(root: Path, config: dict, request: str, kind: str) -> None:
+def create_task(
+    root: Path,
+    config: dict,
+    request: str,
+    kind: str,
+    harden_targets: Optional[list] = None,
+) -> None:
 
     active = current_task_id(root)
     if active:
@@ -1296,6 +1325,7 @@ def create_task(root: Path, config: dict, request: str, kind: str) -> None:
     task.state = {
         "task_id": task.id,
         "kind": kind,
+        "harden_targets": list(harden_targets or []),
         "created": datetime.now().isoformat(timespec="seconds"),
         "stage": S_AWAIT_SCOPE,
         "base_commit": base_commit,
