@@ -63,8 +63,10 @@ usual. The tool never touches the browser.
 One full exchange:
 
 1. The tool builds one ZIP package for the current stage.
-2. The user moves the package to Copilot. Three ways are available: drag the
-   ZIP into the chat, paste the copied file, or paste the OneDrive link.
+2. The user moves the package to Copilot. The primary way is the OneDrive
+   link from section 8: the user pastes the link into the chat. Two direct
+   ways stay available: drag the ZIP into the chat, or paste the copied
+   file.
 3. Copilot replies. For implementation, the reply is `maintain-output.zip`.
    For scope and review, the reply is one JSON envelope in the chat.
 4. The user moves the reply back. Two ways are available: drop the file on the
@@ -170,11 +172,15 @@ maintain-<run>-<task>-<role>.zip
 - Inbound direction (R2) also accepts the Copilot reply; section 9 defines
   how drops are classified.
 
-Known risk: some Copilot tenants read ZIP attachments poorly. The setting
-`package.style` therefore has two values: `zip` (default, per R5) and
-`files` (the proven three-file attachment set from the CLI). The Send screen
-drag source offers the matching payload. The phase-0 spike in section 13
-confirms ZIP handling in the target tenant before the default is final.
+Transport note: chat attachments are not the primary route for the ZIP.
+Some Copilot tenants read chat-attached archives poorly. This is why R6
+routes the package through OneDrive: Copilot opens the ZIP from the pasted
+link with its normal Microsoft 365 file access. The spike in section 13
+confirms this in the target tenant. If the tenant cannot open ZIP members
+through a link, the fallback keeps the same workflow: the setting
+`package.style = folder` makes the tool also expand the package into a run
+folder next to the ZIP and link that folder. Default: `package.style = zip`
+(R5).
 
 ## 8. Configuration (R6, R8)
 
@@ -225,11 +231,13 @@ feature robust without a OneDrive API.
 
 Out (tool → Copilot):
 
+- **Copy link.** The OneDrive flow from section 8. This is the primary
+  route. It avoids the chat attachment limits, because Copilot opens the
+  file from OneDrive.
 - **Drag out.** The package card is a drag source. The drag carries the real
   ZIP path as a file URL. Dropping on the Copilot chat attaches the file.
 - **Copy file.** Puts the ZIP on the clipboard as a file. Paste into Copilot
   or Teams attaches it.
-- **Copy link.** The OneDrive flow from section 8.
 - **Export…** A save-as dialog for the ZIP, for any other route.
 
 In (Copilot → tool):
@@ -341,9 +349,14 @@ stage. No check output is dumped unrequested (R9).
 ## 13. Delivery plan
 
 Phase 0 — spike (half a day, no product code):
-- Attach a ZIP to Copilot chat in the target tenant; confirm it reads the
-  members. Paste a OneDrive path link; confirm Copilot opens it.
-- Result decides the default `package.style` (section 7).
+- Copy a ZIP into OneDrive by hand. Paste the path link into Copilot chat
+  in the target tenant. Confirm Copilot opens the ZIP and reads the members
+  through the link.
+- Also test the two direct routes: drag the ZIP into the chat, and paste it
+  as a file.
+- If the tenant cannot read ZIP members through the link, test the folder
+  fallback from section 7.
+- Result confirms the transport order and the `package.style` default.
 
 Phase 1 — package first (usable without the UI):
 - `zip_package.py`, `GLOBAL.md` support, multi-reference `references.py`,
@@ -395,8 +408,9 @@ Phase 5 — STE and Windows polish:
 
 ## 15. Open points for review
 
-1. Confirm the phase-0 spike result before we fix `package.style = zip` as
-   the default (some tenants read ZIP attachments poorly).
+1. Confirm the phase-0 spike result: Copilot in the target tenant reads the
+   ZIP members through the OneDrive link. This keeps `package.style = zip`
+   as the default.
 2. Confirm that the path-based OneDrive link is acceptable, or approve the
    Graph API for real share links (larger footprint).
 3. Confirm the five stage names shown to the user: Plan, Build, Review,
