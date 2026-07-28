@@ -15,7 +15,7 @@ from .errors import ConfigurationError, MaintainError
 
 
 SUPPORTED_PROVIDERS = frozenset(
-    {"codex", "file-exchange", "chatgpt-browser", "m365-browser"}
+    {"codex", "manual-ui", "file-exchange", "chatgpt-browser", "m365-browser"}
 )
 
 

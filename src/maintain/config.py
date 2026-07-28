@@ -62,6 +62,59 @@ class CommandSpec:
     working_directory: str = "."
 
 
+PACKET_TASK_KEYS = ("plan", "build", "repair", "review")
+
+
+@dataclass(frozen=True)
+class TaskPacketPolicy:
+    """Per-task-type packet configuration. Empty prompt means the built-in prompt."""
+
+    prompt: str = ""
+    documents: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PackagePolicy:
+    """Packet configuration: style, global prompt, and two-level documents."""
+
+    style: str = "zip"
+    global_prompt: str = "GLOBAL.md"
+    documents: tuple[str, ...] = ()
+    tasks: tuple[tuple[str, TaskPacketPolicy], ...] = tuple(
+        (key, TaskPacketPolicy()) for key in PACKET_TASK_KEYS)
+
+    def task(self, key: str) -> TaskPacketPolicy:
+        for name, policy in self.tasks:
+            if name == key:
+                return policy
+        raise KeyError(f"Unknown packet task type: {key}")
+
+
+def _package_policy(data: dict[str, Any]) -> PackagePolicy:
+    _reject_unknown(data, {"style", "global_prompt", "documents", "tasks"}, "package")
+    style = str(data.get("style", "zip")).strip().casefold() or "zip"
+    if style not in {"zip", "folder"}:
+        raise ConfigurationError("package.style must be zip or folder.")
+    global_prompt = str(data.get("global_prompt", "GLOBAL.md")).strip() or "GLOBAL.md"
+    documents = tuple(_strings(data.get("documents")))
+    tasks_data = _object(data.get("tasks", {}), "package.tasks")
+    _reject_unknown(tasks_data, set(PACKET_TASK_KEYS), "package.tasks")
+    tasks: list[tuple[str, TaskPacketPolicy]] = []
+    for key in PACKET_TASK_KEYS:
+        entry = _object(tasks_data.get(key, {}), f"package.tasks.{key}")
+        _reject_unknown(entry, {"prompt", "documents"}, f"package.tasks.{key}")
+        prompt = entry.get("prompt")
+        if prompt is not None and (not isinstance(prompt, str) or not prompt.strip()):
+            raise ConfigurationError(
+                f"package.tasks.{key}.prompt must be null or a file path.")
+        tasks.append((key, TaskPacketPolicy(
+            prompt=(prompt or "").strip(),
+            documents=tuple(_strings(entry.get("documents"))),
+        )))
+    return PackagePolicy(style=style, global_prompt=global_prompt,
+                         documents=documents, tasks=tuple(tasks))
+
+
 @dataclass(frozen=True)
 class ProjectConfig:
     path: Path
@@ -91,6 +144,7 @@ class ProjectConfig:
     ui_color: str = "auto"
     ui_animation: bool = True
     ui_max_width: int = 96
+    package: PackagePolicy = field(default_factory=PackagePolicy)
 
     @classmethod
     def load(cls, path: Path) -> "ProjectConfig":
@@ -106,7 +160,8 @@ class ProjectConfig:
         if data.get("schema_version") != 2:
             raise ConfigurationError("Configuration schema_version must be 2.")
         _reject_unknown(data, {"schema_version", "project", "repository", "providers",
-                               "execution", "verification", "policy", "delivery", "audit", "ui"},
+                               "execution", "verification", "policy", "delivery", "audit", "ui",
+                               "package"},
                         "top-level")
         project = _object(data.get("project", {}), "project")
         repository = _object(data.get("repository", {}), "repository")
@@ -144,6 +199,7 @@ class ProjectConfig:
             "openai_responses": {"endpoint", "api_key_env", "model"},
             "command": {"argv"},
             "file_exchange": {"exchange_dir"},
+            "manual_ui": set(),
             "m365_copilot_browser": {"url", "browser", "profile_dir", "visible",
                                       "expected_tenant", "expected_identity", "allowed_hosts",
                                       "package_transport", "response_format",
@@ -397,6 +453,7 @@ class ProjectConfig:
             ui_color=ui_color,
             ui_animation=_boolean(ui.get("animation"), "ui.animation", True),
             ui_max_width=ui_max_width,
+            package=_package_policy(_object(data.get("package", {}), "package")),
         )
 
 
@@ -414,7 +471,10 @@ def find_config(start: Path) -> Path | None:
 def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
     profiles: dict[str, dict[str, Any]]
     selected: str
-    if provider == "file-exchange":
+    if provider == "manual-ui":
+        selected = "manual"
+        profiles = {selected: {"type": "manual_ui"}}
+    elif provider == "file-exchange":
         selected = "exchange"
         profiles = {selected: {"type": "file_exchange",
                                "exchange_dir": "~/.maintain/exchange"}}
@@ -492,4 +552,9 @@ def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
                    "allow_dependency_changes": "approval"},
         "audit": {"runtime_root": "~/.maintain/runs"},
         "ui": {"color": "auto", "animation": True, "max_width": 100},
+        "package": {"style": "zip", "global_prompt": "GLOBAL.md", "documents": [],
+                    "tasks": {"plan": {"prompt": None, "documents": []},
+                              "build": {"prompt": None, "documents": []},
+                              "repair": {"prompt": None, "documents": []},
+                              "review": {"prompt": None, "documents": []}}},
     }

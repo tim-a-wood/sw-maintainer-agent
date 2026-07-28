@@ -46,7 +46,7 @@ def parser() -> argparse.ArgumentParser:
     commands = root.add_subparsers(dest="command")
     init = commands.add_parser("init", help="Create a version 2 project configuration")
     init.add_argument("repository", nargs="?", default=".")
-    init.add_argument("--provider", choices=["codex", "file-exchange", "chatgpt-browser",
+    init.add_argument("--provider", choices=["codex", "manual-ui", "file-exchange", "chatgpt-browser",
                                               "m365-browser"], default="codex")
     init.add_argument("--yes", action="store_true", help="Write the displayed configuration")
     for name in ("feature", "issue"):
@@ -77,7 +77,7 @@ def parser() -> argparse.ArgumentParser:
     project.add_argument("value", nargs="?", help="Project path, name, or list number")
     project.add_argument(
         "--provider",
-        choices=["codex", "file-exchange", "chatgpt-browser", "m365-browser"],
+        choices=["codex", "manual-ui", "file-exchange", "chatgpt-browser", "m365-browser"],
         default="m365-browser",
     )
     project.add_argument("--name", help="Display name for a new project")
@@ -117,7 +117,7 @@ def parser() -> argparse.ArgumentParser:
     config_cmd = commands.add_parser("config", help="Validate or show effective configuration")
     config_cmd.add_argument("action", choices=["validate", "show", "upgrade", "migrate"], nargs="?",
                             default="validate")
-    config_cmd.add_argument("--provider", choices=["codex", "file-exchange", "chatgpt-browser",
+    config_cmd.add_argument("--provider", choices=["codex", "manual-ui", "file-exchange", "chatgpt-browser",
                                                     "m365-browser"], default="codex")
     provider = commands.add_parser("provider", help="Inspect provider readiness")
     provider.add_argument("action",
@@ -131,6 +131,12 @@ def parser() -> argparse.ArgumentParser:
     workspace.add_argument("run_id", nargs="?")
     runs = commands.add_parser("runs", help="List saved workflows")
     runs.add_argument("--state")
+    packet = commands.add_parser(
+        "package", help="Build one plan packet ZIP for a manual Copilot exchange")
+    packet.add_argument("request", nargs="+", help="The change to plan")
+    packet.add_argument("--output", help="Destination directory for the packet ZIP")
+    packet.add_argument("--attach", action="append", default=[], metavar="FILE",
+                        help="Add a file to the packet attachments")
     commands.add_parser("doctor", help="Check configuration and providers")
     return root
 
@@ -250,6 +256,46 @@ def main(argv: list[str] | None = None) -> int:
             presenter.run_header(args.command, request, config.name, _provider_label(config))
             record = engine.start(args.command, request, reference=reference)
             _summary(record, args.json_output, presenter, command_prefix=_command_prefix(config))
+        elif args.command == "package":
+            from .context import ContextSelector
+            from .engine import PROVIDER_SAFETY_HEADER, SCOPE_INSTRUCTIONS
+            from .models import ProviderRequest
+            from .zip_package import build_packet
+            request_text = " ".join(args.request)
+            selector = ContextSelector(config.repository,
+                                       config.source_roots + config.test_roots,
+                                       config.exclude_paths, config.max_file_bytes)
+            context = selector.select(request_text)
+            payload = {
+                "mode": "feature", "request": request_text,
+                "project_policy": {
+                    "allow_new_files": config.allow_new_files,
+                    "allow_deletes": config.allow_deletes,
+                    "source_roots": list(config.source_roots),
+                    "test_roots": list(config.test_roots),
+                },
+                "context_expansions": [],
+                "repository_map": selector.repository_map(),
+                "candidate_files": [{"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
+                                     "content": x.content} for x in context],
+            }
+            stamp = __import__("datetime").datetime.now().strftime("%Y%m%d-%H%M%S")
+            packet_request = ProviderRequest(
+                1, f"packet-{stamp}", "scope-1", "scope",
+                f"{PROVIDER_SAFETY_HEADER}\n\n{SCOPE_INSTRUCTIONS}", payload)
+            output_dir = Path(args.output).expanduser() if args.output else Path.cwd()
+            build = build_packet(packet_request, output_dir,
+                                 policy=config.package, repository=config.repository,
+                                 config_dir=config.path.parent,
+                                 attachments=[Path(item).expanduser()
+                                              for item in args.attach])
+            if args.json_output:
+                print(json.dumps({"packet": str(build.zip_path), "sha256": build.sha256,
+                                  "bytes": build.bytes,
+                                  "members": list(build.members)}, sort_keys=True))
+            else:
+                print(f"Created {build.zip_path}")
+                print("Give this packet to Copilot. It contains the plan task.")
         elif args.command == "resume":
             record = engine.resume(args.run_id)
             _summary(record, args.json_output, presenter, command_prefix=_command_prefix(config))

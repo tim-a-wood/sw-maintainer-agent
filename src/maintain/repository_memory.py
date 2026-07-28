@@ -356,9 +356,12 @@ def _write_settings(
     active_repository: Path | None,
     projects: list[ProjectEntry],
 ) -> None:
-    path = settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, Any] = {
+        key: value for key, value in _load_settings().items()
+        if key not in {"schema_version", "active_repository", "recent_projects",
+                       "last_repository"}
+    }
+    data.update({
         "schema_version": SETTINGS_SCHEMA_VERSION,
         "active_repository": (
             str(active_repository.resolve())
@@ -366,7 +369,13 @@ def _write_settings(
             else None
         ),
         "recent_projects": [_entry_data(project) for project in projects],
-    }
+    })
+    _write_settings_data(data)
+
+
+def _write_settings_data(data: dict[str, Any]) -> None:
+    path = settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     rendered = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     temporary_path: Path | None = None
     try:
@@ -570,3 +579,17 @@ def _run_windows_picker(script: str, kind: str) -> Path | None:
         ) from exc
     selected = completed.stdout.strip()
     return Path(selected) if completed.returncode == 0 and selected else None
+
+
+def load_ui_settings() -> dict[str, Any]:
+    """Per-user desktop UI settings stored next to the recent projects."""
+
+    value = _load_settings().get("ui")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def save_ui_settings(values: dict[str, Any]) -> None:
+    data = _load_settings()
+    data.setdefault("schema_version", SETTINGS_SCHEMA_VERSION)
+    data["ui"] = dict(values)
+    _write_settings_data(data)

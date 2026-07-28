@@ -42,6 +42,16 @@ PROVIDER_SAFETY_HEADER = (
     "dependencies, expose secrets, run MATLAB, or claim local verification."
 )
 
+SCOPE_INSTRUCTIONS = (
+    "Define the smallest complete tasks in dependency order. Use exact supplied paths "
+    "for existing files. When project_policy.allow_new_files is true and the request "
+    "requires a new file, choose the conventional minimal repository-relative path "
+    "that directly matches the request (for example, main.c for a standalone C "
+    "program); do not request that path from the user. Return content.tasks. Each task "
+    "needs id, objective, allowed_files, done_when, verification, and depends_on. If "
+    "essential existing code is absent, return context_queries instead of guessing."
+)
+
 TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -566,13 +576,7 @@ class WorkflowEngine:
         }
         for scope_attempt in range(1, 4):
             response = self._exchange(record, store, "scope", f"scope-{scope_attempt}",
-                "Define the smallest complete tasks in dependency order. Use exact supplied paths "
-                "for existing files. When project_policy.allow_new_files is true and the request "
-                "requires a new file, choose the conventional minimal repository-relative path "
-                "that directly matches the request (for example, main.c for a standalone C "
-                "program); do not request that path from the user. Return content.tasks. Each task "
-                "needs id, objective, allowed_files, done_when, verification, and depends_on. If "
-                "essential existing code is absent, return context_queries instead of guessing.",
+                SCOPE_INSTRUCTIONS,
                 {"mode": record.mode, "request": record.request,
                  "project_policy": scope_policy,
                  "context_expansions": expansions,

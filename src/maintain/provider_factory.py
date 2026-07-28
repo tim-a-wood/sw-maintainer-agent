@@ -4,12 +4,15 @@ from pathlib import Path
 
 from .errors import ConfigurationError
 from .providers import (ChatGPTBrowserProvider, CodexProvider, CommandProvider,
-                        FileExchangeProvider, M365CopilotBrowserProvider, Provider)
+                        FileExchangeProvider, M365CopilotBrowserProvider,
+                        ManualUiProvider, Provider)
 from .providers import OpenAIResponsesProvider
 
 
 def build_provider(name: str, config: dict, evidence_dir: Path) -> Provider:
     kind = config.get("type")
+    if kind == "manual_ui":
+        return ManualUiProvider(name, evidence_dir)
     if kind == "codex_cli":
         return CodexProvider(str(config.get("executable", "")), str(config.get("model", "")),
                              int(config.get("timeout_seconds", 900)), evidence_dir)
