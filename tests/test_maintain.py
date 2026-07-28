@@ -1103,6 +1103,46 @@ def test_scaffolding_creates_a_working_c_harness(tmp_path):
     assert testing.verify_command(project, result["command"])["ok"]
 
 
+def test_repomix_is_launched_by_resolved_path(tmp_path, monkeypatch):
+    """npm installs repomix.cmd on Windows, which a bare name cannot launch.
+
+    CreateProcess only tries .exe for "repomix", so the executable must be
+    resolved through PATHEXT first and invoked by its full path.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    # Stand in for repomix.cmd: only findable via which(), not by bare name.
+    shim = bin_dir / "repomix-real"
+    shim.write_text(REPOMIX_SHIM, encoding="utf-8")
+    shim.chmod(0o755)
+
+    monkeypatch.setattr(mod.shutil, "which", lambda name: str(shim)
+                        if name == "repomix" else None)
+    assert mod.resolve_repomix() == str(shim)
+
+    recorded = {}
+    real_run = mod.run
+
+    def spy(cmd, cwd=None):
+        recorded["argv0"] = cmd[0]
+        return real_run(cmd, cwd=cwd)
+
+    monkeypatch.setattr(mod, "run", spy)
+    project = tmp_path / "project"
+    project.mkdir()
+    output = mod.run_repomix(project, {})
+    assert recorded["argv0"] == str(shim), "must invoke the resolved path"
+    assert "Repomix stub output" in output
+
+
+def test_repomix_missing_explains_the_stale_path_case(tmp_path, monkeypatch):
+    monkeypatch.setattr(mod.shutil, "which", lambda name: None)
+    with pytest.raises(mod.MaintainError) as error:
+        mod.resolve_repomix()
+    assert "not installed or not on PATH" in str(error.value)
+    assert "open a new terminal" in (error.value.next_action or "")
+
+
 def test_detection_recognises_common_ecosystems(tmp_path):
     testing = mod.testing_module()
     node = tmp_path / "node"

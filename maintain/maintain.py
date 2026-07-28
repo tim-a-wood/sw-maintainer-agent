@@ -672,12 +672,30 @@ def repo_structure(root: Path) -> str:
     return "```\n" + "\n".join(lines) + "\n```"
 
 
+def resolve_repomix() -> str:
+    """The full path to the Repomix executable.
+
+    On Windows npm installs `repomix.cmd`, which CreateProcess cannot launch
+    from the bare name "repomix" — it only looks for .exe. shutil.which
+    honours PATHEXT and returns the path that can actually be run.
+    """
+    found = shutil.which("repomix")
+    if found:
+        return found
+    raise MaintainError(
+        "Repomix is not installed or not on PATH.",
+        "Install Node.js, then run `npm install -g repomix`. If you just "
+        "installed it, open a new terminal so PATH is refreshed, and retry.",
+    )
+
+
 def run_repomix(root: Path, config: dict, include: Optional[list] = None) -> str:
+    executable = resolve_repomix()   # before the temp file, so nothing leaks
     handle, tmp_name = tempfile.mkstemp(prefix="maintain-repomix-", suffix=".md")
     os.close(handle)
     tmp_path = Path(tmp_name)
     command = [
-        "repomix",
+        executable,
         "--output",
         str(tmp_path),
         "--style",
@@ -693,11 +711,11 @@ def run_repomix(root: Path, config: dict, include: Optional[list] = None) -> str
         command.extend(["--include", ",".join(include)])
     try:
         proc = run(command, cwd=root)
-    except FileNotFoundError:
+    except OSError as exc:
         tmp_path.unlink(missing_ok=True)
         raise MaintainError(
-            "Repomix is not installed or not on PATH.",
-            "Install Node.js, then run `npm install -g repomix`, and retry.",
+            f"Repomix could not be started ({executable}): {exc}",
+            "Check that Repomix runs on its own: `repomix --version`.",
         )
     if proc.returncode != 0:
         tmp_path.unlink(missing_ok=True)
@@ -1290,13 +1308,10 @@ def cmd_init(root: Optional[Path] = None) -> None:
     say("  .maintain/current-task")
     say("  .maintain/tasks/")
     say("")
-    if not shutil.which("repomix"):
-        say("warning: Repomix was not found on PATH. Install Node.js and run")
-        say("         `npm install -g repomix` before creating a task.")
-        say("")
     say("Consider adding .maintain/ to .gitignore if you do not want task")
     say("artifacts in version control.")
     remember_project(root)
+    ensure_repomix(presenter())
     configure_tests(root, presenter())
     say("")
     say("Next: Edit .maintain/project-context.md with your project's rules,")
@@ -1409,6 +1424,7 @@ def create_task(
         if not confirm("Continue creating the task?"):
             raise MaintainError("Task creation aborted.", "Commit or stash your changes first.")
 
+    ensure_repomix(presenter())
     if not config.get("test_command"):
         say("This project has no test command, so patches cannot be verified.")
         configure_tests(root, presenter())
@@ -1932,6 +1948,41 @@ STAGE_COMMAND = {
     S_AWAIT_RESCOPE: "capture",
     S_RESCOPED: "next",
 }
+
+
+def ensure_repomix(view) -> bool:
+    """Offer to install Repomix if it is missing. Returns True when usable."""
+    if shutil.which("repomix"):
+        return True
+    npm = shutil.which("npm") or shutil.which("npm.cmd")
+    if not npm:
+        say("")
+        say("warning: Repomix is missing and Node.js was not found, so every")
+        say("handoff package will fail. Install Node.js from https://nodejs.org/,")
+        say("then run: npm install -g repomix")
+        return False
+    if not getattr(view, "interactive", True):
+        say("warning: Repomix is missing. Run: npm install -g repomix")
+        return False
+    say("")
+    say("Repomix is missing. Maintain uses it to build every handoff package.")
+    if not view.ask("Install it now with npm? [Y/n]", "y").strip().lower().startswith("y"):
+        say("Next: Run `npm install -g repomix` before starting a task.")
+        return False
+    say("Installing Repomix...")
+    proc = run([npm, "install", "-g", "repomix"])
+    if proc.returncode != 0:
+        say("warning: npm could not install Repomix:")
+        for line in (proc.stderr or proc.stdout or "").splitlines()[-5:]:
+            say(f"  {line}")
+        say("Next: Run `npm install -g repomix` yourself, then retry.")
+        return False
+    if shutil.which("repomix"):
+        say("Repomix installed.")
+        return True
+    say("Repomix was installed, but it is not on this terminal's PATH yet.")
+    say("Next: Open a new terminal and run `maintain` again.")
+    return False
 
 
 def testing_module():
