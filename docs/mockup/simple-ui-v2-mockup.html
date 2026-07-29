@@ -259,9 +259,33 @@ proposed simplified workflow (usability review P1–P9). Every control is clicka
 "Paste reply" plays Copilot's part. The window has its own theme switch, like the
 real app.</p>
 
+<div class="page-note" id="jsnote" style="border:1px solid #b23a2f;border-radius:8px;padding:8px 12px;color:#b23a2f">This viewer shows the page but does not run scripts. You see the home screen only. For the interactive mockup, open the link in Safari.</div>
 <div class="win" data-mock="dark" id="win">
   <div class="stage" id="stage"></div>
-  <div class="screen" id="screen"></div>
+  <div class="screen" id="screen">
+    <div class="title">flight-tools</div>
+    <div class="monohint">C:\work\flight-tools</div>
+    <div class="gap2"></div>
+    
+    <button class="choice" data-action="new-feature"><span class="icon-sq tint-accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg></span>
+      <span class="choice-body"><div class="choice-title">Change software</div>
+      <div class="choice-sub">Add or change a function.</div></span></button>
+    <button class="choice" data-action="new-fault"><span class="icon-sq tint-accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg></span>
+      <span class="choice-body"><div class="choice-title">Repair a fault</div>
+      <div class="choice-sub">Fix a problem in the software.</div></span></button>
+    <div class="gap2"></div>
+    <button class="choice" data-action="issues"><span class="icon-sq tint-accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8.5" y="8" width="7" height="11" rx="3.5"></rect><path d="M12 8v11"></path><path d="M10 8 8.5 5.5M14 8l1.5-2.5"></path><path d="M8.5 11H5M8.5 15H5.5M15.5 11H19M15.5 15h3"></path></svg></span>
+      <span class="choice-body"><div class="choice-title">Issues</div>
+      <div class="choice-sub">No open issues.</div></span></button>
+    <button class="choice" data-action="history"><span class="icon-sq tint-accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5v6h6"></path><path d="M5 15.5a8.5 8.5 0 1 0 2-8.86L2.5 11"></path></svg></span>
+      <span class="choice-body"><div class="choice-title">History</div>
+      <div class="choice-sub">Runs, iterations, and go-back.</div></span></button>
+    <button class="choice" data-action="projects"><span class="icon-sq tint-accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path></svg></span>
+      <span class="choice-body"><div class="choice-title">Projects</div>
+      <div class="choice-sub">Create, open, or remove projects.</div></span></button>
+    <button class="choice" data-action="settings"><span class="icon-sq tint-accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h5.6M13.6 6.5H20"></path><circle cx="11.6" cy="6.5" r="2.1"></circle><path d="M4 12h2.4M10.4 12H20"></path><circle cx="8.4" cy="12" r="2.1"></circle><path d="M4 17.5h9.6M17.6 17.5H20"></path><circle cx="15.6" cy="17.5" r="2.1"></circle></svg></span>
+      <span class="choice-body"><div class="choice-title">Settings</div>
+      <div class="choice-sub">OneDrive, prompts, documents, package, checks.</div></span></button></div>
   <div class="toastbar" id="toastbar">&nbsp;</div>
   <div class="foot">
     <span class="foot-label" id="footlabel">Maintain</span>
@@ -1047,6 +1071,8 @@ overlay.addEventListener('click', (event)=>{
   if(event.target===overlay) overlay.hidden=true;
 });
 
+const jsnote=document.getElementById('jsnote');
+if(jsnote) jsnote.remove();
 show('home');
 </script>
 
