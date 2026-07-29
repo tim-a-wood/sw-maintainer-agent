@@ -344,6 +344,7 @@ Stated to keep the scope firm:
 4. **M4 — Issues.** Section 12 in three slices: store + screens +
    auto-capture + repair bridge; the scan loop with its accept gate;
    the discuss loop.
+5. **M5 — Explain.** Section 13, after the manual trial passes.
 
 ## 11. Open points
 
@@ -422,3 +423,49 @@ sync, no merge machinery.
    proposal changes nothing until confirmed.
 6. Every new string passes the STE catalog test.
 3. Confirm that reversal of saved runs stays out of this version.
+
+## 13. Explain (M5)
+
+Purpose: turn one code area into a short Manim video that explains it.
+Copilot writes the scene file. Manim renders it on this computer. The
+source specification is the Copilot Chat Code Explainer handover
+document.
+
+### 13.1 Accepted risk
+
+The Explain reply is a program, not data. The render runs
+Copilot-written Python on this computer. The owner accepts this risk:
+the tool runs in a controlled and recoverable environment. Decision
+recorded 2026-07-29. The controls in 13.3 stay required.
+
+### 13.2 Flow
+
+1. Phase 0 — manual trial, no application changes. Build the packet
+   with `maintain package` and the explain prompt. Move the files by
+   hand. Record the section 9 measures from the handover document.
+   The trial code lives in another repository.
+2. Phase 1 — the feature, when the trial passes. A new task type
+   `explain` with the prompt and documents configurable like the
+   others. A Home entry "Explain code": select the files, write the
+   goal and the audience. The Exchange screen sends the packet. The
+   reply is one fenced Python block, nothing else. The tool extracts
+   it, applies the checks in 13.3, runs the configured render
+   command, and shows the result with "Open the video" and "Repair
+   with Copilot". A render fault becomes a repair packet with the
+   error text.
+
+### 13.3 Controls
+
+- The tool refuses network modules, process calls, and paths outside
+  the work folder, before the render.
+- The render runs in a separate folder.
+- The person reads the scene before the render. The review checklist
+  names the untrusted-code risk.
+- The tool does not install Manim. A plain message shows when Manim
+  is absent.
+
+### 13.4 Deferred
+
+- "Explain this change" from a saved run.
+- All items in section 11 of the handover document: browser control,
+  batch generation, voice, publishing, agents, plugins.
