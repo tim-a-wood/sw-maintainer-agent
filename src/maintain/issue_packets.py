@@ -10,30 +10,32 @@ from typing import Sequence
 
 from .config import ProjectConfig
 from .context import ContextSelector
+from .engine import PROVIDER_SAFETY_HEADER
 from .errors import ProviderError
 from .issues import SEVERITIES, Issue, IssueCandidate
 from .models import ProviderRequest
 from .zip_package import PacketBuild, build_packet
 
 SCAN_INSTRUCTIONS = (
-    "Scan the supplied code for defects and points to repair. Use the focus "
-    "note and any files under attachments/ (for example an exported issue "
-    "spreadsheet) as guides; cross-reference spreadsheet rows and carry the "
-    "row reference in external_ref. Return content.issues as a list. Each "
-    "issue needs title, severity (high, medium, or low), file, line, snippet, "
-    "and detail. snippet must quote the offending code verbatim from the "
-    "supplied file content; do not report code you were not given. Report "
-    "each distinct problem once and skip anything listed in known_issues. "
-    "Do not use internet tools."
+    "Obey the project ground rules in GLOBAL.md. Scan the supplied code for "
+    "defects and points to repair. Use the focus note and any files under "
+    "attachments/ (for example an exported issue spreadsheet) as guides; "
+    "cross-reference spreadsheet rows and carry the row reference in "
+    "external_ref. Return content.issues as a list. Each issue needs title, "
+    "severity (high, medium, or low), file, line, snippet, and detail. "
+    "snippet must quote the offending code verbatim from the supplied file "
+    "content; do not report code you were not given. Report each distinct "
+    "problem once and skip anything listed in known_issues. Do not use "
+    "internet tools."
 )
 
 DISCUSS_INSTRUCTIONS = (
-    "Answer the question about the single issue in the payload. Ground the "
-    "answer in the supplied code and any files under attachments/. Return "
-    "content.reply as plain text. If the evidence justifies a different "
-    "severity, also return content.severity as high, medium, or low; "
-    "otherwise omit it. Do not return code changes; a repair task does that. "
-    "Do not use internet tools."
+    "Obey the project ground rules in GLOBAL.md. Answer the question about "
+    "the single issue in the payload. Ground the answer in the supplied code "
+    "and any files under attachments/. Return content.reply as plain text. "
+    "If the evidence justifies a different severity, also return "
+    "content.severity as high, medium, or low; otherwise omit it. Do not "
+    "return code changes; a repair task does that. Do not use internet tools."
 )
 
 _SCAN_FALLBACK_FOCUS = "defect fault error bug wrong incorrect missing unsafe"
@@ -64,7 +66,7 @@ def scan_request(config: ProjectConfig, focus: str,
         run_id=f"scan-{_stamp()}-{secrets.token_hex(2)}",
         task_id="scan",
         role="scan",
-        instructions=SCAN_INSTRUCTIONS,
+        instructions=f"{PROVIDER_SAFETY_HEADER}\n\n{SCAN_INSTRUCTIONS}",
         payload={
             "mode": "scan",
             "request": focus.strip(),
@@ -89,7 +91,7 @@ def discuss_request(config: ProjectConfig, issue: Issue,
         run_id=f"discuss-{_stamp()}-{secrets.token_hex(2)}",
         task_id=f"discuss-{issue.id}",
         role="discuss",
-        instructions=DISCUSS_INSTRUCTIONS,
+        instructions=f"{PROVIDER_SAFETY_HEADER}\n\n{DISCUSS_INSTRUCTIONS}",
         payload={
             "mode": "discuss",
             "request": question.strip(),

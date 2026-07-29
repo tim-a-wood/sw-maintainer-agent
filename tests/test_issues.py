@@ -343,6 +343,48 @@ def test_scan_candidates_validate_and_verify_snippets(tmp_path):
                         repository)
 
 
+def test_side_packets_carry_the_ground_rules_and_configured_prompts(tmp_path):
+    import zipfile
+    from maintain.engine import PROVIDER_SAFETY_HEADER
+    from maintain.ui.config_store import ConfigStore
+
+    repository = _repository(tmp_path)
+    config = _config(tmp_path, repository)
+    (repository / "GLOBAL.md").write_text(
+        "# Project ground rules\n\nStay inside the wind tools scope.\n",
+        encoding="utf-8")
+
+    def taskmd(request) -> tuple[str, str]:
+        exchange = SideExchange(kind=request.role, request=request,
+                                directory=side_packet_dir(config,
+                                                          request.run_id))
+        packet = build_side_packet(exchange, config, [])
+        with zipfile.ZipFile(packet.zip_path) as archive:
+            return (archive.read("TASK.md").decode(),
+                    archive.read("GLOBAL.md").decode())
+
+    store = _store(tmp_path)
+    issue = store.add(title="The bound is wrong", file="app.py", line=1)
+    for request in (scan_request(config, "", []),
+                    discuss_request(config, issue, "Severity?")):
+        # The safety header and the configured ground rules ride along.
+        assert request.instructions.startswith(PROVIDER_SAFETY_HEADER)
+        task_text, global_text = taskmd(request)
+        assert "Stay inside the wind tools scope." in global_text
+        assert "Read `GLOBAL.md` first. Obey its limits." in task_text
+        assert PROVIDER_SAFETY_HEADER in task_text
+
+    # A configured scan prompt replaces the built-in text in the packet,
+    # and the safety header survives the override.
+    ConfigStore(config).set_task_prompt(
+        "scan", "Scan only the loader module for unit faults.")
+    config = ProjectConfig.load(config.path)
+    task_text, _ = taskmd(scan_request(config, "", []))
+    assert "Scan only the loader module for unit faults." in task_text
+    assert PROVIDER_SAFETY_HEADER in task_text
+    assert "cross-reference spreadsheet rows" not in task_text
+
+
 def test_discuss_request_and_reply_validation(tmp_path):
     repository = _repository(tmp_path)
     config = _config(tmp_path, repository)
