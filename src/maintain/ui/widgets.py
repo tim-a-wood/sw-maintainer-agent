@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import (QMimeData, QPoint, QRect, QSize, Qt, QTimer, QUrl,
-                            Signal)
+from PySide6.QtCore import (QMimeData, QPoint, QRect, QRectF, QSize, Qt,
+                            QTimer, QUrl, Signal)
 from PySide6.QtGui import (QColor, QDrag, QDragEnterEvent, QDropEvent, QFont,
-                           QFontMetrics, QPainter, QPen, QPixmap,
+                           QFontMetrics, QPainter, QPainterPath, QPen,
                            QSyntaxHighlighter, QTextCharFormat)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLayout,
@@ -19,25 +19,123 @@ from .strings import text
 
 STAGES = ("plan", "build", "review", "test", "save")
 
-ZIP_SVG = (
-    '<svg viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8">'
-    '<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1'
-    '-2-2Z"/><path d="M12 10v1m0 2v1m0 2v1" stroke-linecap="round"/></svg>')
-PKG_SVG = (
-    '<svg viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5">'
-    '<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1'
-    '-2-2Z"/><path d="M11.5 9v1.2m0 1.8v1.2m0 1.8V16.2" stroke-linecap="round"/>'
-    '<path d="M15 12.5h3M15 15h3" stroke-linecap="round" opacity=".55"/></svg>')
+# One icon language: a 24-unit grid, 1.8 stroke, round caps and joins.
+ICONS: dict[str, str] = {
+    "plus": '<path d="M12 5v14M5 12h14"/>',
+    "wrench": ('<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l'
+               '3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l'
+               '6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'),
+    "history": ('<path d="M2.5 5v6h6"/>'
+                '<path d="M5 15.5a8.5 8.5 0 1 0 2-8.86L2.5 11"/>'),
+    "folder": ('<path d="M3.5 7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 '
+               '1-2 2h-13a2 2 0 0 1-2-2z"/>'),
+    "sliders": ('<path d="M4 6.5h5.6M13.6 6.5H20"/><circle cx="11.6" cy="6.5" '
+                'r="2.1"/><path d="M4 12h2.4M10.4 12H20"/><circle cx="8.4" '
+                'cy="12" r="2.1"/><path d="M4 17.5h9.6M17.6 17.5H20"/>'
+                '<circle cx="15.6" cy="17.5" r="2.1"/>'),
+    "play": ('<circle cx="12" cy="12" r="8.6"/>'
+             '<path d="M10.4 8.9 15.4 12l-5 3.1z" fill="{color}" '
+             'stroke="none"/>'),
+    "cloud": ('<path d="M18 10.5h-1.3A6.7 6.7 0 1 0 9.3 19h8.7a4.25 4.25 0 0 0 '
+              '0-8.5z"/>'),
+    "file-text": ('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 '
+                  '0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>'),
+    "globe": ('<circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2"/>'
+              '<path d="M12 3.4a13.4 13.4 0 0 1 0 17.2M12 3.4a13.4 13.4 0 0 0 '
+              '0 17.2"/>'),
+    "box": ('<path d="M21 8.2 12 3.4 3 8.2v7.6l9 4.8 9-4.8z"/>'
+            '<path d="M3 8.2l9 4.8 9-4.8"/><path d="M12 13v7.6"/>'),
+    "check-circle": ('<circle cx="12" cy="12" r="8.6"/>'
+                     '<path d="M8.2 12.4l2.7 2.7 4.9-5.7"/>'),
+    "check": '<path d="M5 13l4.2 4.2L19 7"/>',
+    "download": '<path d="M12 4.5v10.5M7.2 11.2 12 16l4.8-4.8M5 19.5h14"/>',
+    "zip": ('<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 '
+            '2H6a2 2 0 0 1-2-2z"/><path d="M12 10v1m0 2v1m0 2v1"/>'),
+    "file": ('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 '
+             '2-2V8z"/><path d="M14 3v5h5"/>'),
+    "package": ('<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 '
+                '1-2 2H5a2 2 0 0 1-2-2z"/><path d="M11.5 9v1.2m0 1.8v1.2m0 '
+                '1.8v1.2"/><path d="M15 12.5h3M15 15h3" opacity=".55"/>'),
+}
 
 
-def svg_pixmap(svg: str, size: int, color: str) -> QPixmap:
-    renderer = QSvgRenderer(svg.format(color=color).encode())
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    renderer.render(painter)
-    painter.end()
-    return pixmap
+def icon_svg(name: str, color: str) -> bytes:
+    body = ICONS[name].replace("{color}", color)
+    return (f'<svg viewBox="0 0 24 24" fill="none" stroke="{color}" '
+            'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+            f"{body}</svg>").encode()
+
+
+class Icon(QWidget):
+    """One themed icon. It reads the palette at paint time, so a theme
+    change recolors it without a rebuild."""
+
+    def __init__(self, name: str, size: int = 18,
+                 color_key: str = "accent") -> None:
+        super().__init__()
+        self._name = name
+        self._color_key = color_key
+        self.setFixedSize(size, size)
+        self._renderer: QSvgRenderer | None = None
+        self._rendered = ""
+
+    def set_icon(self, name: str, color_key: str | None = None) -> None:
+        self._name = name
+        if color_key is not None:
+            self._color_key = color_key
+        self._rendered = ""
+        self.update()
+
+    def _svg(self, color: str) -> QSvgRenderer:
+        key = f"{self._name}:{color}"
+        if self._renderer is None or self._rendered != key:
+            self._renderer = QSvgRenderer(icon_svg(self._name, color))
+            self._rendered = key
+        return self._renderer
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = getattr(palette(), self._color_key)
+        self._svg(color).render(painter, QRectF(self.rect()))
+
+
+ICON_KINDS = {"accent": ("accent", "accent_soft"), "warn": ("warn", "warn_soft"),
+              "ok": ("ok", "ok_soft"), "bad": ("bad", "bad_soft"),
+              "neutral": ("dim", "chip")}
+
+
+class IconSquare(QWidget):
+    """A rounded soft-color square (or circle) with a themed icon inside."""
+
+    def __init__(self, name: str, kind: str = "accent", size: int = 38,
+                 icon_size: int = 20, circle: bool = False) -> None:
+        super().__init__()
+        self._name = name
+        self._kind = kind
+        self._icon_size = icon_size
+        self._circle = circle
+        self.setFixedSize(size, size)
+        self._renderer: QSvgRenderer | None = None
+        self._rendered = ""
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        colors = palette()
+        color_key, soft_key = ICON_KINDS.get(self._kind, ICON_KINDS["accent"])
+        color = getattr(colors, color_key)
+        radius = self.width() / 2 if self._circle else 9
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), radius, radius)
+        painter.fillPath(path, QColor(getattr(colors, soft_key)))
+        key = f"{self._name}:{color}"
+        if self._renderer is None or self._rendered != key:
+            self._renderer = QSvgRenderer(icon_svg(self._name, color))
+            self._rendered = key
+        offset = (self.width() - self._icon_size) / 2
+        self._renderer.render(painter, QRectF(
+            offset, offset, self._icon_size, self._icon_size))
 
 
 def palette() -> theme.Palette:
@@ -329,7 +427,7 @@ class ChoiceButton(QFrame):
 
     clicked = Signal()
 
-    def __init__(self, glyph: str, title: str, sub: str,
+    def __init__(self, icon_name: str, title: str, sub: str,
                  accent_kind: str = "accent") -> None:
         super().__init__()
         self.setObjectName("Choice")
@@ -338,12 +436,7 @@ class ChoiceButton(QFrame):
         row = QHBoxLayout(self)
         row.setContentsMargins(16, 13, 16, 13)
         row.setSpacing(14)
-        icon = QLabel(glyph)
-        icon.setObjectName("ChoiceIconWarn" if accent_kind == "warn"
-                           else "ChoiceIcon")
-        icon.setFixedSize(38, 38)
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        row.addWidget(icon)
+        row.addWidget(IconSquare(icon_name, kind=accent_kind))
         column = QVBoxLayout()
         column.setSpacing(1)
         self.title_label = QLabel(title)
@@ -383,10 +476,8 @@ class Chip(QFrame):
         row = QHBoxLayout(self)
         row.setContentsMargins(9, 5, 6 if removable else 9, 5)
         row.setSpacing(7)
-        icon = QLabel()
-        icon.setPixmap(svg_pixmap(ZIP_SVG, 15, palette().accent))
-        icon.setFixedSize(15, 15)
-        row.addWidget(icon)
+        kind = "zip" if name.lower().endswith(".zip") else "file"
+        row.addWidget(Icon(kind, 15))
         name_label = QLabel(name)
         name_label.setObjectName("ChipName")
         row.addWidget(name_label)
@@ -443,6 +534,13 @@ class DropZone(QFrame):
         pad = 10 if slim else 22
         column.setContentsMargins(16, pad, 16, pad)
         column.setSpacing(3)
+        if not slim:
+            icon_row = QHBoxLayout()
+            icon_row.addStretch(1)
+            icon_row.addWidget(Icon("download", 22))
+            icon_row.addStretch(1)
+            column.addLayout(icon_row)
+            column.addSpacing(4)
         title = QLabel(main)
         title.setObjectName("DropMain" if not slim else "DropSlim")
         title.setWordWrap(True)
@@ -490,9 +588,7 @@ class PacketCard(QFrame):
         row = QHBoxLayout(self)
         row.setContentsMargins(16, 13, 14, 13)
         row.setSpacing(14)
-        self.icon = QLabel()
-        self.icon.setPixmap(svg_pixmap(PKG_SVG, 40, palette().accent))
-        self.icon.setFixedSize(40, 40)
+        self.icon = Icon("package", 40)
         row.addWidget(self.icon)
         column = QVBoxLayout()
         column.setSpacing(1)

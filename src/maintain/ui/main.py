@@ -48,8 +48,10 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("Maintain")
 
     from .app import saved_theme
-    from .theme import palette_for, stylesheet
-    app.setStyleSheet(stylesheet(palette_for(saved_theme() == "dark")))
+    from .theme import palette_for, qt_palette, stylesheet
+    palette = palette_for(saved_theme() == "dark")
+    app.setPalette(qt_palette(palette))
+    app.setStyleSheet(stylesheet(palette))
 
     repository = _pick_repository(args.repo)
     if repository is None:

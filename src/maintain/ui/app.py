@@ -45,6 +45,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"{text('app.title')} — {config.name}")
         self.resize(640, 760)
+        self.setMinimumSize(520, 620)
         self._theme = saved_theme()
         self.apply_theme(self._theme, persist=False)
         self.store = ConfigStore(config)
@@ -195,6 +196,7 @@ class MainWindow(QMainWindow):
                      self.page_package, self.page_checks):
             page.back.connect(lambda: self.show_screen("settings"))
         self.page_onedrive.saved.connect(self._settings_saved)
+        self.page_onedrive.browse.connect(self._browse_onedrive_folder)
         self.page_tasks.saved.connect(self._settings_saved)
         self.page_tasks.add_doc.connect(self._add_document)
         self.page_tasks.remove_doc.connect(self._remove_document)
@@ -218,6 +220,7 @@ class MainWindow(QMainWindow):
         palette = theme_module.palette_for(name == "dark")
         application = QApplication.instance()
         if application is not None:
+            application.setPalette(theme_module.qt_palette(palette))
             application.setStyleSheet(theme_module.stylesheet(palette))
         self._theme = name
         if persist:
@@ -236,12 +239,16 @@ class MainWindow(QMainWindow):
 
     # ----- navigation -----
 
+    RUN_FLOW_SCREENS = frozenset(
+        {"send", "receive", "plan", "findings", "test", "save", "done", "busy"})
+
     def show_screen(self, name: str) -> None:
+        if name not in self.RUN_FLOW_SCREENS:
+            self.stage_header.setVisible(False)
         self.stack.setCurrentWidget(self.screens[name])
 
     def show_home(self) -> None:
         self._set_run_footer(False)
-        self.stage_header.setVisible(False)
         summary = self.controller.resumable_run()
         self.home.set_resumable(summary)
         self.show_screen("home")
@@ -639,6 +646,11 @@ class MainWindow(QMainWindow):
         self._after_config_change()
         self.toast(text("settings.saved"))
         self.show_screen("settings")
+
+    def _browse_onedrive_folder(self) -> None:
+        selected = self.pick_directory()
+        if selected:
+            self.page_onedrive.folder_edit.setText(selected)
 
     def _package_saved(self, style: str) -> None:
         try:

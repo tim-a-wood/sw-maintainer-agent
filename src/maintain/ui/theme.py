@@ -15,6 +15,7 @@ class Palette:
     dim: str
     faint: str
     accent: str
+    accent_hover: str
     accent_ink: str
     accent_soft: str
     ok: str
@@ -33,7 +34,8 @@ class Palette:
 LIGHT = Palette(
     window="#dfe6ef", surface="#f8fafc", bar="#eef3f9", edge="#d3dde9",
     ink="#1b2534", dim="#5c6c81", faint="#8ba0b6",
-    accent="#0b6fb8", accent_ink="#ffffff", accent_soft="#e3eef7",
+    accent="#0b6fb8", accent_hover="#095e9d", accent_ink="#ffffff",
+    accent_soft="#e3eef7",
     ok="#177245", ok_soft="#e2efe8", bad="#b23a2f", bad_soft="#f6e6e4",
     warn="#8a6100", warn_soft="#f4ecd8",
     chip="#edf2f8", chip_edge="#d8e2ee", code_bg="#101826", code_ink="#d5e3f2",
@@ -43,7 +45,8 @@ LIGHT = Palette(
 DARK = Palette(
     window="#10151f", surface="#1b2230", bar="#212a3c", edge="#32405a",
     ink="#e6edf6", dim="#9aa9bd", faint="#6d7d92",
-    accent="#4cbdff", accent_ink="#06263c", accent_soft="#1d3247",
+    accent="#4cbdff", accent_hover="#6fcaff", accent_ink="#06263c",
+    accent_soft="#1d3247",
     ok="#3bd694", ok_soft="#173328", bad="#ff8577", bad_soft="#3a2320",
     warn="#f0c052", warn_soft="#3a3320",
     chip="#242e42", chip_edge="#313c54", code_bg="#0d1422", code_ink="#cfdff2",
@@ -87,24 +90,41 @@ QLabel#MonoHint {{ font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono",
 QPushButton {{ border: 1px solid transparent; border-radius: 6px;
                padding: 8px 16px; font-weight: 600; background: transparent; }}
 QPushButton:focus {{ border: 1px solid {p.accent}; outline: none; }}
+QPushButton:disabled {{ color: {p.faint}; }}
 QPushButton#Primary {{ background: {p.accent}; color: {p.accent_ink}; }}
-QPushButton#Primary:hover {{ background: {p.accent}; }}
+QPushButton#Primary:hover {{ background: {p.accent_hover}; }}
+QPushButton#Primary:pressed {{ background: {p.accent_hover};
+                               padding-top: 9px; padding-bottom: 7px; }}
 QPushButton#Primary:disabled {{ background: {p.chip}; color: {p.faint}; }}
 QPushButton#Secondary {{ border: 1px solid {p.edge}; background: {p.surface}; }}
 QPushButton#Secondary:hover {{ border-color: {p.accent}; background: {p.accent_soft}; }}
+QPushButton#Secondary:pressed {{ border-color: {p.accent};
+                                 background: {p.accent_soft};
+                                 padding-top: 9px; padding-bottom: 7px; }}
 QPushButton#Ghost {{ color: {p.dim}; padding: 8px 10px; }}
-QPushButton#Ghost:hover {{ color: {p.accent}; }}
+QPushButton#Ghost:hover {{ color: {p.accent}; background: {p.accent_soft};
+                           border-radius: 6px; }}
 QPushButton#Danger {{ color: {p.dim}; padding: 8px 10px; }}
 QPushButton#Danger:hover {{ color: {p.bad}; background: {p.bad_soft}; }}
+
+QMessageBox QPushButton, QInputDialog QPushButton, QFileDialog QPushButton {{
+    border: 1px solid {p.edge}; background: {p.surface};
+    padding: 6px 14px; min-width: 64px; }}
+QMessageBox QPushButton:hover, QInputDialog QPushButton:hover,
+QFileDialog QPushButton:hover {{
+    border-color: {p.accent}; background: {p.accent_soft}; }}
+QMessageBox QPushButton:default, QInputDialog QPushButton:default {{
+    background: {p.accent}; color: {p.accent_ink}; border-color: {p.accent}; }}
+QMessageBox QPushButton:default:hover, QInputDialog QPushButton:default:hover {{
+    background: {p.accent_hover}; }}
+
+QToolTip {{ background: {p.bar}; color: {p.ink}; border: 1px solid {p.edge};
+            padding: 4px 8px; font-size: 11px; }}
 
 QFrame#Choice {{ border: 1px solid {p.edge}; border-radius: 9px;
                  background: {p.surface}; }}
 QFrame#Choice:hover, QFrame#Choice:focus {{
     border-color: {p.accent}; background: {p.accent_soft}; }}
-QLabel#ChoiceIcon {{ background: {p.accent_soft}; color: {p.accent};
-                     border-radius: 8px; font-size: 16px; font-weight: 600; }}
-QLabel#ChoiceIconWarn {{ background: {p.warn_soft}; color: {p.warn};
-                         border-radius: 8px; font-size: 16px; font-weight: 600; }}
 QLabel#ChoiceTitle {{ font-size: 14px; font-weight: 600; }}
 QLabel#ChoiceSub {{ font-size: 12px; color: {p.dim}; }}
 
@@ -160,8 +180,6 @@ QLabel#StateAccent {{ background: {p.accent_soft}; color: {p.accent};
                       font-weight: 700; }}
 QLabel#NumberBadge {{ background: {p.accent_soft}; color: {p.accent};
                       border-radius: 12px; font-size: 11px; font-weight: 700; }}
-QLabel#DoneTick {{ background: {p.ok_soft}; color: {p.ok}; border-radius: 27px;
-                   font-size: 24px; font-weight: 700; }}
 QLabel#SevMinor {{ background: {p.warn_soft}; color: {p.warn}; border-radius: 9px;
                    padding: 2px 9px; font-size: 9px; font-weight: 700; }}
 QLabel#SevMajor {{ background: {p.bad_soft}; color: {p.bad}; border-radius: 9px;
@@ -171,7 +189,17 @@ QLabel#TagSuper {{ color: {p.faint}; border: 1px solid {p.chip_edge};
                    font-weight: 700; }}
 
 QRadioButton {{ spacing: 9px; font-weight: 600; }}
-QRadioButton::indicator {{ width: 15px; height: 15px; }}
+QRadioButton::indicator {{ width: 14px; height: 14px; border-radius: 9px;
+                           border: 2px solid {p.chip_edge};
+                           background: {p.surface}; }}
+QRadioButton::indicator:hover {{ border-color: {p.accent}; }}
+QRadioButton::indicator:checked {{ border: 5px solid {p.accent};
+                                   width: 8px; height: 8px; }}
+
+QSpinBox::up-button, QSpinBox::down-button {{
+    width: 18px; border-left: 1px solid {p.edge}; background: transparent; }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+    background: {p.accent_soft}; }}
 
 QScrollArea {{ border: none; background: transparent; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
@@ -189,3 +217,34 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 
 def palette_for(dark: bool) -> Palette:
     return DARK if dark else LIGHT
+
+
+def qt_palette(p: Palette):
+    """A QPalette so native pieces (menus, dialogs, placeholders) match."""
+    from PySide6.QtGui import QColor, QPalette
+    qt = QPalette()
+    roles = {
+        QPalette.ColorRole.Window: p.window,
+        QPalette.ColorRole.Base: p.surface,
+        QPalette.ColorRole.AlternateBase: p.bar,
+        QPalette.ColorRole.Text: p.ink,
+        QPalette.ColorRole.WindowText: p.ink,
+        QPalette.ColorRole.PlaceholderText: p.faint,
+        QPalette.ColorRole.Button: p.surface,
+        QPalette.ColorRole.ButtonText: p.ink,
+        QPalette.ColorRole.Highlight: p.accent,
+        QPalette.ColorRole.HighlightedText: p.accent_ink,
+        QPalette.ColorRole.ToolTipBase: p.bar,
+        QPalette.ColorRole.ToolTipText: p.ink,
+        QPalette.ColorRole.Link: p.accent,
+        QPalette.ColorRole.Mid: p.faint,
+        QPalette.ColorRole.Dark: p.dim,
+        QPalette.ColorRole.Light: p.edge,
+    }
+    for role, value in roles.items():
+        qt.setColor(role, QColor(value))
+    qt.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,
+                QColor(p.faint))
+    qt.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText,
+                QColor(p.faint))
+    return qt

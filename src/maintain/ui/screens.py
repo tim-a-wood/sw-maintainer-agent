@@ -23,8 +23,9 @@ from maintain.zip_package import global_prompt_text
 from .config_store import BUILTIN_PROMPTS, ConfigStore
 from .strings import text
 from .widgets import (ChoiceButton, DiffHighlighter, DropZone, ElidedLabel,
-                      FileChips, NumberBadge, PacketCard, Spinner, StateChip,
-                      StatusLine, TimelineDot, button, label, run_state_chip)
+                      FileChips, IconSquare, NumberBadge, PacketCard, Spinner,
+                      StateChip, StatusLine, TimelineDot, button, label,
+                      palette, run_state_chip)
 
 TASK_TITLES = {"plan": "send.plan.title", "build": "send.build.title",
                "repair": "send.repair.title", "review": "send.review.title"}
@@ -93,22 +94,25 @@ class HomeScreen(Screen):
         self.add(label(project_name, "Title"))
         self.add(label(project_path, "MonoHint"))
         self.add_gap(4)
-        self._continue = ChoiceButton("↻", "", "", accent_kind="warn")
+        self._continue = ChoiceButton("play", "", "", accent_kind="warn")
         self._continue.setVisible(False)
         self._continue.clicked.connect(self._emit_continue)
         self._continue_run_id = ""
         self.add(self._continue)
-        for glyph, title_key, sub_key, slot in (
-                ("＋", "home.change", "home.change.sub",
+        for index, (icon, title_key, sub_key, slot) in enumerate((
+                ("plus", "home.change", "home.change.sub",
                  lambda: self.new_change.emit("feature")),
-                ("!", "home.fault", "home.fault.sub",
+                ("wrench", "home.fault", "home.fault.sub",
                  lambda: self.new_change.emit("issue")),
-                ("↻", "home.history", "home.history.sub", self.open_history.emit),
-                ("⌂", "home.projects", "home.projects.sub",
+                ("history", "home.history", "home.history.sub",
+                 self.open_history.emit),
+                ("folder", "home.projects", "home.projects.sub",
                  self.open_projects.emit),
-                ("⚙", "home.settings", "home.settings.sub",
-                 self.open_settings.emit)):
-            card = ChoiceButton(glyph, text(title_key), text(sub_key))
+                ("sliders", "home.settings", "home.settings.sub",
+                 self.open_settings.emit))):
+            if index == 2:
+                self.add_gap(4)
+            card = ChoiceButton(icon, text(title_key), text(sub_key))
             card.clicked.connect(slot)
             self.add(card)
 
@@ -636,10 +640,8 @@ class DoneScreen(Screen):
     def __init__(self) -> None:
         super().__init__()
         self.add_gap(30)
-        tick = QLabel("✓")
-        tick.setObjectName("DoneTick")
-        tick.setFixedSize(54, 54)
-        tick.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tick = IconSquare("check", kind="ok", size=54, icon_size=26,
+                          circle=True)
         holder = QWidget()
         row = QHBoxLayout(holder)
         row.addStretch(1)
@@ -679,8 +681,10 @@ class HistoryRow(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         row = QHBoxLayout(self)
-        row.setContentsMargins(15, 11, 15, 11)
+        row.setContentsMargins(13, 11, 15, 11)
         row.setSpacing(12)
+        icon = ("wrench", "warn") if summary.mode == "issue" else ("plus", "accent")
+        row.addWidget(IconSquare(icon[0], kind=icon[1], size=34, icon_size=18))
         column = QVBoxLayout()
         column.setSpacing(1)
         request = " ".join(summary.request.split())[:64]
@@ -709,6 +713,8 @@ PROJECT_STATE_CHIPS = {"ready": ("projects.state.ready", "pass"),
                        "setup": ("projects.state.setup", "warn"),
                        "no_git": ("projects.state.no_git", "wait"),
                        "missing": ("projects.state.missing", "fail")}
+PROJECT_ICON_KINDS = {"ready": "ok", "setup": "warn", "no_git": "neutral",
+                      "missing": "bad"}
 
 
 class ProjectRowWidget(QFrame):
@@ -721,8 +727,11 @@ class ProjectRowWidget(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         row = QHBoxLayout(self)
-        row.setContentsMargins(15, 11, 11, 11)
+        row.setContentsMargins(13, 11, 11, 11)
         row.setSpacing(12)
+        row.addWidget(IconSquare(
+            "folder", kind=PROJECT_ICON_KINDS.get(status, "bad"),
+            size=34, icon_size=18))
         column = QVBoxLayout()
         column.setSpacing(1)
         title = QLabel(name)
@@ -871,7 +880,7 @@ class RunDetailScreen(Screen):
             font.setBold(not event.superseded)
             title.setFont(font)
             if event.superseded:
-                title.setStyleSheet("color: palette(mid);")
+                title.setStyleSheet(f"color: {palette().faint};")
             head.addWidget(title)
             if event.superseded:
                 tag = QLabel(text("run.superseded").upper())
@@ -933,14 +942,14 @@ class SettingsScreen(Screen):
     open_page = Signal(str)
     back = Signal()
 
-    GLYPHS = {"onedrive": "⇅", "tasks": "≡", "global": "¶",
-              "package": "▤", "checks": "✓"}
+    ICON_NAMES = {"onedrive": "cloud", "tasks": "file-text", "global": "globe",
+                  "package": "box", "checks": "check-circle"}
 
     def __init__(self) -> None:
         super().__init__()
         self.add(label(text("settings.title"), "Title"))
         for key in ("onedrive", "tasks", "global", "package", "checks"):
-            card = ChoiceButton(self.GLYPHS[key], text("settings." + key),
+            card = ChoiceButton(self.ICON_NAMES[key], text("settings." + key),
                                 text("settings." + key + ".sub"))
             card.clicked.connect(lambda page=key: self.open_page.emit(page))
             self.add(card)
@@ -951,6 +960,7 @@ class SettingsScreen(Screen):
 class OneDrivePage(Screen):
     saved = Signal()
     back = Signal()
+    browse = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -959,7 +969,8 @@ class OneDrivePage(Screen):
         self.folder_edit = QLineEdit()
         self.add(self.folder_edit)
         self.add(label(text("onedrive.folder.hint"), "Hint"))
-        self.add_row(button(text("onedrive.browse"), "Secondary", None))
+        self.add_row(button(text("onedrive.browse"), "Secondary",
+                            self.browse.emit))
         self.add_gap(2)
         self.add(label(text("onedrive.link").upper(), "Eyebrow"))
         self.link_edit = QLineEdit()
