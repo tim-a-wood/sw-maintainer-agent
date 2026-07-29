@@ -14,7 +14,13 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout,
 from maintain.config import ProjectConfig
 from maintain.errors import MaintainError
 from maintain.gates import GateDecision
+from maintain.issue_packets import (SideExchange, build_side_packet,
+                                    discuss_reply, discuss_request,
+                                    scan_candidates, scan_request,
+                                    side_packet_dir)
+from maintain.issues import CLOSED, REASONS
 from maintain.models import RunRecord, RunState
+from maintain.providers.command import parse_response
 from maintain.providers.manual_ui import PacketHandoff
 from maintain.repository_memory import load_ui_settings, save_ui_settings
 
@@ -25,9 +31,10 @@ from .config_store import ConfigStore
 from .controller import Controller
 from .screens import (BusyScreen, ChecksPage, DescribeScreen, DoneScreen,
                       FindingsScreen, GlobalPage, HistoryScreen, HomeScreen,
-                      OneDrivePage, PackagePage, PlanCheckScreen,
-                      ProjectsScreen, ReceiveScreen, RunDetailScreen,
-                      SaveScreen, SettingsScreen, SendScreen, TasksPage,
+                      IssueDetailScreen, IssuesScreen, OneDrivePage,
+                      PackagePage, PlanCheckScreen, ProjectsScreen,
+                      ReceiveScreen, RunDetailScreen, SaveScreen,
+                      ScanCheckScreen, SettingsScreen, SendScreen, TasksPage,
                       TestScreen, documents_count)
 from .strings import text
 from .widgets import StageHeader
@@ -53,6 +60,8 @@ class MainWindow(QMainWindow):
         self.current_handoff: PacketHandoff | None = None
         self.current_record: RunRecord | None = None
         self._in_test = False
+        self._side: dict | None = None
+        self._pending_issue_link = ""
 
         central = QWidget()
         column = QVBoxLayout(central)
@@ -103,6 +112,9 @@ class MainWindow(QMainWindow):
         config = self.store.config
         self.home = HomeScreen(config.name, str(config.repository))
         self.projects = ProjectsScreen()
+        self.issues_list = IssuesScreen()
+        self.issue_detail = IssueDetailScreen()
+        self.scan_check = ScanCheckScreen()
         self.describe = DescribeScreen()
         self.send = SendScreen()
         self.receive = ReceiveScreen()
@@ -122,6 +134,8 @@ class MainWindow(QMainWindow):
         self.page_checks = ChecksPage()
         for name, screen in [
                 ("home", self.home), ("projects", self.projects),
+                ("issues", self.issues_list), ("issue", self.issue_detail),
+                ("scan-check", self.scan_check),
                 ("describe", self.describe),
                 ("send", self.send), ("receive", self.receive),
                 ("plan", self.plan_check), ("findings", self.findings),
@@ -139,7 +153,24 @@ class MainWindow(QMainWindow):
         self.home.open_history.connect(self.show_history)
         self.home.open_settings.connect(lambda: self.show_screen("settings"))
         self.home.open_projects.connect(self.show_projects)
+        self.home.open_issues.connect(self.show_issues)
         self.home.continue_run.connect(self._continue_run)
+
+        self.issues_list.open_issue.connect(self._open_issue)
+        self.issues_list.add_issue.connect(self._new_issue)
+        self.issues_list.scan.connect(self._start_scan)
+        self.issues_list.back.connect(self.show_home)
+
+        self.issue_detail.save.connect(self._save_issue)
+        self.issue_detail.repair.connect(self._repair_issue)
+        self.issue_detail.discuss.connect(self._discuss_issue)
+        self.issue_detail.close_issue.connect(self._close_issue)
+        self.issue_detail.reopen.connect(self._reopen_issue)
+        self.issue_detail.remove.connect(self._remove_issue)
+        self.issue_detail.back.connect(self.show_issues)
+
+        self.scan_check.add_selected.connect(self._scan_accept)
+        self.scan_check.discard.connect(self._scan_discard)
 
         self.projects.open_project.connect(self._open_project)
         self.projects.remove_project.connect(self._remove_project)
@@ -249,8 +280,10 @@ class MainWindow(QMainWindow):
 
     def show_home(self) -> None:
         self._set_run_footer(False)
+        self._pending_issue_link = ""
         summary = self.controller.resumable_run()
         self.home.set_resumable(summary)
+        self.home.set_issue_count(self.controller.issues.open_count())
         self.show_screen("home")
 
     def show_history(self) -> None:
@@ -348,6 +381,223 @@ class MainWindow(QMainWindow):
         self.toast(text("projects.removed", name=path.name))
         self.show_projects()
 
+    # ----- issues -----
+
+    def show_issues(self) -> None:
+        self.issues_list.show_issues(self.controller.issues.load())
+        self._set_run_footer(False)
+        self.show_screen("issues")
+
+    def _open_issue(self, issue_id: str) -> None:
+        try:
+            issue = self.controller.issues.get(issue_id)
+        except MaintainError as exc:
+            self.toast(str(exc))
+            return
+        self.issue_detail.load(issue)
+        self.show_screen("issue")
+
+    def _new_issue(self) -> None:
+        self.issue_detail.load(None)
+        self.show_screen("issue")
+
+    def _save_issue(self) -> None:
+        title = self.issue_detail.title_edit.text().strip()
+        if not title:
+            self.issue_detail.message.set_state("bad", text("issue.title.empty"))
+            return
+        detail = self.issue_detail.detail_edit.toPlainText()
+        severity = self.issue_detail.severity()
+        store = self.controller.issues
+        try:
+            if self.issue_detail.issue_id:
+                issue = store.update(self.issue_detail.issue_id, title=title,
+                                     detail=detail, severity=severity)
+            else:
+                issue = store.add(title=title, detail=detail, severity=severity)
+        except MaintainError as exc:
+            self.show_error(str(exc))
+            return
+        self.issue_detail.load(issue)
+        self.toast(text("issue.saved"))
+
+    def _close_issue(self, issue_id: str) -> None:
+        labels = [text("issues.reason." + reason) for reason in REASONS]
+        chosen = self.ask_choice(text("issue.close.title", id=issue_id),
+                                 text("issue.close.body"), labels)
+        if chosen is None:
+            return
+        reason = REASONS[labels.index(chosen)]
+        self.controller.issues.close(issue_id, reason)
+        self.toast(text("issue.closed", id=issue_id))
+        self.show_issues()
+
+    def _reopen_issue(self, issue_id: str) -> None:
+        self.controller.issues.reopen(issue_id)
+        self.toast(text("issue.reopened", id=issue_id))
+        self._open_issue(issue_id)
+
+    def _remove_issue(self, issue_id: str) -> None:
+        if not self.ask_confirm(text("issue.remove.title", id=issue_id),
+                                text("issue.remove.body"),
+                                text("issue.remove"), text("stop.no")):
+            return
+        self.controller.issues.delete(issue_id)
+        self.toast(text("issue.removed", id=issue_id))
+        self.show_issues()
+
+    def _repair_issue(self, issue_id: str) -> None:
+        if self.controller.busy:
+            self.toast(text("issues.busy"))
+            return
+        try:
+            issue = self.controller.issues.get(issue_id)
+        except MaintainError as exc:
+            self.toast(str(exc))
+            return
+        self._new_change("issue")
+        parts = [issue.title]
+        if issue.detail.strip():
+            parts.append(issue.detail.strip())
+        if issue.file:
+            parts.append(f"Location: {issue.file}:{issue.line}")
+        if issue.snippet.strip():
+            parts.append(f"The cited code: {issue.snippet.strip()}")
+        self.describe.request_edit.setPlainText("\n\n".join(parts))
+        self._pending_issue_link = issue_id
+
+    # ----- scan and discuss (run-less packet loops) -----
+
+    def _start_scan(self) -> None:
+        if self.controller.busy:
+            self.toast(text("issues.busy"))
+            return
+        focus = self.ask_note(text("scan.ask.title"), text("scan.ask.body"),
+                              allow_empty=True)
+        if focus is None:
+            return
+        config = self.store.config
+        known = [issue for issue in self.controller.issues.load()
+                 if issue.status != CLOSED]
+        try:
+            request = scan_request(config, focus, known)
+            exchange = SideExchange(
+                kind="scan", request=request,
+                directory=side_packet_dir(config, request.run_id))
+            packet = build_side_packet(exchange, config, [])
+        except MaintainError as exc:
+            self.show_error(str(exc))
+            return
+        self._show_side(exchange, packet)
+
+    def _discuss_issue(self, issue_id: str) -> None:
+        if self.controller.busy:
+            self.toast(text("issues.busy"))
+            return
+        try:
+            issue = self.controller.issues.get(issue_id)
+        except MaintainError as exc:
+            self.toast(str(exc))
+            return
+        question = self.ask_note(text("discuss.ask.title"),
+                                 text("discuss.ask.body"))
+        if question is None:
+            return
+        self.controller.issues.add_note(issue_id, "you", question)
+        config = self.store.config
+        try:
+            request = discuss_request(config, issue, question)
+            exchange = SideExchange(
+                kind="discuss", request=request,
+                directory=side_packet_dir(config, request.run_id),
+                issue_id=issue_id)
+            packet = build_side_packet(exchange, config, [])
+        except MaintainError as exc:
+            self.show_error(str(exc))
+            return
+        self._show_side(exchange, packet)
+
+    def _show_side(self, exchange: SideExchange, packet) -> None:
+        handoff = PacketHandoff(request=exchange.request, packet=packet,
+                                reply_kind="json")
+        self._side = {"exchange": exchange, "attachments": [],
+                      "handoff": handoff}
+        self.current_handoff = handoff
+        self.stage_header.setVisible(False)
+        self._set_run_footer(True, exchange.request.run_id)
+        self.foot_history.setVisible(False)
+        self.foot_label.setText(exchange.request.run_id)
+        self.send.show_handoff(handoff, [],
+                               documents_count(self.store, exchange.kind))
+        self.receive.show_handoff(handoff)
+        self.show_screen("send")
+
+    def _end_side(self) -> None:
+        self._side = None
+        self._set_run_footer(False)
+
+    def _side_reply(self, reply) -> None:
+        side = self._side
+        exchange: SideExchange = side["exchange"]
+        try:
+            response = parse_response(reply.text, exchange.request, "manual")
+            if exchange.kind == "scan":
+                candidates = scan_candidates(response.content,
+                                             self.store.config.repository)
+            else:
+                parsed = discuss_reply(response.content)
+        except MaintainError as exc:
+            self.receive.status.set_state("bad", str(exc))
+            return
+        if exchange.kind == "scan":
+            known = self.controller.issues.known_fingerprints()
+            fresh = [item for item in candidates
+                     if item.fingerprint not in known]
+            dropped = len(candidates) - len(fresh)
+            if not fresh:
+                self._end_side()
+                self.toast(text("scan.check.known", count=dropped)
+                           if dropped else text("scan.added", count=0))
+                self.show_issues()
+                return
+            side["candidates"] = fresh
+            side["run_id"] = exchange.request.run_id
+            self.scan_check.show_candidates(fresh, dropped)
+            self.show_screen("scan-check")
+            return
+        issue_id = exchange.issue_id
+        store = self.controller.issues
+        store.add_note(issue_id, "copilot", parsed.reply)
+        if parsed.severity:
+            issue = store.get(issue_id)
+            if (parsed.severity != issue.severity
+                    and self.ask_confirm(
+                        text("discuss.severity.title"),
+                        text("discuss.severity.body",
+                             severity=text("issues.severity." + parsed.severity)),
+                        text("discuss.severity.yes"), text("stop.no"))):
+                store.update(issue_id, severity=parsed.severity,
+                             actor="copilot")
+        self._end_side()
+        self.toast(text("discuss.applied"))
+        self._open_issue(issue_id)
+
+    def _scan_accept(self, indexes: list) -> None:
+        side = self._side or {}
+        candidates = side.get("candidates", [])
+        chosen = [candidates[index] for index in indexes
+                  if 0 <= index < len(candidates)]
+        result = self.controller.issues.capture(
+            chosen, source="scan", run_id=side.get("run_id", ""))
+        self._end_side()
+        self.toast(text("scan.added", count=len(result.touched)))
+        self.show_issues()
+
+    def _scan_discard(self) -> None:
+        self._end_side()
+        self.toast(text("scan.discarded"))
+        self.show_issues()
+
     def _set_stage(self, index: int) -> None:
         self.stage_header.setVisible(True)
         self.stage_header.set_stage(index)
@@ -399,6 +649,11 @@ class MainWindow(QMainWindow):
 
     def _packet_ready(self, handoff: PacketHandoff) -> None:
         self.current_handoff = handoff
+        if self._pending_issue_link:
+            self.controller.issues.link_run(self._pending_issue_link,
+                                            handoff.request.run_id)
+            self.controller.issues.set_in_work(self._pending_issue_link)
+            self._pending_issue_link = ""
         self._set_run_footer(True, handoff.request.run_id)
         self._set_stage(STAGE_FOR_TASK[handoff.task_key])
         self.send.show_handoff(handoff, self._packet_names(),
@@ -407,14 +662,23 @@ class MainWindow(QMainWindow):
         self.show_screen("send")
 
     def _packet_names(self) -> list[str]:
+        if self._side is not None:
+            return [Path(item).name for item in self._side["attachments"]]
         return [Path(item).name for item in
                 (*self.controller.run_attachments, *self.controller.packet_extras)]
 
     def _add_packet_files(self, paths: list) -> None:
-        self.controller.packet_extras.extend(Path(item) for item in paths)
+        if self._side is not None:
+            self._side["attachments"].extend(Path(item) for item in paths)
+        else:
+            self.controller.packet_extras.extend(Path(item) for item in paths)
         self._rebuild_packet()
 
     def _remove_packet_file(self, index: int) -> None:
+        if self._side is not None:
+            del self._side["attachments"][index]
+            self._rebuild_packet()
+            return
         run_count = len(self.controller.run_attachments)
         if index < run_count:
             del self.controller.run_attachments[index]
@@ -431,7 +695,16 @@ class MainWindow(QMainWindow):
         if self.current_handoff is None:
             return
         try:
-            self.controller.rebuild_packet(self.current_handoff)
+            if self._side is not None:
+                exchange: SideExchange = self._side["exchange"]
+                packet = build_side_packet(exchange, self.store.config,
+                                           self._side["attachments"])
+                handoff = PacketHandoff(request=exchange.request,
+                                        packet=packet, reply_kind="json")
+                self._side["handoff"] = handoff
+                self.current_handoff = handoff
+            else:
+                self.controller.rebuild_packet(self.current_handoff)
         except MaintainError as exc:
             self.toast(str(exc))
             return
@@ -454,6 +727,9 @@ class MainWindow(QMainWindow):
             self.receive.check(path=paths[0])
 
     def _reply_submitted(self, reply) -> None:
+        if self._side is not None:
+            self._side_reply(reply)
+            return
         self.controller.answer_reply(reply)
         self.busy.show_message(text("working.busy"))
         self.show_screen("busy")
@@ -622,6 +898,17 @@ class MainWindow(QMainWindow):
     # ----- stop -----
 
     def _stop_run(self) -> None:
+        if self._side is not None:
+            kind = self._side["exchange"].kind
+            issue_id = self._side["exchange"].issue_id
+            self._end_side()
+            self.toast(text("scan.discarded" if kind == "scan"
+                            else "discuss.discarded"))
+            if kind == "discuss" and issue_id:
+                self._open_issue(issue_id)
+            else:
+                self.show_issues()
+            return
         if not self.ask_confirm(text("stop.title"), text("stop.body"),
                                 text("stop.yes"), text("stop.no")):
             return
@@ -716,9 +1003,18 @@ class MainWindow(QMainWindow):
 
     # ----- dialogs (overridable in tests) -----
 
-    def ask_note(self, title: str, body: str) -> str | None:
+    def ask_note(self, title: str, body: str,
+                 allow_empty: bool = False) -> str | None:
         value, accepted = QInputDialog.getMultiLineText(self, title, body)
         value = value.strip()
+        if not accepted:
+            return None
+        return value if value or allow_empty else None
+
+    def ask_choice(self, title: str, body: str,
+                   options: list[str]) -> str | None:
+        value, accepted = QInputDialog.getItem(self, title, body, options,
+                                               0, False)
         return value if accepted and value else None
 
     def ask_confirm(self, title: str, body: str, yes: str, no: str) -> bool:

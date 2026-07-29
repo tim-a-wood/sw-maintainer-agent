@@ -7,8 +7,8 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QPlainTextEdit, QPushButton,
+from PySide6.QtWidgets import (QCheckBox, QFrame, QGridLayout, QHBoxLayout,
+                               QLabel, QLineEdit, QPlainTextEdit, QPushButton,
                                QRadioButton, QScrollArea, QSpinBox,
                                QVBoxLayout, QWidget)
 
@@ -28,9 +28,19 @@ from .widgets import (ChoiceButton, DiffHighlighter, DropZone, ElidedLabel,
                       palette, run_state_chip)
 
 TASK_TITLES = {"plan": "send.plan.title", "build": "send.build.title",
-               "repair": "send.repair.title", "review": "send.review.title"}
+               "repair": "send.repair.title", "review": "send.review.title",
+               "scan": "send.scan.title", "discuss": "send.discuss.title"}
 TASK_STEPS = {"plan": "STEP 1 OF 5 — PLAN", "build": "STEP 2 OF 5 — BUILD",
-              "repair": "STEP 2 OF 5 — BUILD", "review": "STEP 3 OF 5 — REVIEW"}
+              "repair": "STEP 2 OF 5 — BUILD", "review": "STEP 3 OF 5 — REVIEW",
+              "scan": "ISSUE SCAN", "discuss": "ISSUE DISCUSSION"}
+
+SEVERITY_CHIPS = {"high": ("issues.severity.high", "fail"),
+                  "medium": ("issues.severity.medium", "warn"),
+                  "low": ("issues.severity.low", "wait")}
+SEVERITY_ICON_KINDS = {"high": "bad", "medium": "warn", "low": "neutral"}
+ISSUE_STATUS_CHIPS = {"open": ("issues.status.open", "accent"),
+                      "in_work": ("issues.status.in_work", "warn"),
+                      "closed": ("issues.status.closed", "wait")}
 
 
 class Screen(QWidget):
@@ -87,6 +97,7 @@ class HomeScreen(Screen):
     open_history = Signal()
     open_settings = Signal()
     open_projects = Signal()
+    open_issues = Signal()
     continue_run = Signal(str)   # run_id
 
     def __init__(self, project_name: str, project_path: str) -> None:
@@ -99,11 +110,14 @@ class HomeScreen(Screen):
         self._continue.clicked.connect(self._emit_continue)
         self._continue_run_id = ""
         self.add(self._continue)
+        self._issues_card: ChoiceButton | None = None
         for index, (icon, title_key, sub_key, slot) in enumerate((
                 ("plus", "home.change", "home.change.sub",
                  lambda: self.new_change.emit("feature")),
                 ("wrench", "home.fault", "home.fault.sub",
                  lambda: self.new_change.emit("issue")),
+                ("bug", "home.issues", "home.issues.sub.none",
+                 self.open_issues.emit),
                 ("history", "home.history", "home.history.sub",
                  self.open_history.emit),
                 ("folder", "home.projects", "home.projects.sub",
@@ -115,6 +129,15 @@ class HomeScreen(Screen):
             card = ChoiceButton(icon, text(title_key), text(sub_key))
             card.clicked.connect(slot)
             self.add(card)
+            if title_key == "home.issues":
+                self._issues_card = card
+
+    def set_issue_count(self, count: int) -> None:
+        if self._issues_card is None:
+            return
+        sub = (text("home.issues.sub.count", count=count) if count
+               else text("home.issues.sub.none"))
+        self._issues_card.set_texts(text("home.issues"), sub)
 
     def set_resumable(self, summary: RunSummary | None, stage_name: str = "") -> None:
         if summary is None:
@@ -800,6 +823,337 @@ class ProjectsScreen(Screen):
             self._rows.addWidget(widget)
 
 
+class IssueRowWidget(QFrame):
+    clicked = Signal()
+
+    def __init__(self, issue) -> None:
+        super().__init__()
+        self.setObjectName("Choice")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(13, 11, 15, 11)
+        row.setSpacing(12)
+        row.addWidget(IconSquare(
+            "bug", kind=SEVERITY_ICON_KINDS.get(issue.severity, "neutral"),
+            size=34, icon_size=18))
+        column = QVBoxLayout()
+        column.setSpacing(1)
+        title = QLabel(issue.title)
+        title.setObjectName("ChoiceTitle")
+        source = text("issues.source." + issue.source)
+        place = f"{issue.file}:{issue.line}" if issue.file else issue.id
+        sub = ElidedLabel(f"{source} · {place}", "MonoHint")
+        column.addWidget(title)
+        column.addWidget(sub)
+        row.addLayout(column, 1)
+        severity_key, severity_kind = SEVERITY_CHIPS.get(
+            issue.severity, SEVERITY_CHIPS["low"])
+        row.addWidget(StateChip(text(severity_key).upper(), severity_kind))
+        status_key, status_kind = ISSUE_STATUS_CHIPS.get(
+            issue.status, ISSUE_STATUS_CHIPS["open"])
+        row.addWidget(StateChip(text(status_key).upper(), status_kind))
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.clicked.emit()
+            return
+        super().keyPressEvent(event)
+
+
+class IssuesScreen(Screen):
+    open_issue = Signal(str)
+    add_issue = Signal()
+    scan = Signal()
+    back = Signal()
+
+    FILTERS = ("all", "open", "in_work", "closed")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.add(label(text("issues.title"), "Title"))
+        self._filter = "open"
+        self._issues: list = []
+        tabs = QHBoxLayout()
+        tabs.setSpacing(6)
+        holder = QWidget()
+        holder.setLayout(tabs)
+        self._tab_buttons: dict[str, QPushButton] = {}
+        for key in self.FILTERS:
+            control = button(text("issues.filter." + key), "Secondary",
+                             lambda k=key: self.set_filter(k))
+            control.setStyleSheet("padding: 5px 13px; font-size: 12px;")
+            tabs.addWidget(control)
+            self._tab_buttons[key] = control
+        tabs.addStretch(1)
+        self.add(holder)
+        self._rows = QVBoxLayout()
+        self._rows.setSpacing(9)
+        rows_holder = QWidget()
+        rows_holder.setLayout(self._rows)
+        self.add(rows_holder)
+        self.empty = label(text("issues.empty"), "Lead")
+        self.add(self.empty)
+        self.add_gap(2)
+        self.add_row(
+            button(text("issues.scan"), "Primary", self.scan.emit),
+            button(text("issues.add"), "Secondary", self.add_issue.emit))
+        self.add_gap()
+        self.add_row(button(text("history.back"), "Ghost", self.back.emit))
+
+    def set_filter(self, key: str) -> None:
+        self._filter = key
+        self._render()
+
+    def show_issues(self, issues: list) -> None:
+        self._issues = list(issues)
+        self._render()
+
+    def _matches(self, issue) -> bool:
+        return self._filter == "all" or issue.status == self._filter
+
+    def _render(self) -> None:
+        for key, control in self._tab_buttons.items():
+            control.setObjectName("Primary" if key == self._filter
+                                  else "Secondary")
+            control.style().unpolish(control)
+            control.style().polish(control)
+        self.clear_layout(self._rows)
+        shown = [issue for issue in self._issues if self._matches(issue)]
+        self.empty.setVisible(not shown)
+        for issue in shown:
+            row = IssueRowWidget(issue)
+            row.clicked.connect(
+                lambda issue_id=issue.id: self.open_issue.emit(issue_id))
+            self._rows.addWidget(row)
+
+
+class IssueDetailScreen(Screen):
+    save = Signal()
+    repair = Signal(str)
+    discuss = Signal(str)
+    close_issue = Signal(str)
+    reopen = Signal(str)
+    remove = Signal(str)
+    back = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.issue_id = ""
+        self.eyebrow = label("", "Eyebrow")
+        self.add(self.eyebrow)
+        head = QHBoxLayout()
+        head.setSpacing(9)
+        self.status_chip = StateChip("", "wait")
+        self.severity_chip = StateChip("", "wait")
+        head.addWidget(self.severity_chip)
+        head.addWidget(self.status_chip)
+        head.addStretch(1)
+        head_holder = QWidget()
+        head_holder.setLayout(head)
+        self.add(head_holder)
+        self.add(label(text("issue.field.title").upper(), "Eyebrow"))
+        self.title_edit = QLineEdit()
+        self.add(self.title_edit)
+        self.add(label(text("issue.field.severity").upper(), "Eyebrow"))
+        radios = QHBoxLayout()
+        radios.setSpacing(14)
+        self.radio_high = QRadioButton(text("issues.severity.high"))
+        self.radio_medium = QRadioButton(text("issues.severity.medium"))
+        self.radio_low = QRadioButton(text("issues.severity.low"))
+        for control in (self.radio_high, self.radio_medium, self.radio_low):
+            radios.addWidget(control)
+        radios.addStretch(1)
+        radio_holder = QWidget()
+        radio_holder.setLayout(radios)
+        self.add(radio_holder)
+        self.add(label(text("issue.field.detail").upper(), "Eyebrow"))
+        self.detail_edit = QPlainTextEdit()
+        self.detail_edit.setFixedHeight(110)
+        self.add(self.detail_edit)
+        self.location = label("", "MonoHint")
+        self.add(self.location)
+        self.snippet_view = QPlainTextEdit()
+        self.snippet_view.setObjectName("Code")
+        self.snippet_view.setReadOnly(True)
+        self.snippet_view.setFixedHeight(64)
+        self.add(self.snippet_view)
+        self.notes_title = label(text("issue.notes").upper(), "Eyebrow")
+        self.add(self.notes_title)
+        self._notes = QVBoxLayout()
+        self._notes.setSpacing(7)
+        notes_holder = QWidget()
+        notes_holder.setLayout(self._notes)
+        self.add(notes_holder)
+        self.message = StatusLine()
+        self.add(self.message)
+        self.add_gap(2)
+        self.add_row(
+            button(text("issue.save"), "Primary", self.save.emit),
+            button(text("history.back"), "Ghost", self.back.emit))
+        self.repair_button = button(text("issue.repair"), "Secondary",
+                                    lambda: self.repair.emit(self.issue_id))
+        self.discuss_button = button(text("issue.discuss"), "Secondary",
+                                     lambda: self.discuss.emit(self.issue_id))
+        self.add_row(self.repair_button, self.discuss_button)
+        self.repair_hint = label(text("issue.repair.sub"), "Hint")
+        self.add(self.repair_hint)
+        self.close_button = button(text("issue.close"), "Secondary",
+                                   lambda: self.close_issue.emit(self.issue_id))
+        self.reopen_button = button(text("issue.reopen"), "Secondary",
+                                    lambda: self.reopen.emit(self.issue_id))
+        self.remove_button = button(text("issue.remove"), "Danger",
+                                    lambda: self.remove.emit(self.issue_id))
+        self.add_row(self.close_button, self.reopen_button, self.remove_button)
+
+    def severity(self) -> str:
+        if self.radio_high.isChecked():
+            return "high"
+        if self.radio_low.isChecked():
+            return "low"
+        return "medium"
+
+    def load(self, issue) -> None:
+        """issue=None starts a new, human-entered issue."""
+        existing = issue is not None
+        self.issue_id = issue.id if existing else ""
+        self.message.set_state("plain", "")
+        if existing:
+            source = text("issues.source." + issue.source)
+            self.eyebrow.setText(
+                text("issue.eyebrow", id=issue.id, source=source).upper())
+            severity_key, severity_kind = SEVERITY_CHIPS.get(
+                issue.severity, SEVERITY_CHIPS["low"])
+            self.severity_chip.set_state(text(severity_key).upper(),
+                                         severity_kind)
+            if issue.status == "closed":
+                reason = text("issues.reason." + issue.closed_reason)
+                self.status_chip.set_state(reason.upper(), "wait")
+            else:
+                status_key, status_kind = ISSUE_STATUS_CHIPS[issue.status]
+                self.status_chip.set_state(text(status_key).upper(),
+                                           status_kind)
+        else:
+            self.eyebrow.setText(text("issue.new.title").upper())
+            self.severity_chip.set_state("", "wait")
+            self.status_chip.set_state("", "wait")
+        self.severity_chip.setVisible(existing)
+        self.status_chip.setVisible(existing)
+        self.title_edit.setText(issue.title if existing else "")
+        self.detail_edit.setPlainText(issue.detail if existing else "")
+        severity = issue.severity if existing else "medium"
+        {"high": self.radio_high, "medium": self.radio_medium,
+         "low": self.radio_low}[severity].setChecked(True)
+        place = (f"{issue.file}:{issue.line}" if existing and issue.file else "")
+        self.location.setText(
+            f"{text('issue.location')}: {place}" if place else "")
+        self.location.setVisible(bool(place))
+        snippet = issue.snippet if existing else ""
+        self.snippet_view.setPlainText(snippet)
+        self.snippet_view.setVisible(bool(snippet.strip()))
+        self.clear_layout(self._notes)
+        notes = list(issue.notes) if existing else []
+        self.notes_title.setVisible(bool(notes))
+        for note in notes:
+            card = QFrame()
+            card.setObjectName("Card")
+            box = QVBoxLayout(card)
+            box.setContentsMargins(12, 9, 12, 9)
+            box.setSpacing(2)
+            stamp = str(note.get("time", ""))[:16].replace("T", " ")
+            box.addWidget(label(f"{note.get('author', '')} · {stamp}", "Hint"))
+            body = label(str(note.get("text", "")))
+            box.addWidget(body)
+            self._notes.addWidget(card)
+        closed = existing and issue.status == "closed"
+        self.repair_button.setVisible(existing and not closed)
+        self.discuss_button.setVisible(existing and not closed)
+        self.repair_hint.setVisible(existing and not closed)
+        self.close_button.setVisible(existing and not closed)
+        self.reopen_button.setVisible(closed)
+        self.remove_button.setVisible(existing)
+
+
+class ScanCheckScreen(Screen):
+    add_selected = Signal(list)   # indexes into the shown candidates
+    discard = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.add(label("ISSUE SCAN", "Eyebrow"))
+        self.title = label("", "Title")
+        self.add(self.title)
+        self.known = label("", "Hint")
+        self.add(self.known)
+        self._rows = QVBoxLayout()
+        self._rows.setSpacing(9)
+        holder = QWidget()
+        holder.setLayout(self._rows)
+        self.add(holder)
+        self.message = StatusLine()
+        self.add(self.message)
+        self.add_gap()
+        self.add_row(
+            button(text("scan.check.add"), "Primary", self._add),
+            button(text("scan.discard"), "Ghost", self.discard.emit))
+        self._boxes: list[QCheckBox] = []
+
+    def show_candidates(self, candidates: list, known_dropped: int) -> None:
+        self.title.setText(
+            text("scan.check.title.one") if len(candidates) == 1
+            else text("scan.check.title.many", count=len(candidates)))
+        self.known.setText(
+            text("scan.check.known", count=known_dropped) if known_dropped
+            else "")
+        self.known.setVisible(bool(known_dropped))
+        self.message.set_state("plain", "")
+        self.clear_layout(self._rows)
+        self._boxes = []
+        for candidate in candidates:
+            card = QFrame()
+            card.setObjectName("Card")
+            row = QHBoxLayout(card)
+            row.setContentsMargins(12, 10, 12, 10)
+            row.setSpacing(10)
+            box = QCheckBox()
+            box.setChecked(candidate.verified)
+            row.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
+            column = QVBoxLayout()
+            column.setSpacing(2)
+            title = QLabel(candidate.title)
+            title.setObjectName("ChoiceTitle")
+            title.setWordWrap(True)
+            column.addWidget(title)
+            place = (f"{candidate.file}:{candidate.line}" if candidate.file
+                     else "")
+            if place:
+                column.addWidget(ElidedLabel(place, "MonoHint"))
+            if candidate.detail:
+                column.addWidget(label(candidate.detail, "Dim"))
+            if not candidate.verified:
+                column.addWidget(label(text("scan.check.unverified"), "Bad"))
+            row.addLayout(column, 1)
+            severity_key, severity_kind = SEVERITY_CHIPS.get(
+                candidate.severity, SEVERITY_CHIPS["low"])
+            row.addWidget(StateChip(text(severity_key).upper(), severity_kind),
+                          0, Qt.AlignmentFlag.AlignTop)
+            self._rows.addWidget(card)
+            self._boxes.append(box)
+
+    def _add(self) -> None:
+        selected = [index for index, box in enumerate(self._boxes)
+                    if box.isChecked()]
+        if not selected:
+            self.message.set_state("bad", text("scan.check.none"))
+            return
+        self.add_selected.emit(selected)
+
+
 class HistoryScreen(Screen):
     open_run = Signal(str)
     back = Signal()
@@ -1026,7 +1380,8 @@ class TasksPage(Screen):
         holder = QWidget()
         holder.setLayout(tabs)
         self._tab_buttons: dict[str, QPushButton] = {}
-        for key in ("project", "plan", "build", "repair", "review"):
+        for key in ("project", "plan", "build", "repair", "review", "scan",
+                    "discuss"):
             name = text("tasks.project") if key == "project" else key.capitalize()
             control = button(name, "Secondary", lambda k=key: self.set_tab(k))
             control.setStyleSheet("padding: 5px 13px; font-size: 12px;")

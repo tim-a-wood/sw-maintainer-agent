@@ -348,6 +348,161 @@ def test_projects_screen_lists_creates_switches_and_removes(
     assert created.is_dir()
 
 
+def test_issue_crud_from_the_screens(qt_app, tmp_path, monkeypatch):
+    from maintain.ui.strings import text as ui_text
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.ask_confirm = lambda *args, **kwargs: True
+
+    window.home.open_issues.emit()
+    assert _screen(window) == "issues"
+    assert window.issues_list.empty.isVisibleTo(window.issues_list)
+
+    # Add: empty title refuses, a titled issue saves.
+    window._new_issue()
+    assert _screen(window) == "issue"
+    window._save_issue()
+    assert window.issue_detail.message.text() == ui_text("issue.title.empty")
+    window.issue_detail.title_edit.setText("The loader accepts bad speeds")
+    window.issue_detail.radio_high.setChecked(True)
+    window.issue_detail.detail_edit.setPlainText("Reject speeds below zero.")
+    window._save_issue()
+    issue = window.controller.issues.load()[0]
+    assert issue.severity == "high" and issue.source == "human"
+    assert window.issue_detail.issue_id == issue.id
+
+    # The home card counts the open issue.
+    window.show_home()
+    assert "1" in window.home._issues_card.sub_label.text()
+
+    # Close with a reason, reopen, then remove for good.
+    window.ask_choice = lambda title, body, options: options[1]  # wont_fix
+    window._close_issue(issue.id)
+    closed = window.controller.issues.get(issue.id)
+    assert closed.status == "closed" and closed.closed_reason == "wont_fix"
+    window._reopen_issue(issue.id)
+    assert window.controller.issues.get(issue.id).status == "open"
+    window._remove_issue(issue.id)
+    assert window.controller.issues.load() == []
+
+
+def test_repair_bridge_prefills_and_links_the_run(qt_app, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    issue = window.controller.issues.add(
+        title="The value is wrong", detail="It must be after.",
+        file="app.py", line=1, snippet='VALUE = "before"')
+
+    window._repair_issue(issue.id)
+    assert _screen(window) == "describe"
+    described = window.describe.request_edit.toPlainText()
+    assert "The value is wrong" in described and "app.py:1" in described
+    assert window.describe.mode == "issue"
+
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "send", message="scan packet")
+    linked = window.controller.issues.get(issue.id)
+    assert window.current_handoff.request.run_id in linked.runs
+    assert linked.status == "in_work"
+    window.controller.stop()
+    wait_until(qt_app, lambda: not window.controller.busy, message="paused")
+
+
+def _side_envelope(window, content: dict) -> str:
+    request = window._side["exchange"].request
+    return json.dumps({
+        "schema_version": 1, "run_id": request.run_id,
+        "task_id": request.task_id, "role": request.role,
+        "conversation_id": "chat-side", "content": content})
+
+
+def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.ask_note = lambda *args, **kwargs: "look at app.py"
+    toasts: list[str] = []
+    window.toast = toasts.append
+
+    window._start_scan()
+    assert _screen(window) == "send"
+    assert window._side is not None
+    assert window.current_handoff.task_key == "scan"
+    with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
+        assert {"TASK.md", "GLOBAL.md", "CODEBASE.md"} <= set(archive.namelist())
+
+    # A dragged reference file lands in the packet.
+    sheet = tmp_path / "tracker.csv"
+    sheet.write_text("ref,summary\nT-9,Old fault\n", encoding="utf-8")
+    window._add_packet_files([sheet])
+    with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
+        assert "attachments/tracker.csv" in set(archive.namelist())
+
+    window.send.continue_button.setEnabled(True)
+    window.send.continue_clicked.emit()
+    assert _screen(window) == "receive"
+    reply = _side_envelope(window, {"issues": [
+        {"title": "The value is wrong", "severity": "high", "file": "app.py",
+         "line": 1, "snippet": 'VALUE = "before"',
+         "detail": "It must be after.", "external_ref": "T-9"},
+        {"title": "Invented point", "severity": "low", "file": "app.py",
+         "line": 2, "snippet": "not_in_the_file()", "detail": ""},
+    ]})
+    window.receive.check(clipboard_text=reply)
+    assert _screen(window) == "scan-check"
+    boxes = window.scan_check._boxes
+    assert len(boxes) == 2
+    assert boxes[0].isChecked() and not boxes[1].isChecked()
+
+    window._scan_accept([0])
+    assert _screen(window) == "issues"
+    issues = window.controller.issues.load()
+    assert len(issues) == 1 and issues[0].source == "scan"
+    assert issues[0].external_ref == "T-9"
+
+    # The same finding again is dropped before the gate.
+    window._start_scan()
+    window.send.continue_button.setEnabled(True)
+    window.send.continue_clicked.emit()
+    reply = _side_envelope(window, {"issues": [
+        {"title": "The value is wrong again", "severity": "high",
+         "file": "app.py", "line": 1, "snippet": 'VALUE = "before"',
+         "detail": ""}]})
+    window.receive.check(clipboard_text=reply)
+    assert _screen(window) == "issues"
+    assert len(window.controller.issues.load()) == 1
+    assert any("1" in item for item in toasts)
+
+
+def test_discuss_flow_notes_and_severity_confirm(qt_app, tmp_path, monkeypatch):
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.ask_note = lambda *args, **kwargs: "Is medium right?"
+    window.ask_confirm = lambda *args, **kwargs: True
+    issue = window.controller.issues.add(
+        title="The bound is wrong", severity="medium",
+        file="app.py", line=1, snippet='VALUE = "before"')
+
+    window._discuss_issue(issue.id)
+    assert _screen(window) == "send"
+    assert window.current_handoff.task_key == "discuss"
+    window.send.continue_button.setEnabled(True)
+    window.send.continue_clicked.emit()
+    reply = _side_envelope(window, {
+        "reply": "No. The bound loses data, so high is right.",
+        "severity": "high"})
+    window.receive.check(clipboard_text=reply)
+
+    assert _screen(window) == "issue"
+    final = window.controller.issues.get(issue.id)
+    assert [note["author"] for note in final.notes] == ["you", "copilot"]
+    assert final.severity == "high"
+    assert window._side is None
+
+
 def test_stop_pauses_and_home_offers_continue(qt_app, tmp_path, monkeypatch):
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)

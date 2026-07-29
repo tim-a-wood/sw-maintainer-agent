@@ -169,6 +169,18 @@ def _task_markdown(
             "`content.findings` as a list. Each finding must contain `severity`, `file`, `line`, "
             "`evidence`, and `remediation`. Use an empty list when there are no findings."
         ),
+        "scan": (
+            "Return `content.issues` as a list. Each issue must contain `title`, `severity` "
+            "(`high`, `medium`, or `low`), `file`, `line`, `snippet`, and `detail`; `snippet` "
+            "must quote the offending code verbatim from the supplied content. Carry a "
+            "spreadsheet row reference in `external_ref` when one applies. Skip everything in "
+            "`known_issues`. Use an empty list when there is nothing to report."
+        ),
+        "discuss": (
+            "Return `content.reply` as plain text that answers the question about the one "
+            "issue in the payload. Optionally return `content.severity` (`high`, `medium`, or "
+            "`low`) when the evidence justifies a change. Do not return code changes."
+        ),
     }.get(request.role, "Return a concise factual result in `content`.")
     examples: dict[str, dict[str, Any]] = {
         "scope": {
@@ -193,6 +205,20 @@ def _task_markdown(
         "review": {
             "decision": "approve",
             "findings": [],
+        },
+        "scan": {
+            "issues": [{
+                "title": "One-line problem statement",
+                "severity": "medium",
+                "file": "exact/repository/path",
+                "line": 1,
+                "snippet": "the offending code, quoted verbatim",
+                "detail": "What is wrong and why it matters",
+                "external_ref": "",
+            }],
+        },
+        "discuss": {
+            "reply": "The grounded answer to the question.",
         },
     }
     if request.role == "implement" and request.payload.get("mode") == "issue":

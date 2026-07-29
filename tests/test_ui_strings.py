@@ -57,7 +57,8 @@ def test_placeholders_format_cleanly():
     samples = {"run": "0143", "stage": "Build", "count": 3, "files": "a.py",
                "text": "Done", "branch": "maintain/x", "name": "a.zip",
                "link": "https://x", "task": "build", "n": 2, "label": "Plan",
-               "state": "saved"}
+               "state": "saved", "id": "a3f2c1", "severity": "high",
+               "source": "review"}
     for key, value in STR.items():
         names = set(re.findall(r"\{([a-z_]+)\}", value))
         arguments = {name: samples[name] for name in names}

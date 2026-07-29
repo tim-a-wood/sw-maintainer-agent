@@ -83,12 +83,13 @@ def _provider_step(role: str, provider_label: str) -> tuple[str, str]:
 class WorkflowEngine:
     def __init__(self, config: ProjectConfig, presenter: Presenter | None = None,
                  provider_builder=build_provider, transition_hook=None,
-                 gates: WorkflowGates | None = None) -> None:
+                 gates: WorkflowGates | None = None, issues=None) -> None:
         self.config = config
         self.presenter = presenter or Presenter()
         self.provider_builder = provider_builder
         self.transition_hook = transition_hook
         self.gates = gates or WorkflowGates()
+        self.issues = issues
         self.workspaces = WorkspaceManager(config.repository,
                                            config.runtime_root.parent / "workspaces",
                                            (".maintain.json",))
@@ -1052,6 +1053,7 @@ class WorkflowEngine:
         self._finish_exchange(record, store)
         record.evidence["review"] = {"decision": decision, "findings": findings,
                                      "tree_hash": diff.tree_hash}
+        self._capture_review_issues(record, findings)
         artifact = store.write_artifact(
             f"{self._attempt_dir(record, task['id'])}/review.json", record.evidence["review"])
         self._move(record, store, RunState.TESTING if decision == "approve" else RunState.CHANGES_REQUESTED,
@@ -1098,6 +1100,77 @@ class WorkflowEngine:
         record.evidence["pre_fix_reproduction"] = [result.to_dict() for result in results]
         artifact = store.write_artifact("pre-fix-reproduction.json", record.evidence["pre_fix_reproduction"])
         store.append("issue_reproduced", {"artifacts": [artifact]})
+
+    def _review_finding_candidates(self, record: RunRecord,
+                                   findings: list) -> list:
+        from .issues import IssueCandidate
+        candidates = []
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            path = str(finding.get("file", ""))
+            line = int(finding.get("line", 0) or 0)
+            snippet = ""
+            try:
+                lines = (Path(record.worktree) / path).read_text(
+                    encoding="utf-8").splitlines()
+                snippet = lines[line - 1] if 0 < line <= len(lines) else ""
+            except (OSError, UnicodeDecodeError, ValueError):
+                snippet = ""
+            evidence = " ".join(str(finding.get("evidence", "")).split())
+            candidates.append(IssueCandidate(
+                title=evidence[:120] or f"Review point in {path}",
+                detail=f"{evidence}\nRepair. "
+                       f"{str(finding.get('remediation', '')).strip()}",
+                severity=str(finding.get("severity", "medium")),
+                file=path, line=line, snippet=snippet, kind="review"))
+        return candidates
+
+    def _capture_review_issues(self, record: RunRecord, findings: list) -> None:
+        if self.issues is None or not findings:
+            return
+        result = self.issues.capture(
+            self._review_finding_candidates(record, findings),
+            source="review", run_id=record.run_id)
+        fresh = len(result.added) + len(result.reopened)
+        if fresh:
+            self.presenter.complete(
+                "ISSUES", f"Added {fresh} issue{'s' if fresh != 1 else ''} "
+                          "to the issues list")
+
+    def _capture_test_issues(self, record: RunRecord, results: list) -> None:
+        if self.issues is None:
+            return
+        from .issues import IssueCandidate
+        candidates = []
+        for result in results:
+            value = result.to_dict() if hasattr(result, "to_dict") else dict(result)
+            if int(value.get("exit_code", 0) or 0) == 0:
+                continue
+            name = str(value.get("name", "check"))
+            output = "\n".join(part for part in (
+                str(value.get("stdout", "")).strip(),
+                str(value.get("stderr", "")).strip()) if part)
+            candidates.append(IssueCandidate(
+                title=f"The {name} check failed",
+                detail=output[-2000:], severity="medium",
+                file="", line=0, snippet=name, kind="test"))
+        if candidates:
+            self.issues.capture(candidates, source="test",
+                                run_id=record.run_id)
+
+    def _close_issues_for_delivery(self, record: RunRecord) -> None:
+        if self.issues is None:
+            return
+        findings = record.evidence.get("review", {}).get("findings", [])
+        keep = {candidate.fingerprint for candidate
+                in self._review_finding_candidates(record, findings)}
+        closed = self.issues.close_for_run(record.run_id, keep_fingerprints=keep)
+        if closed:
+            count = len(closed)
+            self.presenter.complete(
+                "ISSUES", f"Closed {count} issue{'s' if count != 1 else ''} "
+                          "as fixed")
 
     def _test(self, record: RunRecord, store: AuditStore) -> None:
         diff = self.workspaces.diff(Path(record.worktree))
@@ -1150,6 +1223,7 @@ class WorkflowEngine:
                 tree_hash=diff.tree_hash,
                 flags={"review": record.evidence.get("review", {}),
                        "tests": evidence})
+            self._capture_test_issues(record, results)
             return
         completed = record.evidence.setdefault("completed_tasks", [])
         completed.append({"task_id": record.tasks[record.task_index]["id"],
@@ -1198,6 +1272,7 @@ class WorkflowEngine:
             f"maintain: {summary}", record.accepted_tree_hash)
         record.evidence["delivery"] = {"commit": commit, "tree_hash": record.accepted_tree_hash}
         self._move(record, store, RunState.DELIVERED)
+        self._close_issues_for_delivery(record)
         self._iteration(record, store, "Saved", kind="saved",
                         sub=f"branch {record.branch}",
                         tree_hash=record.accepted_tree_hash)

@@ -13,6 +13,7 @@ from maintain.config import PACKET_TASK_KEYS, ProjectConfig
 from maintain.engine import (IMPLEMENT_INSTRUCTIONS, REVIEW_INSTRUCTIONS,
                              SCOPE_INSTRUCTIONS)
 from maintain.errors import ConfigurationError
+from maintain.issue_packets import DISCUSS_INSTRUCTIONS, SCAN_INSTRUCTIONS
 from maintain.zip_package import GLOBAL_PROMPT_TEMPLATE
 
 BUILTIN_PROMPTS = {
@@ -20,6 +21,8 @@ BUILTIN_PROMPTS = {
     "build": IMPLEMENT_INSTRUCTIONS,
     "repair": IMPLEMENT_INSTRUCTIONS,
     "review": REVIEW_INSTRUCTIONS,
+    "scan": SCAN_INSTRUCTIONS,
+    "discuss": DISCUSS_INSTRUCTIONS,
 }
 
 PROMPT_DIR = ".maintain-prompts"

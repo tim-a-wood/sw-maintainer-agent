@@ -14,6 +14,7 @@ from maintain.config import ProjectConfig
 from maintain.engine import WorkflowEngine
 from maintain.errors import MaintainError
 from maintain.history import IterationEvent, RunSummary, list_runs, run_timeline
+from maintain.issues import IssueStore
 from maintain.models import ProviderRequest, RunRecord, RunState
 from maintain.presenter import QuietPresenter
 from maintain.provider_factory import build_provider
@@ -56,11 +57,14 @@ class Controller(QObject):
         self.run_attachments: list[Path] = []
         self.packet_extras: list[Path] = []
         self._thread: threading.Thread | None = None
+        self.issues = IssueStore(runtime_root=config.runtime_root,
+                                 repository=config.repository)
         self.engine = WorkflowEngine(
             config,
             presenter=QtPresenter(self.progress_event.emit),
             provider_builder=self._build_provider,
             gates=self.bridge.gates(),
+            issues=self.issues,
         )
 
     # ----- provider wiring -----

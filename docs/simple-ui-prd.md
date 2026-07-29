@@ -322,10 +322,13 @@ Stated to keep the scope firm:
 - History search and filters beyond the recent list.
 - A diff viewer beyond the Save screen's summary and inline diff.
 - Editing prompt text inside the Send screen. Settings only.
-- A project picker in the UI. Use the CLI project commands to add,
-  open, or forget projects; the UI opens the active project.
 - Browser automation, Copilot API, Graph API, telemetry, macOS/Linux
   packaging.
+- For issues (section 12): dependency links between issues, a priority
+  axis separate from severity, labels, assignees, CSV import wizards,
+  SARIF export, and any multi-user or sync machinery. Closing an issue
+  when a scan stops reporting it (machine absence proves nothing with
+  an LLM scanner).
 
 ## 10. Release slices
 
@@ -338,6 +341,9 @@ Stated to keep the scope firm:
 3. **M3 — Polish and compliance.** STE catalog and test, installer
    shortcut, keyboard pass, dark theme pass, polish review against
    NFR-2.
+4. **M4 — Issues.** Section 12 in three slices: store + screens +
+   auto-capture + repair bridge; the scan loop with its accept gate;
+   the discuss loop.
 
 ## 11. Open points
 
@@ -345,4 +351,74 @@ Stated to keep the scope firm:
    before M1 freezes the `zip` default.
 2. Confirm the iteration anchor set (section 5.10) is enough, or name
    additional anchors you want to go back to.
+
+## 12. Issue tracker (M4)
+
+Each project keeps a small issue list: the tool's memory of known
+faults and points to repair. One person, one machine, one writer — no
+sync, no merge machinery.
+
+### 12.1 Storage and record
+
+- One JSON file per project beside the runs
+  (`<runtime>/issues/<repository-key>.json`), read and written whole.
+  Never inside the working tree: runs require a clean repository.
+- An issue has: `id` (short random hash, like `a3f2c1`), `title`,
+  `detail`, `severity` (high / medium / low — the review loop's
+  values), `status` (Open → In work → Closed), `closed_reason` (Fixed,
+  Will not fix, Duplicate, Not a fault, No longer applies), `source`
+  (you / review / test / scan / import), a location (`file`, `line`,
+  quoted `snippet`), a `fingerprint`, linked run ids, an optional
+  external reference (for spreadsheet rows), notes, and a small
+  append-only event list (when, who, what changed).
+- The fingerprint hashes kind + file + the whitespace-normalized
+  snippet (first ~100 significant characters), GitHub-code-scanning
+  style. Identity lives in content, not line numbers.
+
+### 12.2 Workflows
+
+1. **Add, change, remove.** A list screen (filters: All / Open / In
+   work / Closed) and a detail screen with editable title, detail, and
+   severity. Close-with-reason is the primary removal; a hard Remove
+   exists for mistakes, behind a confirm.
+2. **Auto-capture.** Review findings and failed checks become issues
+   automatically (`source: review` / `test`), linked to the run, with
+   the snippet read from the worktree. A fingerprint match updates the
+   existing issue instead of duplicating; a match on an issue closed as
+   Will-not-fix, Not-a-fault, or Duplicate is dropped silently
+   (dismissal persists); a match on Fixed or No-longer-applies reopens
+   it. When the run delivers, its linked issues close as Fixed — except
+   issues the final approving review still cites.
+3. **Scan.** A `scan` packet (task-type prompt and documents
+   configurable like the others) carries the codebase and any
+   attachments — for example an exported spreadsheet of an external
+   tracker, which Copilot cross-references; there is no CSV mapping
+   wizard, Copilot is the mapper. The reply is a JSON issue list; every
+   entry must quote the offending code. The tool verifies each quote
+   against the file, drops fingerprint matches of known issues (open or
+   closed), and shows the rest on an accept screen with check boxes.
+   Only what the person accepts enters the list. Nothing enters
+   without the gate.
+4. **Discuss.** From an issue: write a question, and the tool builds a
+   `discuss` packet with the issue record, the cited code, and any
+   files the person drags in (xlsx or any reference file — the Send
+   screen's attachment area). The reply becomes an attributed note on
+   the issue; a proposed severity change applies only after a confirm.
+5. **Repair bridge.** Repair with Copilot on an issue pre-fills the
+   Repair-a-fault flow, links issue and run both ways, and rides the
+   auto-Fixed rule in workflow 2.
+
+### 12.3 Acceptance criteria
+
+1. A review with findings and a failed check add issues once, and a
+   repeat of the same finding updates instead of duplicating.
+2. A delivered run closes its linked issues as Fixed, except issues
+   the final review still cites.
+3. A scan proposal that matches a closed Will-not-fix issue never
+   reaches the accept screen.
+4. A scan entry whose quoted code is not in the named file is marked
+   on the accept screen.
+5. The discuss reply lands as a note with author and time; a severity
+   proposal changes nothing until confirmed.
+6. Every new string passes the STE catalog test.
 3. Confirm that reversal of saved runs stays out of this version.

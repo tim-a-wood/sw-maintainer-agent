@@ -48,6 +48,11 @@ ICONS: dict[str, str] = {
     "check-circle": ('<circle cx="12" cy="12" r="8.6"/>'
                      '<path d="M8.2 12.4l2.7 2.7 4.9-5.7"/>'),
     "check": '<path d="M5 13l4.2 4.2L19 7"/>',
+    "bug": ('<rect x="8.5" y="8" width="7" height="11" rx="3.5"/>'
+            '<path d="M12 8v11"/><path d="M10 8 8.5 5.5M14 8l1.5-2.5"/>'
+            '<path d="M8.5 11H5M8.5 15H5.5M15.5 11H19M15.5 15h3"/>'),
+    "search": ('<circle cx="11" cy="11" r="6.5"/>'
+               '<path d="M15.8 15.8 20 20"/>'),
     "download": '<path d="M12 4.5v10.5M7.2 11.2 12 16l4.8-4.8M5 19.5h14"/>',
     "zip": ('<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 '
             '2H6a2 2 0 0 1-2-2z"/><path d="M12 10v1m0 2v1m0 2v1"/>'),

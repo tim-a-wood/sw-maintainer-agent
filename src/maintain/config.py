@@ -62,7 +62,7 @@ class CommandSpec:
     working_directory: str = "."
 
 
-PACKET_TASK_KEYS = ("plan", "build", "repair", "review")
+PACKET_TASK_KEYS = ("plan", "build", "repair", "review", "scan", "discuss")
 
 
 @dataclass(frozen=True)
@@ -553,8 +553,6 @@ def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
         "audit": {"runtime_root": "~/.maintain/runs"},
         "ui": {"color": "auto", "animation": True, "max_width": 100},
         "package": {"style": "zip", "global_prompt": "GLOBAL.md", "documents": [],
-                    "tasks": {"plan": {"prompt": None, "documents": []},
-                              "build": {"prompt": None, "documents": []},
-                              "repair": {"prompt": None, "documents": []},
-                              "review": {"prompt": None, "documents": []}}},
+                    "tasks": {key: {"prompt": None, "documents": []}
+                              for key in PACKET_TASK_KEYS}},
     }
