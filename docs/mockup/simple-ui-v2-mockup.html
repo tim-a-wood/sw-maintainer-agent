@@ -1,0 +1,1054 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+</head>
+<body>
+<title>Maintain — Simple UI v2 mockup</title>
+<style>
+  :root{
+    --page-bg:#e7ecf3; --page-ink:#3c4a5e;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --page-bg:#0a0e15; --page-ink:#8fa0b6; }
+  }
+  :root[data-theme="dark"]{ --page-bg:#0a0e15; --page-ink:#8fa0b6; }
+  :root[data-theme="light"]{ --page-bg:#e7ecf3; --page-ink:#3c4a5e; }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ background:var(--page-bg); }
+  body{
+    font-family:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+    color:var(--page-ink); padding:18px 10px 40px;
+    display:flex; flex-direction:column; align-items:center; gap:12px;
+    min-height:100vh;
+  }
+  .page-note{ font-size:12px; max-width:640px; width:100%; line-height:1.5; }
+  .page-note b{ font-weight:600; }
+
+  /* ---- the app window; its own theme is driven by [data-mock] ---- */
+  .win{
+    width:100%; max-width:640px; border-radius:12px; overflow:hidden;
+    box-shadow:0 18px 50px rgba(4,10,20,.45), 0 2px 8px rgba(4,10,20,.3);
+    display:flex; flex-direction:column; min-height:700px;
+    background:var(--surface); border:1px solid var(--edge);
+  }
+  .win[data-mock="dark"]{
+    --window:#10151f; --surface:#1b2230; --bar:#212a3c; --edge:#32405a;
+    --ink:#e6edf6; --dim:#9aa9bd; --faint:#6d7d92;
+    --accent:#4cbdff; --accent-hover:#6fcaff; --accent-ink:#06263c; --accent-soft:#1d3247;
+    --ok:#3bd694; --ok-soft:#173328; --bad:#ff8577; --bad-soft:#3a2320;
+    --warn:#f0c052; --warn-soft:#3a3320;
+    --chip:#242e42; --chip-edge:#313c54; --code-bg:#0d1422; --code-ink:#cfdff2;
+    --drop:#1f2839;
+  }
+  .win[data-mock="light"]{
+    --window:#dfe6ef; --surface:#f8fafc; --bar:#eef3f9; --edge:#d3dde9;
+    --ink:#1b2534; --dim:#5c6c81; --faint:#8ba0b6;
+    --accent:#0b6fb8; --accent-hover:#095e9d; --accent-ink:#ffffff; --accent-soft:#e3eef7;
+    --ok:#177245; --ok-soft:#e2efe8; --bad:#b23a2f; --bad-soft:#f6e6e4;
+    --warn:#8a6100; --warn-soft:#f4ecd8;
+    --chip:#edf2f8; --chip-edge:#d8e2ee; --code-bg:#101826; --code-ink:#d5e3f2;
+    --drop:#f2f7fc;
+  }
+  .win{ color:var(--ink); font-size:13px; }
+
+  /* ---- stage header ---- */
+  .stage{ background:var(--surface); border-bottom:1px solid var(--bar);
+          padding:12px 34px 8px; display:none; }
+  .stage.on{ display:block; }
+  .stage-row{ display:flex; align-items:flex-start; }
+  .stage-item{ display:flex; flex-direction:column; align-items:center; gap:3px;
+               width:26px; flex:0 0 auto; }
+  .stage-line{ flex:1 1 auto; height:2px; background:var(--chip-edge);
+               margin-top:12px; border-radius:1px; }
+  .stage-line.done{ background:var(--ok); }
+  .stage-dot{ width:24px; height:24px; border-radius:50%; border:2px solid var(--chip-edge);
+              background:var(--surface); color:var(--faint); font-size:10px; font-weight:700;
+              display:flex; align-items:center; justify-content:center; }
+  .stage-item.done .stage-dot{ background:var(--ok); border-color:var(--ok); color:#fff; }
+  .stage-item.now .stage-dot{ border-color:var(--accent); color:var(--accent);
+              box-shadow:0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent); }
+  .stage-name{ font-size:9.5px; color:var(--dim); white-space:nowrap; }
+  .stage-item.now .stage-name{ color:var(--accent); font-weight:700; }
+
+  /* ---- screen area ---- */
+  .screen{ flex:1 1 auto; overflow-y:auto; background:var(--surface);
+           padding:20px 26px 24px; display:flex; flex-direction:column; gap:11px;
+           align-content:flex-start; }
+  .screen > *{ flex:0 0 auto; }
+
+  /* ---- footer ---- */
+  .foot{ background:var(--bar); border-top:1px solid var(--edge);
+         padding:6px 10px 6px 14px; display:flex; align-items:center; gap:8px; }
+  .foot-label{ color:var(--dim); font-size:11px; flex:1 1 auto;
+               font-variant-numeric:tabular-nums; }
+  .toastbar{ background:var(--bar); color:var(--dim); font-size:11.5px;
+             padding:4px 14px; min-height:24px; border-top:1px solid var(--edge); }
+
+  /* ---- text roles ---- */
+  .title{ font-size:19px; font-weight:600; text-wrap:balance; }
+  .eyebrow{ color:var(--accent); font-size:10px; font-weight:700;
+            letter-spacing:1.1px; text-transform:uppercase; }
+  .lead{ color:var(--dim); font-size:13px; line-height:1.45; }
+  .hint{ color:var(--faint); font-size:11px; line-height:1.45; }
+  .dimtext{ color:var(--dim); font-size:12px; line-height:1.45; }
+  .mono{ font-family:"Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace;
+         font-size:12px; }
+  .monohint{ font-family:"Cascadia Mono",Consolas,monospace; font-size:11px;
+             color:var(--faint); overflow:hidden; text-overflow:ellipsis;
+             white-space:nowrap; }
+  .ok-line{ color:var(--ok); font-weight:600; font-size:12.5px; }
+  .bad-line{ color:var(--bad); font-weight:600; font-size:12.5px; }
+  .warn-line{ color:var(--warn); font-weight:600; font-size:12.5px; }
+
+  /* ---- buttons ---- */
+  button{ font:inherit; border:1px solid transparent; border-radius:6px;
+          padding:8px 16px; font-weight:600; background:transparent;
+          color:var(--ink); cursor:pointer; }
+  button:focus-visible{ outline:none; border-color:var(--accent); }
+  button.primary{ background:var(--accent); color:var(--accent-ink); }
+  button.primary:hover{ background:var(--accent-hover); }
+  button.primary:disabled{ background:var(--chip); color:var(--faint); cursor:default; }
+  button.secondary{ border-color:var(--edge); background:var(--surface); }
+  button.secondary:hover{ border-color:var(--accent); background:var(--accent-soft); }
+  button.ghost{ color:var(--dim); padding:8px 10px; }
+  button.ghost:hover{ color:var(--accent); background:var(--accent-soft); }
+  button.danger{ color:var(--dim); padding:8px 10px; }
+  button.danger:hover{ color:var(--bad); background:var(--bad-soft); }
+  button.tab{ border-color:var(--edge); background:var(--surface);
+              padding:5px 13px; font-size:12px; }
+  button.tab.on{ background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  .btnrow{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+  /* ---- cards and rows ---- */
+  .card{ border:1px solid var(--edge); border-radius:9px; background:var(--surface);
+         padding:12px 14px; }
+  .choice{ border:1px solid var(--edge); border-radius:9px; background:var(--surface);
+           padding:13px 16px; display:flex; gap:14px; align-items:center;
+           cursor:pointer; text-align:left; width:100%; }
+  .choice:hover{ border-color:var(--accent); background:var(--accent-soft); }
+  .choice .icon-sq{ flex:0 0 auto; }
+  .choice-title{ font-size:14px; font-weight:600; }
+  .choice-sub{ font-size:12px; color:var(--dim); }
+  .choice-body{ flex:1 1 auto; min-width:0; }
+  .icon-sq{ width:38px; height:38px; border-radius:9px; display:flex;
+            align-items:center; justify-content:center; }
+  .icon-sq.small{ width:34px; height:34px; }
+  .icon-sq svg{ width:20px; height:20px; }
+  .icon-sq.small svg{ width:18px; height:18px; }
+  .tint-accent{ background:var(--accent-soft); color:var(--accent); }
+  .tint-warn{ background:var(--warn-soft); color:var(--warn); }
+  .tint-ok{ background:var(--ok-soft); color:var(--ok); }
+  .tint-bad{ background:var(--bad-soft); color:var(--bad); }
+  .tint-neutral{ background:var(--chip); color:var(--dim); }
+
+  .statechip{ border-radius:9px; padding:2px 9px; font-size:9px; font-weight:700;
+              text-transform:uppercase; white-space:nowrap; letter-spacing:.3px; }
+  .statechip.pass{ background:var(--ok-soft); color:var(--ok); }
+  .statechip.fail{ background:var(--bad-soft); color:var(--bad); }
+  .statechip.wait{ background:var(--chip); color:var(--faint); }
+  .statechip.warn{ background:var(--warn-soft); color:var(--warn); }
+  .statechip.accent{ background:var(--accent-soft); color:var(--accent); }
+
+  .packet{ border:1px solid var(--accent); border-radius:10px;
+           background:linear-gradient(var(--accent-soft), var(--surface));
+           padding:13px 14px 13px 16px; display:flex; gap:14px; align-items:center;
+           cursor:grab; }
+  .packet svg{ width:40px; height:40px; color:var(--accent); flex:0 0 auto; }
+  .packet-name{ font-family:"Cascadia Mono",Consolas,monospace; font-size:12px;
+                font-weight:600; word-break:break-all; }
+  .grip{ color:var(--faint); flex:0 0 auto; }
+
+  .drop{ border:2px dashed var(--accent); border-radius:10px; background:var(--drop);
+         padding:14px 16px; text-align:center; cursor:pointer; width:100%; }
+  .drop:hover{ background:var(--accent-soft); }
+  .drop .dmain{ font-weight:600; font-size:13px; }
+  .drop svg{ width:22px; height:22px; color:var(--accent); }
+  .drop.slim{ padding:10px 16px; }
+  .drop.slim .dmain{ color:var(--dim); font-weight:400; font-size:12px; }
+
+  .chips{ display:flex; flex-wrap:wrap; gap:6px; }
+  .fchip{ background:var(--chip); border:1px solid var(--chip-edge); border-radius:7px;
+          padding:5px 6px 5px 9px; display:inline-flex; gap:7px; align-items:center; }
+  .fchip svg{ width:15px; height:15px; color:var(--accent); }
+  .fchip .fname{ font-family:"Cascadia Mono",Consolas,monospace; font-size:11px; }
+  .fchip .x{ border:none; background:none; color:var(--faint); font-weight:700;
+             font-size:12px; padding:0 4px; cursor:pointer; border-radius:4px; }
+  .fchip .x:hover{ color:var(--bad); background:var(--bad-soft); }
+
+  textarea, input[type=text]{
+    width:100%; font:inherit; color:var(--ink); background:var(--surface);
+    border:1px solid var(--edge); border-radius:7px; padding:7px 10px; }
+  textarea:focus, input[type=text]:focus{ outline:none; border-color:var(--accent); }
+  textarea{ resize:vertical; min-height:92px; line-height:1.45; }
+
+  .code{ background:var(--code-bg); color:var(--code-ink); border-radius:8px;
+         padding:10px 12px; font-family:"Cascadia Mono",Consolas,monospace;
+         font-size:11px; line-height:1.55; overflow-x:auto; white-space:pre; }
+  .code .add{ color:#7ce0a3; background:rgba(124,224,163,.1); display:block; }
+  .code .del{ color:#ff9b8f; background:rgba(255,155,143,.1); display:block; }
+  .code .hdr{ color:#8fb8e8; display:block; }
+
+  .spin{ width:13px; height:13px; border-radius:50%; border:2.4px solid var(--chip-edge);
+         border-top-color:var(--accent); animation:spin 1s linear infinite;
+         display:inline-block; vertical-align:-2px; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce){ .spin{ animation:none; } }
+
+  .note-card{ border:1px solid var(--edge); border-radius:9px; padding:9px 12px;
+              display:flex; flex-direction:column; gap:2px; }
+  .sevpill{ border-radius:9px; padding:2px 9px; font-size:9px; font-weight:700;
+            text-transform:uppercase; }
+  .finding{ border:1px solid var(--edge); border-left:3px solid var(--warn);
+            border-radius:8px; padding:12px 14px; display:flex; flex-direction:column; gap:5px; }
+  .timeline-row{ display:grid; grid-template-columns:30px 1fr; column-gap:10px; }
+  .tl-dot{ display:flex; flex-direction:column; align-items:center; }
+  .tl-circ{ width:22px; height:22px; border-radius:50%; border:2px solid var(--chip-edge);
+            background:var(--surface); color:var(--dim); font-size:9.5px; font-weight:700;
+            display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
+  .tl-circ.now{ border-color:var(--accent); color:var(--accent);
+                box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+  .tl-circ.rev{ border-color:var(--warn); color:var(--warn); }
+  .tl-line{ width:2px; flex:1 1 auto; background:var(--chip-edge); min-height:8px; }
+  .tl-head{ display:flex; gap:8px; align-items:baseline; }
+  .tl-title{ font-weight:600; font-size:13px; }
+  .tl-title.super{ font-weight:400; color:var(--faint); }
+  .tl-tag{ color:var(--faint); border:1px solid var(--chip-edge); border-radius:8px;
+           padding:1px 7px; font-size:8.5px; font-weight:700; text-transform:uppercase; }
+  .tl-time{ color:var(--faint); font-size:11px; margin-left:auto;
+            font-variant-numeric:tabular-nums; }
+
+  .gate-row{ border:1px solid var(--edge); border-radius:9px; padding:10px 12px;
+             display:flex; gap:10px; align-items:flex-start; }
+  .gate-row input{ margin-top:3px; accent-color:var(--accent); width:15px; height:15px; }
+
+  .radio-row{ display:flex; gap:14px; align-items:center; }
+  .radio-row label{ display:inline-flex; gap:7px; align-items:center; font-weight:600;
+                    cursor:pointer; }
+  .radio-row input{ accent-color:var(--accent); width:15px; height:15px; }
+
+  .gap2{ height:2px; } .gap6{ height:6px; } .gap12{ height:12px; }
+
+  /* ---- overlay dialogs ---- */
+  .overlay{ position:fixed; inset:0; background:rgba(5,9,16,.55);
+            display:flex; align-items:center; justify-content:center; z-index:40;
+            padding:20px; }
+  .overlay[hidden]{ display:none !important; }
+  .dialog{ background:var(--surface); color:var(--ink); border:1px solid var(--edge);
+           border-radius:10px; padding:18px; width:100%; max-width:400px;
+           display:flex; flex-direction:column; gap:12px;
+           box-shadow:0 18px 50px rgba(4,10,20,.5); }
+  .dialog h3{ font-size:15px; font-weight:600; }
+  .dialog p{ color:var(--dim); font-size:12.5px; line-height:1.5; }
+
+  /* ---- toasts ---- */
+  .toasts{ position:fixed; left:50%; transform:translateX(-50%); bottom:18px;
+           display:flex; flex-direction:column; gap:8px; z-index:60;
+           pointer-events:none; width:min(420px, 92vw); }
+  .toast{ background:#0d1422; color:#d5e3f2; border:1px solid #32405a;
+          border-radius:8px; padding:9px 14px; font-size:12px;
+          box-shadow:0 8px 24px rgba(4,10,20,.5); opacity:0;
+          transform:translateY(6px); transition:opacity .18s, transform .18s; }
+  .toast.on{ opacity:1; transform:none; }
+</style>
+
+<p class="page-note"><b>Maintain — Simple UI v2.</b> An interactive mockup of the
+proposed simplified workflow (usability review P1–P9). Every control is clickable;
+"Paste reply" plays Copilot's part. The window has its own theme switch, like the
+real app.</p>
+
+<div class="win" data-mock="dark" id="win">
+  <div class="stage" id="stage"></div>
+  <div class="screen" id="screen"></div>
+  <div class="toastbar" id="toastbar">&nbsp;</div>
+  <div class="foot">
+    <span class="foot-label" id="footlabel">Maintain</span>
+    <button class="secondary" data-action="theme" id="themebtn">Light mode</button>
+    <button class="danger" data-action="stop" id="stopbtn" hidden>Stop</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" hidden></div>
+<div class="toasts" id="toasts"></div>
+
+<script>
+"use strict";
+/* ---- the app's own icon language, verbatim from widgets.py ---- */
+const ICON = {
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  wrench:'<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  history:'<path d="M2.5 5v6h6"/><path d="M5 15.5a8.5 8.5 0 1 0 2-8.86L2.5 11"/>',
+  folder:'<path d="M3.5 7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
+  sliders:'<path d="M4 6.5h5.6M13.6 6.5H20"/><circle cx="11.6" cy="6.5" r="2.1"/><path d="M4 12h2.4M10.4 12H20"/><circle cx="8.4" cy="12" r="2.1"/><path d="M4 17.5h9.6M17.6 17.5H20"/><circle cx="15.6" cy="17.5" r="2.1"/>',
+  play:'<circle cx="12" cy="12" r="8.6"/><path d="M10.4 8.9 15.4 12l-5 3.1z" fill="currentColor" stroke="none"/>',
+  cloud:'<path d="M18 10.5h-1.3A6.7 6.7 0 1 0 9.3 19h8.7a4.25 4.25 0 0 0 0-8.5z"/>',
+  filetext:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>',
+  globe:'<circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2"/><path d="M12 3.4a13.4 13.4 0 0 1 0 17.2M12 3.4a13.4 13.4 0 0 0 0 17.2"/>',
+  box:'<path d="M21 8.2 12 3.4 3 8.2v7.6l9 4.8 9-4.8z"/><path d="M3 8.2l9 4.8 9-4.8"/><path d="M12 13v7.6"/>',
+  checkcircle:'<circle cx="12" cy="12" r="8.6"/><path d="M8.2 12.4l2.7 2.7 4.9-5.7"/>',
+  check:'<path d="M5 13l4.2 4.2L19 7"/>',
+  bug:'<rect x="8.5" y="8" width="7" height="11" rx="3.5"/><path d="M12 8v11"/><path d="M10 8 8.5 5.5M14 8l1.5-2.5"/><path d="M8.5 11H5M8.5 15H5.5M15.5 11H19M15.5 15h3"/>',
+  search:'<circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8 20 20"/>',
+  download:'<path d="M12 4.5v10.5M7.2 11.2 12 16l4.8-4.8M5 19.5h14"/>',
+  zip:'<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M12 10v1m0 2v1m0 2v1"/>',
+  file:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  pkg:'<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M11.5 9v1.2m0 1.8v1.2m0 1.8v1.2"/><path d="M15 12.5h3M15 15h3" opacity=".55"/>',
+};
+function svg(name){
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[name]}</svg>`;
+}
+function iconSq(name, tint, small){
+  return `<span class="icon-sq ${small?'small ':''}tint-${tint}">${svg(name)}</span>`;
+}
+function chip(text, kind){ return `<span class="statechip ${kind}">${text}</span>`; }
+function fchip(name, removable, action){
+  const icon = name.endsWith('.zip') ? 'zip' : 'file';
+  return `<span class="fchip">${svg(icon)}<span class="fname">${name}</span>` +
+    (removable?`<button class="x" data-action="${action||'noop'}" aria-label="Remove ${name}">×</button>`:'') + `</span>`;
+}
+
+/* ---- state ---- */
+const S = {
+  theme:'dark', screen:'home', stage:-1,
+  runId:'f-20260729-1140-7c2e', mode:'feature',
+  describeFiles:[], exchange:null,       // {kind, again, link:0..3, attachments:[]}
+  planNote:'', testState:'idle', reviewRound:0, testFailedOnce:false,
+  issues:[
+    {id:'b41a02', title:'The unit name mps is not stated in the manual.', sev:'low',
+     status:'closed', reason:'fixed', source:'review', file:'src/loader.py', line:2,
+     snippet:'return speed * 1.943844 if unit == "mps" else speed', notes:[], runs:['f-20260722-0910-11aa']},
+  ],
+  openIssue:null, scanChecks:[true,false], closeOpen:false,
+  continueCard:null, delivered:false,
+};
+const SEV_KIND = {high:'fail', medium:'warn', low:'wait'};
+const SEV_ICON = {high:'bad', medium:'warn', low:'neutral'};
+const STATUS_KIND = {open:'accent', in_work:'warn', closed:'wait'};
+const STATUS_TEXT = {open:'Open', in_work:'In work', closed:'Closed'};
+const REASONS = [['fixed','Fixed'],['wont_fix','Will not fix'],['duplicate','Duplicate'],
+                 ['not_a_fault','Not a fault'],['gone','No longer applies']];
+
+const win = document.getElementById('win');
+const screenEl = document.getElementById('screen');
+const stageEl = document.getElementById('stage');
+const overlay = document.getElementById('overlay');
+const footlabel = document.getElementById('footlabel');
+const stopbtn = document.getElementById('stopbtn');
+const toastbar = document.getElementById('toastbar');
+let linkTimers = [];
+
+function toast(message){
+  const holder = document.getElementById('toasts');
+  const node = document.createElement('div');
+  node.className = 'toast'; node.textContent = message;
+  holder.appendChild(node);
+  requestAnimationFrame(()=>node.classList.add('on'));
+  setTimeout(()=>{ node.classList.remove('on');
+                   setTimeout(()=>node.remove(), 250); }, 3200);
+  toastbar.textContent = message;
+  setTimeout(()=>{ if(toastbar.textContent===message) toastbar.innerHTML='&nbsp;'; }, 6000);
+}
+
+/* ---- stage header ---- */
+const STAGES = ['Plan','Build','Review','Test','Save'];
+function renderStage(){
+  if(S.stage < 0){ stageEl.classList.remove('on'); return; }
+  stageEl.classList.add('on');
+  let parts = ['<div class="stage-row">'];
+  STAGES.forEach((name, index)=>{
+    const cls = index < S.stage ? 'done' : index === S.stage ? 'now' : '';
+    parts.push(`<div class="stage-item ${cls}"><div class="stage-dot">` +
+      (index < S.stage ? svg('check').replace('width','data-w') : String(index+1)) +
+      `</div><div class="stage-name">${name}</div></div>`);
+    if(index < 4) parts.push(`<div class="stage-line ${index < S.stage ? 'done':''}"></div>`);
+  });
+  parts.push('</div>');
+  stageEl.innerHTML = parts.join('');
+  stageEl.querySelectorAll('.stage-dot svg').forEach(node=>{
+    node.style.width='12px'; node.style.height='12px';
+  });
+}
+
+/* ---- screens ---- */
+const openCount = ()=>S.issues.filter(x=>x.status!=='closed').length;
+
+function homeScreen(){
+  const count = openCount();
+  const cont = S.continueCard ? `
+    <button class="choice" data-action="continue-run">
+      ${iconSq('play','warn')}
+      <span class="choice-body"><div class="choice-title">Continue run ${S.runId}</div>
+      <div class="choice-sub">${S.continueCard}. The tool waits for you.</div></span>
+    </button>` : '';
+  return `
+    <div class="title">flight-tools</div>
+    <div class="monohint">C:\\work\\flight-tools</div>
+    <div class="gap2"></div>
+    ${cont}
+    <button class="choice" data-action="new-feature">${iconSq('plus','accent')}
+      <span class="choice-body"><div class="choice-title">Change software</div>
+      <div class="choice-sub">Add or change a function.</div></span></button>
+    <button class="choice" data-action="new-fault">${iconSq('wrench','accent')}
+      <span class="choice-body"><div class="choice-title">Repair a fault</div>
+      <div class="choice-sub">Fix a problem in the software.</div></span></button>
+    <div class="gap2"></div>
+    <button class="choice" data-action="issues">${iconSq('bug','accent')}
+      <span class="choice-body"><div class="choice-title">Issues</div>
+      <div class="choice-sub">${count ? count + ' open. Scan, discuss, repair.' : 'No open issues.'}</div></span></button>
+    <button class="choice" data-action="history">${iconSq('history','accent')}
+      <span class="choice-body"><div class="choice-title">History</div>
+      <div class="choice-sub">Runs, iterations, and go-back.</div></span></button>
+    <button class="choice" data-action="projects">${iconSq('folder','accent')}
+      <span class="choice-body"><div class="choice-title">Projects</div>
+      <div class="choice-sub">Create, open, or remove projects.</div></span></button>
+    <button class="choice" data-action="settings">${iconSq('sliders','accent')}
+      <span class="choice-body"><div class="choice-title">Settings</div>
+      <div class="choice-sub">OneDrive, prompts, documents, package, checks.</div></span></button>`;
+}
+
+function describeScreen(){
+  const prefill = S.mode==='bridge'
+    ? "The loader does not state the speed unit it returns\n\nCallers cannot tell knots from meters for each second.\n\nLocation: src/loader.py:2"
+    : '';
+  const chips = S.describeFiles.map(name=>fchip(name,true,'describe-remove')).join('');
+  return `
+    <div class="title">${S.mode==='fault'||S.mode==='bridge' ? 'What is the fault?' : 'What do you want to change?'}</div>
+    <textarea id="req" placeholder="Write the change in one or two sentences.">${prefill}</textarea>
+    <button class="drop" data-action="describe-add">
+      ${svg('download')}
+      <div class="dmain">Drop files here, or click to select them.</div>
+      <div class="hint">All file types are permitted. They go into every packet. <b>(P4)</b></div>
+    </button>
+    ${chips?`<div class="chips">${chips}</div>`:''}
+    <div class="gap6"></div>
+    <div class="btnrow">
+      <button class="primary" data-action="start-run">Start</button>
+      <button class="ghost" data-action="home">Back</button>
+    </div>`;
+}
+
+const EX_META = {
+  plan:{ eyebrow:'STEP 1 OF 5 — PLAN', title:'Copilot makes the plan.', stage:0 },
+  build:{ eyebrow:'STEP 2 OF 5 — BUILD', title:'Copilot writes the code.', stage:1 },
+  repair:{ eyebrow:'STEP 2 OF 5 — BUILD', title:'Copilot repairs the code.', stage:1 },
+  review:{ eyebrow:'STEP 3 OF 5 — REVIEW', title:'Copilot examines the change.', stage:2 },
+  scan:{ eyebrow:'ISSUE SCAN', title:'Copilot scans the project.', stage:-1 },
+  discuss:{ eyebrow:'ISSUE DISCUSSION', title:'Copilot examines the issue.', stage:-1 },
+};
+function linkStatus(){
+  const state = S.exchange.link;
+  if(state===0) return `<span class="dimtext"><span class="spin"></span>&nbsp; Copy the package to OneDrive…</span>`;
+  if(state===1) return `<span class="dimtext"><span class="spin"></span>&nbsp; OneDrive synchronizes…</span>`;
+  return `<span class="ok-line">✓&nbsp; In sync. The link is in the clipboard. Paste it into Copilot. <b>(P2)</b></span>`;
+}
+function exchangeScreen(){
+  const ex = S.exchange, meta = EX_META[ex.kind];
+  const name = `maintain-${ex.kind==='scan'?'scan':ex.kind==='discuss'?'discuss':S.runId}-${ex.kind}.zip`;
+  const attach = ex.attachments.map(n=>fchip(n,true,'ex-remove')).join('');
+  const focus = ex.kind==='scan' ? `
+    <div class="eyebrow">Where should Copilot look?</div>
+    <input type="text" id="scanfocus" value="Check the wind data loader."
+           aria-label="Scan focus"/>
+    <div class="hint">Empty means a full scan. The package updates as you type. <b>(P7)</b></div>
+    <div class="gap2"></div>` : '';
+  return `
+    <div class="eyebrow">${meta.eyebrow}${ex.again?' · AGAIN':''}</div>
+    <div class="title">${meta.title}</div>
+    ${focus}
+    <div class="lead">1&nbsp;·&nbsp;Give this package to Copilot. <b>(P1: one screen)</b></div>
+    <div class="packet" draggable="true">${svg('pkg')}
+      <div style="flex:1;min-width:0"><div class="packet-name">${name}</div>
+      <div class="hint">7 KB · Drag this package into Copilot.</div></div>
+      <span class="grip">⁞⁞</span></div>
+    <div>${linkStatus()}</div>
+    <div class="btnrow">
+      <button class="secondary" data-action="copy-file">Copy file</button>
+      <button class="secondary" data-action="export">Export…</button>
+      <span class="hint">TASK.md · GLOBAL.md · CODEBASE.md · documents/ — 1</span>
+    </div>
+    <div class="gap2"></div>
+    <div class="eyebrow">Attachments — go into this packet</div>
+    ${attach?`<div class="chips">${attach}</div>`:''}
+    <button class="drop slim" data-action="ex-add">
+      <div class="dmain">Drop files here, or click to select them. (xlsx or any) <b>(P4)</b></div>
+    </button>
+    <div class="gap6"></div>
+    <div class="lead">2&nbsp;·&nbsp;Bring the Copilot reply here. It is checked before anything moves.</div>
+    <button class="drop" data-action="paste-reply" id="replyzone">
+      ${svg('download')}
+      <div class="dmain">Drop the reply here, or select Paste reply.</div>
+      <div class="hint">The reply zone is always ready — no Continue step. <b>(P1)</b></div>
+    </button>
+    <div class="btnrow">
+      <button class="primary" data-action="paste-reply">Paste reply</button>
+      <span class="hint" id="replystatus"></span>
+    </div>`;
+}
+
+function planCheckScreen(){
+  const second = S.planNote;
+  return `
+    <div class="eyebrow">STEP 1 OF 5 — PLAN</div>
+    <div class="title">Copilot proposes ${second?'1 task':'2 tasks'}.</div>
+    ${second?`<div class="hint">Your note went with the package: “${S.planNote}”</div>`:''}
+    <div class="card" style="display:flex;gap:12px">
+      <span class="statechip accent" style="align-self:flex-start">1</span>
+      <div><b>Add the wind-data input filter</b>
+        <div class="monohint">Files: src/loader.py</div>
+        <div class="hint">Done when: the loader rejects speeds below 0 kt and above 150 kt.</div>
+      </div></div>
+    ${second?'':`<div class="card" style="display:flex;gap:12px">
+      <span class="statechip accent" style="align-self:flex-start">2</span>
+      <div><b>Cover the filter with a unit test</b>
+        <div class="monohint">Files: tests/test_loader.py</div>
+        <div class="hint">Done when: the new test fails before the fix and passes after.</div>
+      </div></div>`}
+    <div class="gap6"></div>
+    <div class="btnrow">
+      <button class="primary" data-action="plan-accept">Accept the plan</button>
+      <button class="secondary" data-action="plan-rescope">Ask for changes</button>
+    </div>`;
+}
+
+function findingsScreen(){
+  return `
+    <div class="eyebrow">STEP 3 OF 5 — REVIEW</div>
+    <div class="title">Copilot found 1 point to repair.</div>
+    <div class="finding">
+      <div style="display:flex;gap:9px;align-items:center">
+        <span class="sevpill statechip warn">LOW</span>
+        <span class="monohint">src/loader.py:2</span></div>
+      <div class="dimtext">Evidence. The unit name mps is not stated in the manual.</div>
+      <div class="dimtext">Repair. State the unit names in a comment.</div>
+    </div>
+    <div class="hint">This point is now in the issues list (source: review). <b>(P8)</b></div>
+    <div class="gap6"></div>
+    <div class="btnrow"><button class="primary" data-action="repair">Repair with Copilot</button></div>
+    <div class="hint">The tool makes a repair package with these points.</div>
+    <div class="btnrow"><button class="ghost" data-action="rescope-note">Scope again</button></div>`;
+}
+
+function testScreen(){
+  const round = S.testRound, state = S.testState;
+  const row = (name, cmd, status)=>`
+    <div class="card" style="display:flex;gap:10px;align-items:flex-start">
+      <div style="flex:1"><b>${name}</b><div class="monohint">${cmd}</div>
+      ${status==='FAIL' && name==='tests' ? `<div class="code" style="margin-top:6px">FAILED test_bounds: -3 kt accepted\n1 failed, 4 passed</div>`:''}
+      </div>${chip(status, status==='PASS'?'pass':status==='FAIL'?'fail':status==='RUN'?'accent':'wait')}</div>`;
+  let rows, outcome='', buttons='';
+  if(state==='running'){
+    rows = row('diff-check','git diff --check','PASS') + row('tests','python -m pytest','RUN');
+    outcome = `<span class="dimtext"><span class="spin"></span>&nbsp; The checks run…</span>`;
+  } else if(state==='failed'){
+    rows = row('diff-check','git diff --check','PASS') + row('tests','python -m pytest','FAIL');
+    outcome = `<div class="bad-line">✕&nbsp; A check failed.</div>`;
+    buttons = `<div class="btnrow">
+      <button class="primary" data-action="test-again">Run the checks again</button>
+      <button class="secondary" data-action="repair">Repair with Copilot</button>
+      <button class="ghost" data-action="rescope-note">Scope again</button></div>
+      <div class="hint">Run the checks again is new — a flaky check no longer forces a repair round. <b>(P5)</b></div>`;
+  } else {
+    rows = row('diff-check','git diff --check','PASS') + row('tests','python -m pytest','PASS');
+    outcome = `<div class="ok-line">✓&nbsp; All checks passed.</div>`;
+    buttons = `<div class="btnrow"><button class="primary" data-action="to-save">Continue</button></div>`;
+  }
+  return `
+    <div class="eyebrow">STEP 4 OF 5 — TEST</div>
+    <div class="title">The tool runs the checks on this computer.</div>
+    ${rows}${outcome}<div class="gap6"></div>${buttons}`;
+}
+
+function saveScreen(){
+  return `
+    <div class="eyebrow">STEP 5 OF 5 — SAVE</div>
+    <div class="title">All checks passed. 2 files changed.</div>
+    <div class="mono">src/loader.py<br/>tests/test_loader.py</div>
+    <div class="code"><span class="hdr">diff --git a/src/loader.py b/src/loader.py</span><span class="hdr">@@ -1,2 +1,8 @@</span><span class="hdr"># Speed units: "kt" is knots. "mps" is meters for each second.</span> def load_wind(records):
+<span class="del">-    return [r for r in records if r.valid]</span><span class="add">+    filtered = []</span><span class="add">+    for r in records:</span><span class="add">+        if r.valid and 0 &lt;= to_knots(r.speed, r.unit) &lt;= 150:</span><span class="add">+            filtered.append(r)</span><span class="add">+    return filtered</span></div>
+    <div class="btnrow"><button class="primary" data-action="accept-save">Accept and save</button></div>
+    <div class="hint">The tool makes the commit on a new branch. Your project does not change before this point.</div>
+    <div class="btnrow">
+      <button class="secondary" data-action="ask-changes">Ask for changes</button>
+      <button class="ghost" data-action="test-again">Run the checks again</button>
+      <button class="danger" data-action="discard">Discard</button></div>`;
+}
+
+function doneScreen(){
+  return `
+    <div style="display:flex;justify-content:center;margin-top:26px">
+      <span class="icon-sq tint-ok" style="width:54px;height:54px;border-radius:50%">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round"
+             style="width:26px;height:26px">${ICON.check}</svg></span></div>
+    <div class="title" style="text-align:center">The change is saved.</div>
+    <div class="mono" style="text-align:center">Branch: maintain/${S.runId}</div>
+    <div class="lead" style="text-align:center">The audit record is complete.
+      The review point closed as Fixed in the issues list. <b>(P8)</b></div>
+    <div class="gap6"></div>
+    <div class="btnrow" style="justify-content:center">
+      <button class="primary" data-action="new-feature">Start a new change</button>
+      <button class="ghost" data-action="history">View the history</button></div>`;
+}
+
+function historyScreen(){
+  const row = (icon, tint, id, sub, state, kind, action)=>`
+    <button class="choice" data-action="${action}">${iconSq(icon,tint,true)}
+      <span class="choice-body"><div class="choice-title">Run ${id}</div>
+      <div class="choice-sub">${sub}</div></span>${chip(state,kind)}</button>`;
+  const first = S.delivered
+    ? row('plus','accent',S.runId,'Add an input filter for wind data. · 2026-07-29','SAVED','pass','run-detail')
+    : '';
+  return `
+    <div class="title">History</div>
+    ${first}
+    ${row('wrench','warn','i-20260722-0910-11aa','Repair the crash when the wind file is empty. · 2026-07-22','SAVED','pass','run-detail')}
+    <div class="gap6"></div>
+    <div class="btnrow"><button class="ghost" data-action="home">Back</button></div>`;
+}
+
+function runDetailScreen(){
+  const tl = [
+    ['1','Run started','Add an input filter for wind data','09:02',false,false],
+    ['2','Plan approved','2 tasks','09:06',true,false],
+    ['3','Build applied','src/loader.py','09:14',true,true],
+    ['4','A check failed — tests','','09:18',true,true],
+    ['↻','Went back to iteration 3','','09:20',false,false],
+    ['5','Repair applied','src/loader.py','09:31',true,false],
+    ['6','All checks passed','diff-check, tests','09:38',false,false],
+  ];
+  const rows = tl.map(([n,label,sub,time,back,superseded],i)=>`
+    <div class="timeline-row">
+      <div class="tl-dot">${i>0?'<div class="tl-line"></div>':'<div style="height:8px"></div>'}
+        <div class="tl-circ ${n==='↻'?'rev':i===tl.length-1?'now':''}">${n}</div>
+        ${i<tl.length-1?'<div class="tl-line"></div>':''}</div>
+      <div style="padding:6px 0">
+        <div class="tl-head"><span class="tl-title ${superseded?'super':''}">${label}</span>
+          ${superseded?'<span class="tl-tag">superseded</span>':''}
+          ${back&&!superseded?'<button class="ghost" style="padding:2px 6px;font-size:11px" data-action="go-back">Go back to here</button>':''}
+          <span class="tl-time">${time}</span></div>
+        ${sub?`<div class="hint">${sub}</div>`:''}</div></div>`).join('');
+  return `
+    <div class="title">Run ${S.runId}</div>
+    <div class="lead">Add an input filter for wind data in the loader.</div>
+    ${rows}
+    <div class="gap6"></div>
+    <div class="btnrow"><button class="ghost" data-action="history">Back</button></div>`;
+}
+
+function issuesScreen(filter){
+  S.issueFilter = filter || S.issueFilter || 'open';
+  const tabs = ['all','open','in_work','closed'].map(key=>
+    `<button class="tab ${S.issueFilter===key?'on':''}" data-action="filter-${key}">${key==='all'?'All':STATUS_TEXT[key]||'Open'}</button>`).join('');
+  const shown = S.issues.filter(x=>S.issueFilter==='all'||x.status===S.issueFilter);
+  const rows = shown.map(issue=>`
+    <button class="choice" data-action="open-issue" data-id="${issue.id}">
+      ${iconSq('bug',SEV_ICON[issue.sev],true)}
+      <span class="choice-body"><div class="choice-title">${issue.title}</div>
+      <div class="monohint">${issue.source==='human'?'You':issue.source[0].toUpperCase()+issue.source.slice(1)} · ${issue.file?issue.file+':'+issue.line:issue.id}</div></span>
+      ${chip(issue.sev,SEV_KIND[issue.sev])}
+      ${chip(issue.status==='closed'?'Closed':STATUS_TEXT[issue.status],STATUS_KIND[issue.status])}
+    </button>`).join('');
+  return `
+    <div class="title">Issues</div>
+    <div class="btnrow">${tabs}</div>
+    ${rows || '<div class="lead">No issues here. Add one, or scan with Copilot.</div>'}
+    <div class="gap2"></div>
+    <div class="btnrow">
+      <button class="primary" data-action="scan">Scan with Copilot</button>
+      <button class="secondary" data-action="add-issue">Add an issue…</button></div>
+    <div class="gap6"></div>
+    <div class="btnrow"><button class="ghost" data-action="home">Back</button></div>`;
+}
+
+function issueDetailScreen(){
+  const issue = S.issues.find(x=>x.id===S.openIssue);
+  if(!issue) return issuesScreen();
+  const closed = issue.status==='closed';
+  const closeRow = S.closeOpen ? `
+    <div class="card"><div class="hint" style="margin-bottom:6px">Select the reason. The issue stays in the list as closed. <b>(P6)</b></div>
+      <div class="btnrow">${REASONS.map(([key,label])=>
+        `<button class="secondary" style="padding:5px 11px;font-size:12px" data-action="close-as" data-reason="${key}">${label}</button>`).join('')}
+      <button class="ghost" style="padding:5px 10px;font-size:12px" data-action="close-cancel">Go back</button></div></div>` : '';
+  const notes = issue.notes.map(note=>`
+    <div class="note-card"><div class="hint">${note.author} · ${note.time}</div>
+    <div class="dimtext" style="color:var(--ink)">${note.text}</div></div>`).join('');
+  return `
+    <div class="eyebrow">Issue ${issue.id} — ${issue.source==='human'?'You':issue.source}</div>
+    <div class="btnrow">${chip(issue.sev,SEV_KIND[issue.sev])}
+      ${chip(closed?REASONS.find(r=>r[0]===issue.reason)[1]:STATUS_TEXT[issue.status],STATUS_KIND[issue.status])}</div>
+    <div class="btnrow">
+      ${closed?'':`<button class="primary" data-action="repair-issue">Repair with Copilot</button>
+      <button class="secondary" data-action="discuss">Discuss with Copilot</button>
+      <button class="secondary" data-action="close-issue">Close…</button>`}
+      ${closed?'<button class="secondary" data-action="reopen">Reopen</button>':''}
+      <button class="danger" data-action="remove-issue">Remove</button></div>
+    <div class="hint">Decisions first; the form follows. <b>(P6)</b></div>
+    ${closeRow}
+    <div class="eyebrow">Title</div>
+    <input type="text" value="${issue.title.replace(/"/g,'&quot;')}" aria-label="Title"/>
+    <div class="eyebrow">Severity</div>
+    <div class="radio-row">
+      ${['high','medium','low'].map(sev=>`<label><input type="radio" name="sev"
+        ${issue.sev===sev?'checked':''}/> ${sev[0].toUpperCase()+sev.slice(1)}</label>`).join('')}
+    </div>
+    ${issue.file?`<div class="monohint">Location: ${issue.file}:${issue.line}</div>
+    <div class="code">${issue.snippet}</div>`:''}
+    ${notes?`<div class="eyebrow">Notes</div>${notes}`:''}
+    <div class="gap2"></div>
+    <div class="btnrow">
+      <button class="primary" data-action="issue-save">Save</button>
+      <button class="ghost" data-action="issues">Back</button></div>`;
+}
+
+function scanGateScreen(){
+  const rows = [
+    {title:'No upper bound on wind speed', sev:'high', place:'src/loader.py:2',
+     detail:'Speeds above 150 kt pass the filter.', verified:true},
+    {title:'Loader ignores the gust field', sev:'low', place:'src/loader.py:4',
+     detail:'', verified:false},
+  ].map((row,i)=>`
+    <div class="gate-row"><input type="checkbox" data-gate="${i}" ${S.scanChecks[i]?'checked':''}
+        aria-label="Add ${row.title}"/>
+      <div style="flex:1"><b>${row.title}</b>
+        <div class="monohint">${row.place}</div>
+        ${row.detail?`<div class="dimtext">${row.detail}</div>`:''}
+        ${row.verified?'':'<div class="bad-line" style="font-size:11.5px">The cited code is not in the file.</div>'}
+      </div>${chip(row.sev,SEV_KIND[row.sev])}</div>`).join('');
+  return `
+    <div class="eyebrow">Issue scan</div>
+    <div class="title">Copilot proposes 2 issues.</div>
+    <div class="hint">1 known issue is not shown again.</div>
+    ${rows}
+    <div class="gap6"></div>
+    <div class="btnrow">
+      <button class="primary" data-action="gate-add">Add the selected issues</button>
+      <button class="ghost" data-action="gate-discard">Discard</button></div>`;
+}
+
+function projectsScreen(){
+  const row = (name, path, state, kind, tint)=>`
+    <button class="choice" data-action="noop">${iconSq('folder',tint,true)}
+      <span class="choice-body"><div class="choice-title">${name}</div>
+      <div class="monohint">${path}</div></span>${chip(state,kind)}
+      <span class="fchip" style="padding:2px 6px"><button class="x" data-action="noop">×</button></span></button>`;
+  return `
+    <div class="title">Projects</div>
+    ${row('flight-tools','C:\\work\\flight-tools','Ready','pass','ok')}
+    ${row('wing-analysis','C:\\work\\wing-analysis','No source control','wait','neutral')}
+    ${row('nav-data','C:\\work\\nav-data','Needs setup','warn','warn')}
+    <div class="gap2"></div>
+    <div class="btnrow">
+      <button class="primary" data-action="new-project">New project…</button>
+      <button class="secondary" data-action="noop">Add a folder…</button></div>
+    <div class="gap6"></div>
+    <div class="btnrow"><button class="ghost" data-action="home">Back</button></div>`;
+}
+
+function settingsScreen(){
+  const row = (icon, title, sub, action)=>`
+    <button class="choice" data-action="${action}">${iconSq(icon,'accent')}
+      <span class="choice-body"><div class="choice-title">${title}</div>
+      <div class="choice-sub">${sub}</div></span></button>`;
+  return `
+    <div class="title">Settings</div>
+    ${row('cloud','OneDrive','The folder, the link, and the automatic copy.','set-onedrive')}
+    ${row('filetext','Task prompts & documents','Boilerplate prompts and documents, per task or for the project.','set-tasks')}
+    ${row('globe','Global prompt','The ground rules for every task.','noop-toast')}
+    ${row('box','Package','The package style.','noop-toast')}
+    ${row('checkcircle','Checks','The local test commands.','noop-toast')}
+    <div class="gap6"></div>
+    <div class="btnrow"><button class="ghost" data-action="home">Back</button></div>`;
+}
+
+function oneDriveScreen(){
+  return `
+    <div class="title">OneDrive</div>
+    <div class="eyebrow">Package folder</div>
+    <input type="text" value="C:\\Users\\tim\\OneDrive\\Apps\\Maintain" aria-label="Package folder"/>
+    <div class="hint">The tool copies each package into this folder.</div>
+    <div class="btnrow"><button class="secondary" data-action="noop-toast">Browse…</button></div>
+    <div class="eyebrow">The link copies itself</div>
+    <div class="card" style="display:flex;gap:10px;align-items:center">
+      <input type="checkbox" checked style="accent-color:var(--accent);width:16px;height:16px"
+             aria-label="The link copies itself"/>
+      <div class="dimtext">When a package is ready, the tool copies it to OneDrive and
+        puts the link in the clipboard alone. <b>(P2)</b></div></div>
+    <div class="eyebrow">Link address of the folder</div>
+    <input type="text" value="https://contoso-my.sharepoint.com/personal/tim/Documents/Apps/Maintain" aria-label="Link address"/>
+    <div class="eyebrow">Synchronization wait limit (seconds)</div>
+    <input type="text" value="120" style="width:120px" aria-label="Wait limit"/>
+    <div class="gap6"></div>
+    <div class="btnrow">
+      <button class="primary" data-action="settings-save">Save</button>
+      <button class="ghost" data-action="settings">Back</button></div>`;
+}
+
+function tasksScreen(){
+  S.taskTab = S.taskTab || 'build';
+  const tabs = ['Project','Plan','Build','Repair','Review','Scan','Discuss'].map(name=>
+    `<button class="tab ${S.taskTab===name.toLowerCase()?'on':''}" data-action="task-tab" data-tab="${name.toLowerCase()}">${name}</button>`).join('');
+  const body = S.taskTab==='project'
+    ? `<div class="eyebrow">Documents for every packet</div>
+       <div class="chips">${fchip('docs/standards.md',true)}</div>
+       <div class="btnrow"><button class="secondary" data-action="noop-toast">Add a document…</button></div>`
+    : `<div class="eyebrow">Boilerplate prompt — ${S.taskTab}</div>
+       <div class="lead">This task uses the built-in prompt.</div>
+       <textarea readonly style="min-height:120px">${
+         S.taskTab==='scan'
+         ?'Obey the project ground rules in GLOBAL.md. Scan the supplied code for defects and points to repair…'
+         :'Implement the complete authorized task and follow the provider-specific output contract exactly…'}</textarea>
+       <div class="btnrow"><button class="secondary" data-action="noop-toast">Change the prompt for this task</button></div>
+       <div class="eyebrow">Documents for ${S.taskTab} packets</div>
+       <div class="hint">No documents yet.</div>
+       <div class="btnrow"><button class="secondary" data-action="noop-toast">Add a document…</button></div>`;
+  return `
+    <div class="title">Task prompts &amp; documents</div>
+    <div class="btnrow">${tabs}</div>
+    ${body}
+    <div class="gap6"></div>
+    <div class="btnrow">
+      <button class="primary" data-action="settings-save">Save</button>
+      <button class="ghost" data-action="settings">Back</button></div>`;
+}
+
+/* ---- dialogs ---- */
+function dialog(title, body, buttons){
+  overlay.innerHTML = `<div class="dialog" role="dialog" aria-label="${title}">
+    <h3>${title}</h3><p>${body}</p>
+    <div class="btnrow" style="justify-content:flex-end">${buttons}</div></div>`;
+  overlay.hidden = false;
+}
+function noteDialog(title, body, action){
+  overlay.innerHTML = `<div class="dialog" role="dialog" aria-label="${title}">
+    <h3>${title}</h3><p>${body}</p>
+    <textarea id="notetext" style="min-height:70px"></textarea>
+    <div class="btnrow" style="justify-content:flex-end">
+      <button class="primary" data-action="${action}">Send the note</button>
+      <button class="ghost" data-action="dialog-close">Go back</button></div></div>`;
+  overlay.hidden = false;
+}
+
+/* ---- navigation ---- */
+const SCREENS = {
+  home:homeScreen, describe:describeScreen, exchange:exchangeScreen,
+  'plan-check':planCheckScreen, findings:findingsScreen, test:testScreen,
+  save:saveScreen, done:doneScreen, history:historyScreen,
+  'run-detail':runDetailScreen, issues:issuesScreen, issue:issueDetailScreen,
+  'scan-gate':scanGateScreen, projects:projectsScreen, settings:settingsScreen,
+  'set-onedrive':oneDriveScreen, 'set-tasks':tasksScreen,
+};
+function show(name){
+  S.screen = name;
+  S.stage = (name==='exchange' && S.exchange) ? EX_META[S.exchange.kind].stage
+    : name==='plan-check' ? 0 : name==='findings' ? 2 : name==='test' ? 3
+    : name==='save' ? 4 : name==='done' ? 5 : -1;
+  if(S.stage===5){ S.stage=-1; stageEl.classList.remove('on'); }
+  renderStage();
+  screenEl.innerHTML = SCREENS[name]();
+  screenEl.scrollTop = 0;
+  const inRun = ['exchange','plan-check','findings','test','save'].includes(name);
+  stopbtn.hidden = !inRun;
+  footlabel.textContent = inRun
+    ? (S.exchange && (S.exchange.kind==='scan'||S.exchange.kind==='discuss')
+       ? `${S.exchange.kind}-20260729-1152` : `Run ${S.runId} · isolated workspace`)
+    : 'Maintain';
+}
+function startExchange(kind, again){
+  clearTimers();
+  S.exchange = { kind, again:!!again, link:0,
+                 attachments: kind==='discuss'?['issue-register.xlsx']:[] };
+  show('exchange');
+  linkTimers.push(setTimeout(()=>{ if(S.exchange){S.exchange.link=1; refreshLink();} }, 900));
+  linkTimers.push(setTimeout(()=>{ if(S.exchange){S.exchange.link=2; refreshLink();
+    toast('In sync. The link is in the clipboard.');} }, 2000));
+}
+function refreshLink(){ if(S.screen==='exchange') show('exchange'); }
+function clearTimers(){ linkTimers.forEach(clearTimeout); linkTimers=[]; }
+
+/* ---- actions ---- */
+const ACTIONS = {
+  theme(){ S.theme = S.theme==='dark'?'light':'dark';
+    win.dataset.mock = S.theme;
+    document.getElementById('themebtn').textContent =
+      S.theme==='dark'?'Light mode':'Dark mode'; },
+  home(){ clearTimers(); S.exchange=null; show('home'); },
+  'new-feature'(){ S.mode='feature'; S.describeFiles=[]; S.planNote='';
+    S.reviewRound=0; S.testFailedOnce=false; S.delivered=false;
+    S.continueCard=null; show('describe'); },
+  'new-fault'(){ S.mode='fault'; S.describeFiles=[]; show('describe'); },
+  'describe-add'(){ if(!S.describeFiles.includes('wind-spec-extract.pdf'))
+      S.describeFiles.push('wind-spec-extract.pdf');
+    show('describe'); toast('Added wind-spec-extract.pdf.'); },
+  'describe-remove'(){ S.describeFiles=[]; show('describe'); },
+  'start-run'(){ const req=document.getElementById('req');
+    if(req && !req.value.trim()){ toast('First write the change.'); return; }
+    startExchange('plan', !!S.planNote); },
+  'continue-run'(){ S.continueCard=null; startExchange('plan');
+    S.exchange.link=2; clearTimers(); show('exchange');
+    toast('The run continues. The link is still in the clipboard.'); },
+  stop(){ if(S.exchange && (S.exchange.kind==='scan'||S.exchange.kind==='discuss')){
+      const kind=S.exchange.kind; clearTimers(); S.exchange=null;
+      toast(kind==='scan'?'The scan is discarded.':'The discussion is discarded.');
+      show(kind==='discuss'?'issue':'issues'); return; }
+    dialog('Stop the run?','The run keeps its state. You can continue from the home screen.',
+      `<button class="primary" data-action="stop-yes">Stop</button>
+       <button class="ghost" data-action="dialog-close">Go back</button>`); },
+  'stop-yes'(){ overlay.hidden=true; clearTimers();
+    S.continueCard='Give the package to Copilot'; S.exchange=null;
+    show('home'); toast('The run is stopped.'); },
+  'copy-file'(){ toast('The package is in the clipboard. Paste it into Copilot.'); },
+  export(){ toast('Saved maintain-'+S.runId+'.zip.'); },
+  'ex-add'(){ if(S.exchange && !S.exchange.attachments.includes('issue-register.xlsx')){
+      S.exchange.attachments.push('issue-register.xlsx'); show('exchange');
+      toast('The package is updated.'); } },
+  'ex-remove'(){ if(S.exchange){ S.exchange.attachments=[]; show('exchange');
+      toast('The package is updated.'); } },
+  'paste-reply'(){ const status=document.getElementById('replystatus');
+    if(status) status.innerHTML='<span class="spin"></span>&nbsp; Check the reply…';
+    const kind=S.exchange.kind;
+    setTimeout(()=>{
+      clearTimers();
+      if(kind==='plan'){ show('plan-check'); }
+      else if(kind==='build'){ toast('Applied. Your project does not change before you accept.');
+        startExchange('review'); }
+      else if(kind==='repair'){ toast('Applied.'); startExchange('review'); }
+      else if(kind==='review'){
+        if(S.reviewRound===0){ S.reviewRound=1; S.exchange=null; show('findings'); }
+        else { S.exchange=null; S.testState='running'; show('test');
+          setTimeout(()=>{ S.testState = S.testFailedOnce ? 'passed':'failed';
+            S.testFailedOnce = true;
+            show('test'); }, 1300); } }
+      else if(kind==='scan'){ S.exchange=null; S.scanChecks=[true,false]; show('scan-gate'); }
+      else if(kind==='discuss'){ S.exchange=null;
+        const issue=S.issues.find(x=>x.id===S.openIssue);
+        issue.notes.push({author:'copilot', time:'2026-07-29 11:58',
+          text:'High is right. Downstream planning multiplies the speed, so a wrong unit corrupts the totals. The smallest repair is one comment plus one conversion at the boundary.'});
+        show('issue');
+        dialog('Change the severity?','Copilot proposes severity High. Apply it?',
+          `<button class="primary" data-action="sev-apply">Apply</button>
+           <button class="ghost" data-action="dialog-close">Go back</button>`); }
+    }, 700); },
+  'plan-accept'(){ startExchange('build'); },
+  'plan-rescope'(){ noteDialog('Ask for changes','Tell Copilot what to change in the plan.','plan-rescope-send'); },
+  'plan-rescope-send'(){ const note=document.getElementById('notetext');
+    S.planNote=(note&&note.value.trim())||'Keep the plan to one task.';
+    overlay.hidden=true; startExchange('plan', true); },
+  repair(){ startExchange('repair'); },
+  'rescope-note'(){ noteDialog('Scope again','The tool starts a new plan with your note. The current work stays in the history.','plan-rescope-send'); },
+  'test-again'(){ S.testState='running'; show('test');
+    setTimeout(()=>{ S.testState='passed'; show('test');
+      toast('All checks passed.'); }, 1300); },
+  'to-save'(){ show('save'); },
+  'ask-changes'(){ noteDialog('Ask for changes','Tell Copilot what to change. The tool makes a repair package.','repair-note-send'); },
+  'repair-note-send'(){ overlay.hidden=true; startExchange('repair'); },
+  discard(){ dialog('Discard the change?',
+    'The tool closes run '+S.runId+'. Your project does not change. The history keeps the record.',
+    `<button class="primary" data-action="discard-yes">Discard</button>
+     <button class="ghost" data-action="dialog-close">Go back</button>`); },
+  'discard-yes'(){ overlay.hidden=true; show('home'); toast('The change is discarded.'); },
+  'accept-save'(){ S.delivered=true;
+    const issue=S.issues.find(x=>x.source==='review'&&x.status!=='closed');
+    if(issue){ issue.status='closed'; issue.reason='fixed'; }
+    show('done'); toast('Closed 1 issue as fixed.'); },
+  history(){ show('history'); },
+  'run-detail'(){ show('run-detail'); },
+  'go-back'(){ dialog('Go back to iteration 3?',
+    'The tool returns the work to the state after: Build applied. The later iterations stay in the history as superseded. The tool does not delete work.',
+    `<button class="primary" data-action="go-back-yes">Go back</button>
+     <button class="ghost" data-action="dialog-close">Stay here</button>`); },
+  'go-back-yes'(){ overlay.hidden=true;
+    toast('Went back. The run continues from the restored point.'); },
+  issues(){ S.closeOpen=false; show('issues'); },
+  'filter-all'(){ S.issueFilter='all'; show('issues'); },
+  'filter-open'(){ S.issueFilter='open'; show('issues'); },
+  'filter-in_work'(){ S.issueFilter='in_work'; show('issues'); },
+  'filter-closed'(){ S.issueFilter='closed'; show('issues'); },
+  'open-issue'(node){ S.openIssue=node.dataset.id; S.closeOpen=false; show('issue'); },
+  'add-issue'(){ const id='c'+Math.random().toString(16).slice(2,7);
+    S.issues.unshift({id, title:'New issue', sev:'medium', status:'open', reason:'',
+      source:'human', file:'', line:0, snippet:'', notes:[], runs:[]});
+    S.openIssue=id; S.closeOpen=false; show('issue'); },
+  'issue-save'(){ const issue=S.issues.find(x=>x.id===S.openIssue);
+    const title=screenEl.querySelector('input[type=text]');
+    if(title && title.value.trim()) issue.title=title.value.trim();
+    const sev=[...screenEl.querySelectorAll('input[name=sev]')].findIndex(r=>r.checked);
+    issue.sev=['high','medium','low'][sev]||issue.sev;
+    toast('Saved.'); show('issue'); },
+  'close-issue'(){ S.closeOpen=true; show('issue'); },
+  'close-cancel'(){ S.closeOpen=false; show('issue'); },
+  'close-as'(node){ const issue=S.issues.find(x=>x.id===S.openIssue);
+    issue.status='closed'; issue.reason=node.dataset.reason; S.closeOpen=false;
+    toast('Closed issue '+issue.id+'.'); show('issues'); },
+  reopen(){ const issue=S.issues.find(x=>x.id===S.openIssue);
+    issue.status='open'; issue.reason='';
+    toast('Reopened issue '+issue.id+'.'); show('issue'); },
+  'remove-issue'(){ dialog('Remove issue '+S.openIssue+'?',
+    'The record goes away. To keep the record, close the issue.',
+    `<button class="primary" data-action="remove-yes">Remove</button>
+     <button class="ghost" data-action="dialog-close">Go back</button>`); },
+  'remove-yes'(){ overlay.hidden=true;
+    S.issues=S.issues.filter(x=>x.id!==S.openIssue);
+    toast('Removed issue '+S.openIssue+'.'); show('issues'); },
+  scan(){ startExchange('scan'); },
+  'gate-add'(){ const boxes=[...screenEl.querySelectorAll('[data-gate]')];
+    const chosen=boxes.filter(b=>b.checked).length;
+    if(!chosen){ toast('First select one issue.'); return; }
+    if(boxes[0].checked) S.issues.unshift({id:'64f8c7',
+      title:'No upper bound on wind speed', sev:'high', status:'open', reason:'',
+      source:'scan', file:'src/loader.py', line:2,
+      snippet:'return [r for r in records if r.valid]', notes:[], runs:[]});
+    if(boxes[1].checked) S.issues.unshift({id:'9d21e0',
+      title:'Loader ignores the gust field', sev:'low', status:'open', reason:'',
+      source:'scan', file:'src/loader.py', line:4, snippet:'', notes:[], runs:[]});
+    toast('Added '+chosen+' issue'+(chosen>1?'s':'')+'.');
+    S.issueFilter='open'; show('issues'); },
+  'gate-discard'(){ toast('The scan is discarded.'); show('issues'); },
+  discuss(){ noteDialog('Discuss with Copilot','Write your question about this issue.','discuss-send'); },
+  'discuss-send'(){ const note=document.getElementById('notetext');
+    const issue=S.issues.find(x=>x.id===S.openIssue);
+    issue.notes.push({author:'you', time:'2026-07-29 11:57',
+      text:(note&&note.value.trim())||'Confirm the severity and name the smallest repair.'});
+    overlay.hidden=true; startExchange('discuss'); },
+  'sev-apply'(){ overlay.hidden=true;
+    const issue=S.issues.find(x=>x.id===S.openIssue);
+    issue.sev='high'; toast('The reply is in the issue notes.'); show('issue'); },
+  'repair-issue'(){ const issue=S.issues.find(x=>x.id===S.openIssue);
+    issue.status='in_work'; S.mode='bridge'; S.describeFiles=[];
+    show('describe'); toast('The tool starts a repair run from this issue.'); },
+  projects(){ show('projects'); },
+  'new-project'(){ dialog('New project',
+    'Write the project name. The tool creates a plain folder. Source control does not start here.',
+    `<button class="primary" data-action="new-project-yes">Create</button>
+     <button class="ghost" data-action="dialog-close">Go back</button>`); },
+  'new-project-yes'(){ overlay.hidden=true;
+    toast('Created wing-report. Add source control before you start a change.'); },
+  settings(){ show('settings'); },
+  'set-onedrive'(){ show('set-onedrive'); },
+  'set-tasks'(){ show('set-tasks'); },
+  'task-tab'(node){ S.taskTab=node.dataset.tab; show('set-tasks'); },
+  'settings-save'(){ toast('Saved.'); show('settings'); },
+  'noop-toast'(){ toast('This page is unchanged in the proposal.'); },
+  'dialog-close'(){ overlay.hidden=true; },
+  noop(){},
+};
+
+document.addEventListener('click', (event)=>{
+  const target = event.target.closest('[data-action]');
+  if(!target) return;
+  const action = ACTIONS[target.dataset.action];
+  if(action) action(target);
+});
+document.addEventListener('keydown', (event)=>{
+  if(event.key==='Escape' && !overlay.hidden){ overlay.hidden=true; }
+});
+overlay.addEventListener('click', (event)=>{
+  if(event.target===overlay) overlay.hidden=true;
+});
+
+show('home');
+</script>
+
+</body>
+</html>
