@@ -602,3 +602,19 @@ over decoration.
 - E4 The findings eyebrow names the round from round two on.
 - E5 The explain screen remembers the last audience.
 - E6 "Plan accepted." and "Repair round starts." toast as beats.
+
+### 14.7 The fourth pass (F1–F6)
+
+- F1 The recents row on Describe can no longer widen the page: three
+  chips, hard-elided, full text in the tooltip. (Defect fix.)
+- F2 After the packet leaves — link copied, file copied, exported, or
+  dragged out — the send region folds to one summary row and the
+  receive region rises above the fold. Show expands it again.
+- F3 When the window is in the background and input is needed — a
+  packet is ready, the render ends, a check fails, the save or done
+  screen arrives — the tool asks the operating system for attention
+  (the taskbar flash on Windows).
+- F4 The toast chip uses the soft accent background in both themes.
+- F5 The issue list orders by severity, then the newest change.
+- F6 The busy screen shows the elapsed seconds after five seconds.
+- Also: the window close waits for a running engine thread to settle.

@@ -193,6 +193,12 @@ class Controller(QObject):
     def stop(self) -> None:
         self.bridge.stop()
 
+    def wait_settled(self, timeout: float = 5.0) -> None:
+        """Let the engine thread finish before the process goes away."""
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout)
+
     # ----- read-only data -----
 
     def runs(self) -> list[RunSummary]:

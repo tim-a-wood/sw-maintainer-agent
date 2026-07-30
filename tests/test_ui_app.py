@@ -785,3 +785,39 @@ def test_toasts_notes_hints_and_round_context(qt_app, tmp_path, monkeypatch):
     save_ui_settings(values)
     window.show_explain()
     assert window.explain.audience_edit.text() == "the safety board"
+
+
+def test_send_region_folds_after_the_packet_leaves(qt_app, tmp_path, monkeypatch):
+    """FR-F2: the send region collapses once the packet is out."""
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="packet")
+
+    assert window.exchange._send_full.isVisibleTo(window.exchange)
+    window.exchange._copy_file()
+    assert not window.exchange._send_full.isVisibleTo(window.exchange)
+    assert window.exchange._send_summary.isVisibleTo(window.exchange)
+    assert "Sent" in window.exchange.sent_label.text()
+    window.exchange._unfold()
+    assert window.exchange._send_full.isVisibleTo(window.exchange)
+    window.controller.stop()
+    wait_until(qt_app, lambda: not window.controller.busy, message="paused")
+
+
+def test_issue_display_order_puts_high_first():
+    from types import SimpleNamespace
+    from maintain.issues import display_order
+    rows = [
+        SimpleNamespace(severity="low", updated_at="2026-07-30T10:00:00"),
+        SimpleNamespace(severity="high", updated_at="2026-07-29T10:00:00"),
+        SimpleNamespace(severity="medium", updated_at="2026-07-30T09:00:00"),
+        SimpleNamespace(severity="high", updated_at="2026-07-30T08:00:00"),
+    ]
+    ordered = display_order(rows)
+    assert [item.severity for item in ordered] == [
+        "high", "high", "medium", "low"]
+    assert ordered[0].updated_at > ordered[1].updated_at

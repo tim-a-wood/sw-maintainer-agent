@@ -48,6 +48,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def display_order(issues: list) -> list:
+    """Severity first (high to low), then the newest change first."""
+    rank = {"high": 0, "medium": 1, "low": 2}
+    by_recency = sorted(issues, key=lambda issue: issue.updated_at,
+                        reverse=True)
+    return sorted(by_recency,
+                  key=lambda issue: rank.get(issue.severity, 3))
+
+
 def fingerprint(kind: str, file: str, snippet: str, title: str = "") -> str:
     """A stable identity: kind + file + the significant snippet characters.
 

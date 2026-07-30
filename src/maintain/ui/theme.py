@@ -73,7 +73,7 @@ QWidget {{ color: {p.ink}; font-size: 13px;
 #StageBar {{ background: {p.surface}; border-bottom: 1px solid {p.bar}; }}
 #FootBar {{ background: {p.bar}; border-top: 1px solid {p.edge}; }}
 
-QFrame#Toast {{ background: {p.surface}; border: 1px solid {p.accent};
+QFrame#Toast {{ background: {p.accent_soft}; border: 1px solid {p.accent};
                 border-radius: 9px; }}
 QLabel#ToastText {{ color: {p.ink}; font-size: 13px; font-weight: 600; }}
 #FootLabel {{ color: {p.dim}; font-size: 11px; }}

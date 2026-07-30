@@ -352,6 +352,12 @@ class ExchangeScreen(Screen):
         send_head = QLabel(text("exchange.send.head").upper())
         send_head.setObjectName("SendHead")
         send_column.addWidget(send_head)
+        self._send_full = QWidget()
+        full_column = QVBoxLayout(self._send_full)
+        full_column.setContentsMargins(0, 0, 0, 0)
+        full_column.setSpacing(9)
+        send_column.addWidget(self._send_full)
+        send_column = full_column
         self.send_lead = label(text("send.lead"), "Lead")
         send_column.addWidget(self.send_lead)
         focus_row = QHBoxLayout()
@@ -366,6 +372,7 @@ class ExchangeScreen(Screen):
         self._focus_holder.setLayout(focus_row)
         send_column.addWidget(self._focus_holder)
         self.card = PacketCard()
+        self.card.drag_started.connect(self._mark_sent)
         send_column.addWidget(self.card)
         self.contents = label("", "Hint")
         send_column.addWidget(self.contents)
@@ -405,8 +412,20 @@ class ExchangeScreen(Screen):
         buttons_holder = QWidget()
         buttons_holder.setLayout(buttons_row)
         send_column.addWidget(buttons_holder)
+        outer_send = self._send_full.parentWidget().layout()
+        summary_row = QHBoxLayout()
+        summary_row.setSpacing(10)
+        self.sent_label = label("", "Dim")
+        summary_row.addWidget(self.sent_label)
+        summary_row.addWidget(button(text("exchange.sent.show"), "Ghost",
+                                     self._unfold))
+        summary_row.addStretch(1)
+        self._send_summary = QWidget()
+        self._send_summary.setLayout(summary_row)
+        self._send_summary.setVisible(False)
+        outer_send.addWidget(self._send_summary)
         self.send_status = StatusLine()
-        send_column.addWidget(self.send_status)
+        outer_send.addWidget(self.send_status)
         self.add(send_frame)
         self.add_gap(2)
 
@@ -471,6 +490,7 @@ class ExchangeScreen(Screen):
                     else "receive.lead.json")
         self.lead.setText(text(lead_key))
         self.paste_button.setVisible(not zip_reply)
+        self._unfold()
         self.send_status.set_state("plain", "")
         self.status.set_state("plain", "")
         self._wait_start = time.monotonic()
@@ -509,6 +529,18 @@ class ExchangeScreen(Screen):
     def _emit_focus(self) -> None:
         self.scan_focus.emit(self.focus_edit.text().strip())
 
+    def _mark_sent(self) -> None:
+        """FR-F2: the packet left; the send region folds to one row."""
+        if self.handoff is not None:
+            self.sent_label.setText(text(
+                "exchange.sent", name=self.handoff.zip_path.name))
+        self._send_full.setVisible(False)
+        self._send_summary.setVisible(True)
+
+    def _unfold(self) -> None:
+        self._send_full.setVisible(True)
+        self._send_summary.setVisible(False)
+
     # ---- send side ----
 
     def maybe_auto_link(self) -> None:
@@ -528,6 +560,7 @@ class ExchangeScreen(Screen):
         mime.setUrls([QUrl.fromLocalFile(str(self.card.packet_path))])
         QGuiApplication.clipboard().setMimeData(mime)
         self.send_status.set_state("ok", text("send.file.copied"))
+        self._mark_sent()
 
     def _copy_link(self) -> None:
         if self.handoff is None:
@@ -563,9 +596,11 @@ class ExchangeScreen(Screen):
         else:
             self.send_status.set_state(
                 "plain", f"{text('send.link.paste')} {text('send.link.manual')}")
+        self._mark_sent()
 
     def mark_exported(self, name: str) -> None:
         self.send_status.set_state("ok", text("send.exported", name=name))
+        self._mark_sent()
 
     # ---- receive side ----
 
@@ -1763,11 +1798,27 @@ class BusyScreen(Screen):
         self.status = label("", "Lead")
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.add(self.status)
+        self.elapsed = label("", "Hint")
+        self.elapsed.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.add(self.elapsed)
+        self._started = time.monotonic()
+        self._tick_timer = QTimer(self)
+        self._tick_timer.setInterval(1000)
+        self._tick_timer.timeout.connect(self._tick)
+        self._tick_timer.start()
+
+    def _tick(self) -> None:
+        if not self.isVisible():
+            return
+        seconds = int(time.monotonic() - self._started)
+        self.elapsed.setText(f"{seconds} s" if seconds >= 5 else "")
 
     def show_message(self, message: str) -> None:
         self.spinner.start()
         self.title.setText(message or text("working.busy"))
         self.status.setText("")
+        self._started = time.monotonic()
+        self.elapsed.setText("")
 
     def on_progress(self, phase: str, label_key: str, message: str) -> None:
         if phase in {"start", "complete"}:

@@ -104,6 +104,8 @@ STR: dict[str, str] = {
     "exchange.accepted.review": "The review is in.",
     "exchange.waiting": "The tool waits for the reply. {time}",
     "exchange.copy.key": "Ctrl+C copies the package link again.",
+    "exchange.sent": "Sent · {name}",
+    "exchange.sent.show": "Show",
     "exchange.newest": "Open the newest download",
     "exchange.newest.none": "No new file is in the Downloads folder.",
     "exchange.newest.wrong": "The newest download is not the reply: {name}",

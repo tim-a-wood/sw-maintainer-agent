@@ -22,7 +22,7 @@ from maintain.issue_packets import (SideExchange, build_side_packet,
                                     explain_dir, explain_request,
                                     scan_candidates, scan_request,
                                     side_packet_dir)
-from maintain.issues import CLOSED
+from maintain.issues import CLOSED, display_order
 from maintain.models import RunRecord, RunState
 from maintain.providers.command import parse_response
 from maintain.render import render_scene
@@ -102,6 +102,13 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "_toasts"):
             self._toasts.reposition()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """A running engine pauses and settles before the window dies."""
+        if self.controller.busy:
+            self.controller.stop()
+            self.controller.wait_settled()
+        super().closeEvent(event)
 
     # ----- construction -----
 
@@ -473,7 +480,8 @@ class MainWindow(QMainWindow):
     # ----- issues -----
 
     def show_issues(self) -> None:
-        self.issues_list.show_issues(self.controller.issues.load())
+        self.issues_list.show_issues(
+            display_order(self.controller.issues.load()))
         self._set_run_footer(False)
         self.show_screen("issues")
 
@@ -776,6 +784,7 @@ class MainWindow(QMainWindow):
             state["tail"] = result.output_tail
             self.explain_result.show_failed(result.message, result.output_tail)
         self.explain_result.show_findings(findings)
+        self._attention()
 
     def _open_explain_video(self) -> None:
         state = self._explain or {}
@@ -856,6 +865,12 @@ class MainWindow(QMainWindow):
 
     # ----- bridge: packets -----
 
+    def _attention(self) -> None:
+        """FR-F3: flash the taskbar when input is needed and the window
+        is in the background."""
+        if not self.isActiveWindow():
+            QApplication.alert(self, 0)
+
     def _packet_ready(self, handoff: PacketHandoff) -> None:
         self.current_handoff = handoff
         if self._pending_issue_link:
@@ -869,6 +884,7 @@ class MainWindow(QMainWindow):
                                    documents_count(self.store,
                                                    handoff.task_key))
         self.show_screen("exchange")
+        self._attention()
 
     def _packet_names(self) -> list[str]:
         if self._side is not None:
@@ -1036,6 +1052,7 @@ class MainWindow(QMainWindow):
         self._set_stage(3)
         self.test.show_failed(results)
         self.show_screen("test")
+        self._attention()
 
     def _accept_plan(self) -> None:
         self.toast(text("beat.plan.accepted"))
@@ -1065,6 +1082,8 @@ class MainWindow(QMainWindow):
         self.current_record = record
         self._in_test = False
         state = RunState(record.state)
+        if state in {RunState.AWAITING_ACCEPTANCE, RunState.DELIVERED}:
+            self._attention()
         if state is RunState.AWAITING_ACCEPTANCE:
             if self.stack.currentWidget() is self.test:
                 self.test.mark_passed()
