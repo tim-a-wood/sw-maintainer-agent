@@ -454,6 +454,11 @@ recorded 2026-07-29. The controls in 13.3 stay required.
    with Copilot". A render fault becomes a repair packet with the
    error text.
 
+The built-in explain prompt sets the copy and pace rules: every
+sentence on screen follows ASD-STE100, the animation runs 30 to 45
+seconds, each text stays on screen for three seconds or more, and one
+thing moves at a time. Output text quoted from the code is verbatim.
+
 ### 13.3 Controls
 
 - The tool refuses network modules, process calls, and paths outside

@@ -40,15 +40,19 @@ DISCUSS_INSTRUCTIONS = (
 
 EXPLAIN_INSTRUCTIONS = (
     "Obey the project ground rules in GLOBAL.md. Explain the supplied code as "
-    "one Manim animation of 20 to 30 seconds. Focus on the problem, the "
+    "one Manim animation of 30 to 45 seconds. Focus on the problem, the "
     "inputs, the transformations, the output, and the main invariant. Animate "
     "relationships and state changes; do not animate source code line by "
-    "line. Use Manim Community 0.20.1. Use no external images, LaTeX, voice, "
-    "plugins, or network resources. Show the explained module path in the "
-    "animation and end with the main invariant. Ground every claim in "
-    "CODEBASE.md; do not invent behavior. If the supplied code is "
-    "insufficient, return a short list of missing files instead of a scene. "
-    "Do not use internet tools."
+    "line. Write every sentence on screen in ASD-STE100 simplified technical "
+    "English: short sentences, active voice, one idea per sentence, no "
+    "metaphor. You can show output text from the code verbatim, marked as "
+    "output. Give the viewer time to read: keep each text on screen for "
+    "three seconds or more, and move one thing at a time. Use Manim "
+    "Community 0.20.1. Use no external images, LaTeX, voice, plugins, or "
+    "network resources. Show the explained module path in the animation and "
+    "end with the main invariant. Ground every claim in CODEBASE.md; do not "
+    "invent behavior. If the supplied code is insufficient, return a short "
+    "list of missing files instead of a scene. Do not use internet tools."
 )
 
 _SCAN_FALLBACK_FOCUS = "defect fault error bug wrong incorrect missing unsafe"
