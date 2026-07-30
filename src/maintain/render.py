@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 RENDER_TIMEOUT_SECONDS = 600
+SHEET_TIMEOUT_SECONDS = 120
 OUTPUT_TAIL_BYTES = 4000
 
 
@@ -17,10 +18,30 @@ class RenderResult:
     message: str
     output_tail: str = ""
     video: Path | None = None
+    sheet: Path | None = None
 
 
 def manim_available(command: str) -> bool:
     return shutil.which(command) is not None
+
+
+def contact_sheet(video: Path, work_dir: Path) -> Path | None:
+    """One PNG with a frame each three seconds; best effort."""
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        return None
+    sheet = Path(work_dir) / "sheet.png"
+    try:
+        completed = subprocess.run(
+            [ffmpeg, "-y", "-v", "error", "-i", str(video),
+             "-vf", "select='not(mod(n,180))',scale=480:-2,tile=4x4",
+             "-frames:v", "1", str(sheet)],
+            capture_output=True, text=True, timeout=SHEET_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0 or not sheet.is_file():
+        return None
+    return sheet
 
 
 def render_scene(source: str, work_dir: Path, *, manim_command: str,
@@ -57,4 +78,5 @@ def render_scene(source: str, work_dir: Path, *, manim_command: str,
                             message="The render ended but made no video.",
                             output_tail=tail)
     return RenderResult(ok=True, message="The render is complete.",
-                        output_tail=tail, video=videos[-1])
+                        output_tail=tail, video=videos[-1],
+                        sheet=contact_sheet(videos[-1], work_dir))

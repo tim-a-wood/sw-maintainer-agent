@@ -1273,11 +1273,13 @@ class ExplainResultScreen(Screen):
                    self.open_folder.emit),
             button(text("explain.done"), "Ghost", self.done.emit))
         self.add(label(text("explain.saved.note"), "Hint"))
+        self._output_tail = ""
 
     def show_running(self, folder: str) -> None:
         self.render_chip.set_state("RUN", "accent")
         self.status.set_state("busy", text("explain.render.running"))
         self.folder_label.setText(folder)
+        self._output_tail = ""
         self.tail_view.setVisible(False)
         self.video_button.setVisible(False)
         self.repair_button.setVisible(False)
@@ -1293,9 +1295,23 @@ class ExplainResultScreen(Screen):
     def show_failed(self, message: str, tail: str) -> None:
         self.render_chip.set_state("FAIL", "fail")
         self.status.set_state("bad", message or text("explain.render.failed"))
-        self.tail_view.setPlainText(tail[-4000:])
+        self._output_tail = tail[-4000:]
+        self.tail_view.setPlainText(self._output_tail)
         self.tail_view.setVisible(bool(tail.strip()))
         self.video_button.setVisible(False)
+        self.repair_button.setVisible(True)
+        self.repair_hint.setVisible(True)
+
+    def show_findings(self, findings: list) -> None:
+        """Quality findings never block; they show above the output tail."""
+        if not findings:
+            return
+        block = (text("explain.findings.head") + "\n"
+                 + "\n".join(f"- {item}" for item in findings))
+        if self._output_tail.strip():
+            block = block + "\n\n" + self._output_tail
+        self.tail_view.setPlainText(block)
+        self.tail_view.setVisible(True)
         self.repair_button.setVisible(True)
         self.repair_hint.setVisible(True)
 

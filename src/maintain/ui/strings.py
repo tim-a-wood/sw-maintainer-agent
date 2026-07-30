@@ -285,10 +285,14 @@ STR: dict[str, str] = {
     "explain.open.video": "Open the video",
     "explain.open.folder": "Open the folder",
     "explain.repair": "Repair with Copilot",
-    "explain.repair.sub": "The tool makes a repair package with the render error.",
+    "explain.repair.sub": "The tool makes a repair package with the render "
+                          "error and the check findings.",
     "explain.done": "Done",
     "explain.discarded": "The explanation is discarded.",
-    "explain.saved.note": "The scene and the video stay in the folder.",
+    "explain.findings.head": "The local checks found faults. Repair sends "
+                             "them to Copilot.",
+    "explain.saved.note": "The scene, the video, and the frame sheet stay "
+                          "in the folder.",
 
     # Explain settings
     "settings.explain": "Explain",

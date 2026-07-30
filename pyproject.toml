@@ -35,3 +35,6 @@ Repository = "https://github.com/tim-a-wood/sw-maintainer-agent"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+maintain = ["data/explain/*.md"]

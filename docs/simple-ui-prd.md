@@ -458,6 +458,10 @@ The built-in explain prompt sets the copy and pace rules: every
 sentence on screen follows ASD-STE100, the animation runs 30 to 45
 seconds, each text stays on screen for three seconds or more, and one
 thing moves at a time. Output text quoted from the code is verbatim.
+The scene starts with a literal BEATS list of (text, seconds) pairs,
+and text goes only in three named zones: the title band, the content,
+and the note band. Each explain packet ships two guides as
+attachments: PITFALLS.md and EXAMPLE-SCENE.md.
 
 ### 13.3 Controls
 
@@ -468,6 +472,16 @@ thing moves at a time. Output text quoted from the code is verbatim.
   names the untrusted-code risk.
 - The tool does not install Manim. A plain message shows when Manim
   is absent.
+- Local checks run on each scene reply, and never block: the BEATS
+  manifest; the copy (20 words for one sentence, active voice, a
+  banned-word list); the pace (three seconds or more for each text,
+  20 characters each second or less, 25 to 50 seconds in total); and
+  a geometry probe that runs the scene without output and reports
+  text outside the frame or text wider than its card. Findings show
+  on the result screen and travel in the repair packet as
+  payload.lint_findings.
+- After a good render the tool makes sheet.png: one frame each three
+  seconds, for a fast review of every beat.
 
 ### 13.4 Install and update
 
@@ -486,3 +500,18 @@ thing moves at a time. Output text quoted from the code is verbatim.
 - "Explain this change" from a saved run.
 - All items in section 11 of the handover document: browser control,
   batch generation, voice, publishing, agents, plugins.
+
+### 13.6 Lent concepts
+
+- The geometry probe follows SGA (arXiv 2607.18116): run the scene,
+  read the boxes, report conflicts. No vision model.
+- The named zones and the fit-to-card guard follow Code2Video
+  (showlab) and ManimAgentPrompts (mathifylabs).
+- The BEATS manifest follows manimator and TheoremExplainAgent: plan
+  the text and the time first, then the code.
+- The contact sheet follows makefinks/manim-generator: review frames,
+  not the full video.
+- The pace numbers follow the BBC and Netflix caption rules and the
+  Szarkowska 2018 eye-tracking study.
+- The pitfalls file follows ManimAgent: keep known faults as rules in
+  every packet.

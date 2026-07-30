@@ -191,6 +191,9 @@ def _task_markdown(
             "The scene file must import from `manim` only and contain exactly one `Scene` "
             "subclass. It must render without user input, and use no network access, no "
             "LaTeX, no external assets, no secrets, and no paths outside its own folder. "
+            "It must start with a literal `BEATS` list of `(text, seconds)` pairs in "
+            "animation order. Text goes only in the named zones (title band, content, "
+            "note band), and text inside a card must scale to fit the card. "
             "Show the explained module path inside the animation and end with the main "
             "invariant. If the supplied code is insufficient, return a short list of missing "
             "files instead of a code block."
@@ -287,10 +290,13 @@ def _task_markdown(
         "```python\n"
         "from manim import Scene, Text, FadeIn\n"
         "\n"
+        'BEATS = [("The one-line story.", 4.0)]\n'
+        "\n"
         "\n"
         "class ModuleExplainScene(Scene):\n"
         "    def construct(self):\n"
-        '        self.play(FadeIn(Text("The one-line story")))\n'
+        '        self.play(FadeIn(Text("The one-line story.")))\n'
+        "        self.wait(3.0)\n"
         "```\n"
     )
     example = (

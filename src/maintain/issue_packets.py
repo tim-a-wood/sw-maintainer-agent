@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.resources
 import secrets
 from dataclasses import dataclass
 from datetime import datetime
@@ -47,12 +48,19 @@ EXPLAIN_INSTRUCTIONS = (
     "English: short sentences, active voice, one idea per sentence, no "
     "metaphor. You can show output text from the code verbatim, marked as "
     "output. Give the viewer time to read: keep each text on screen for "
-    "three seconds or more, and move one thing at a time. Use Manim "
-    "Community 0.20.1. Use no external images, LaTeX, voice, plugins, or "
-    "network resources. Show the explained module path in the animation and "
-    "end with the main invariant. Ground every claim in CODEBASE.md; do not "
-    "invent behavior. If the supplied code is insufficient, return a short "
-    "list of missing files instead of a scene. Do not use internet tools."
+    "three seconds or more, and move one thing at a time. Start the file "
+    "with a literal BEATS list: one (text, seconds) pair for each step, in "
+    "animation order. Place text only in three zones: the title band at the "
+    "top, the content in the middle, and the note band at the bottom. Keep "
+    "each line on screen at or below 42 characters. When text sits in a "
+    "card, add a guard that scales the text to fit the card. Use "
+    "attachments/PITFALLS.md and attachments/EXAMPLE-SCENE.md as guides. "
+    "Use Manim Community 0.20.1. Use no external images, LaTeX, voice, "
+    "plugins, or network resources. Show the explained module path in the "
+    "animation and end with the main invariant. Ground every claim in "
+    "CODEBASE.md; do not invent behavior. If the supplied code is "
+    "insufficient, return a short list of missing files instead of a scene. "
+    "Do not use internet tools."
 )
 
 _SCAN_FALLBACK_FOCUS = "defect fault error bug wrong incorrect missing unsafe"
@@ -122,7 +130,8 @@ def discuss_request(config: ProjectConfig, issue: Issue,
 
 def explain_request(config: ProjectConfig, files: Sequence[str], goal: str,
                     audience: str, *, previous_scene: str = "",
-                    render_error: str = "") -> ProviderRequest:
+                    render_error: str = "",
+                    findings: Sequence[str] = ()) -> ProviderRequest:
     selector = ContextSelector(config.repository,
                                config.source_roots + config.test_roots,
                                config.exclude_paths, config.max_file_bytes)
@@ -147,6 +156,12 @@ def explain_request(config: ProjectConfig, files: Sequence[str], goal: str,
             "payload.render_error holds the error and payload.previous_scene "
             "holds the file. Return one corrected complete scene file."
         )
+    if findings:
+        payload["lint_findings"] = list(findings)
+        instructions = (
+            f"{instructions} payload.lint_findings lists copy, pace, and "
+            "layout faults from the local checks; correct each one."
+        )
     return ProviderRequest(
         schema_version=1,
         run_id=f"explain-{_stamp()}-{secrets.token_hex(2)}",
@@ -160,12 +175,25 @@ def explain_dir(config: ProjectConfig, run_id: str) -> Path:
     return Path(config.runtime_root).parent / "explain" / run_id
 
 
+def explain_attachments() -> list[Path]:
+    """The pitfalls guide and the gold example scene, shipped with the app."""
+    try:
+        root = Path(str(importlib.resources.files("maintain") / "data"
+                        / "explain"))
+    except (ModuleNotFoundError, TypeError):
+        return []
+    if not root.is_dir():
+        return []
+    return sorted(root.glob("*.md"))
+
+
 def build_side_packet(exchange: SideExchange, config: ProjectConfig,
                       attachments: Sequence[Path]) -> PacketBuild:
+    extra = explain_attachments() if exchange.kind == "explain" else []
     return build_packet(
         exchange.request, exchange.directory,
         policy=config.package, repository=config.repository,
-        config_dir=config.path.parent, attachments=attachments)
+        config_dir=config.path.parent, attachments=[*attachments, *extra])
 
 
 def side_packet_dir(config: ProjectConfig, run_id: str) -> Path:

@@ -569,6 +569,7 @@ def test_explain_flow_render_repair_and_settings(qt_app, tmp_path, monkeypatch):
     wait_until(qt_app, lambda: window.explain_result.render_chip.text() == "FAIL",
                message="failed render")
     assert "Boom on line 3" in window.explain_result.tail_view.toPlainText()
+    assert "BEATS" in window.explain_result.tail_view.toPlainText()
     assert window.explain_result.repair_button.isVisibleTo(window.explain_result)
 
     # Repair: the new packet carries the error; a good stub then passes.

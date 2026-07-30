@@ -26,6 +26,8 @@ from maintain.models import RunRecord, RunState
 from maintain.providers.command import parse_response
 from maintain.render import render_scene
 from maintain.scene_check import scene_class_name
+from maintain.scene_probe import probe_scene
+from maintain.scene_quality import quality_findings
 from maintain.providers.manual_ui import PacketHandoff
 from maintain.repository_memory import load_ui_settings, save_ui_settings
 
@@ -665,12 +667,14 @@ class MainWindow(QMainWindow):
 
     def _launch_explain(self, sources: list, goal: str, audience: str,
                         previous_scene: str = "",
-                        render_error: str = "") -> None:
+                        render_error: str = "",
+                        findings: list | None = None) -> None:
         config = self.store.config
         try:
             request = explain_request(
                 config, sources, goal, audience,
-                previous_scene=previous_scene, render_error=render_error)
+                previous_scene=previous_scene, render_error=render_error,
+                findings=findings or ())
             exchange = SideExchange(
                 kind="explain", request=request,
                 directory=explain_dir(config, request.run_id) / "packets")
@@ -681,35 +685,45 @@ class MainWindow(QMainWindow):
         self._explain = {"sources": sources, "goal": goal,
                          "audience": audience, "run_id": request.run_id,
                          "source": "", "tail": "", "video": None,
+                         "sheet": None, "findings": [],
                          "dir": explain_dir(config, request.run_id)}
         self._show_side(exchange, packet, reply_kind="scene")
 
     def _explain_reply(self, source: str) -> None:
         state = self._explain or {}
         state["source"] = source
+        state["findings"] = quality_findings(source)
         work = Path(state["dir"]) / "render"
+        probe_dir = Path(state["dir"]) / "probe"
         self._end_side()
         self.explain_result.show_running(str(work))
+        self.explain_result.show_findings(state["findings"])
         self.show_screen("explain-result")
         command = str(load_ui_settings().get("manim_command", "manim"))
         class_name = scene_class_name(source)
 
         def work_thread() -> None:
+            geometry = probe_scene(source, probe_dir, class_name)
             result = render_scene(source, work, manim_command=command,
                                   scene_class=class_name)
-            self.explain_render_done.emit(result)
+            self.explain_render_done.emit((geometry, result))
 
         threading.Thread(target=work_thread, daemon=True,
                          name="maintain-render").start()
 
-    def _explain_render_done(self, result) -> None:
+    def _explain_render_done(self, outcome) -> None:
         state = self._explain or {}
+        geometry, result = outcome
+        findings = list(state.get("findings", [])) + list(geometry)
+        state["findings"] = findings
         if result.ok:
             state["video"] = result.video
+            state["sheet"] = result.sheet
             self.explain_result.show_passed()
         else:
             state["tail"] = result.output_tail
             self.explain_result.show_failed(result.message, result.output_tail)
+        self.explain_result.show_findings(findings)
 
     def _open_explain_video(self) -> None:
         state = self._explain or {}
@@ -728,7 +742,8 @@ class MainWindow(QMainWindow):
         self._launch_explain(state["sources"], state["goal"],
                              state["audience"],
                              previous_scene=state.get("source", ""),
-                             render_error=state.get("tail", ""))
+                             render_error=state.get("tail", ""),
+                             findings=state.get("findings", []))
 
     def _explain_settings_saved(self) -> None:
         values = load_ui_settings()
