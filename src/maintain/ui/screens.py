@@ -1251,7 +1251,9 @@ class IssuesScreen(Screen):
         self.clear_layout(self._rows)
         shown = [issue for issue in self._issues if self._matches(issue)]
         closed = sum(1 for issue in self._issues if issue.status == "closed")
-        if not shown and closed and self._filter in {"open", "in_work"}:
+        none_open = not any(issue.status != "closed"
+                            for issue in self._issues)
+        if not shown and closed and none_open and self._filter != "closed":
             self.empty.setText(text("issues.allclear", count=closed))
         else:
             self.empty.setText(text("issues.empty"))
