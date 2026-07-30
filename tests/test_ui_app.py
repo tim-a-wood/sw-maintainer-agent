@@ -387,6 +387,56 @@ def test_projects_screen_lists_creates_switches_and_removes(
     assert created.is_dir()
 
 
+def test_foot_chip_names_the_project_and_switches_in_one_click(
+        qt_app, tmp_path, monkeypatch):
+    from maintain.repository_memory import remember_repository
+    from maintain.ui import projects as project_ops
+    from maintain.ui.strings import text as ui_text
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    remember_repository(config.repository)
+    second = tmp_path / "second"
+    second.mkdir()
+    _git(second, "init", "-b", "main")
+    project_ops.ensure_config(second)
+    remember_repository(second)
+
+    window = MainWindow(config)
+    window.toast = lambda *args, **kwargs: None
+    # The chip names the open project, and stays as the screens change.
+    assert window.foot_project.text() == "project ▾"
+    window.show_issues()
+    assert window.foot_project.text() == "project ▾"
+
+    # The menu lists both projects; the open one carries the check mark.
+    menu = window._project_menu()
+    entries = [action for action in menu.actions() if not action.isSeparator()]
+    labels = [action.text() for action in entries]
+    assert labels[-1] == ui_text("projects.all")
+    assert "project" in labels and "second" in labels
+    current = next(a for a in entries if a.text() == "project")
+    assert current.isChecked()
+
+    # One click on the other entry switches the whole window.
+    next(a for a in entries if a.text() == "second").trigger()
+    assert window.store.config.repository == second.resolve()
+    assert window.foot_project.text() == "second ▾"
+    assert _screen(window) == "home"
+
+    # The last entry opens the full projects screen.
+    menu = window._project_menu()
+    menu.actions()[-1].trigger()
+    assert _screen(window) == "projects"
+
+    # Long names elide in the chip; the tooltip keeps the full name.
+    from maintain.ui.app import chip_name
+    long_name = "a-very-long-project-name-indeed"
+    assert chip_name(long_name).endswith("…")
+    assert len(chip_name(long_name)) == 24
+    window._set_project_chip(long_name)
+    assert long_name in window.foot_project.toolTip()
+
+
 def test_issue_crud_from_the_screens(qt_app, tmp_path, monkeypatch):
     from maintain.ui.strings import text as ui_text
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))

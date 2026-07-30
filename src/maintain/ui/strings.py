@@ -226,6 +226,9 @@ STR: dict[str, str] = {
     "projects.removed": "Removed {name} from the list.",
     "projects.opened": "Opened {name}.",
     "projects.busy": "First stop the run. Then change the project.",
+    "projects.all": "All projects…",
+    "foot.project.tip": "This is the open project. Select it to open a "
+                        "different project.",
 
     # Issues
     "issues.title": "Issues",

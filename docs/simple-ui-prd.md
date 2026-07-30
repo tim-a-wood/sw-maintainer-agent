@@ -663,3 +663,14 @@ owner asked whether those use cases got the same attention.
 - I4 The issue form has an editable Reference field; the store
   records reference changes as events.
 - I5 The filter tabs carry counts when issues exist.
+
+### 14.11 The project chip
+
+The foot bar starts with a project chip that names the open project on
+every screen (long names elide at 24 characters; the tooltip keeps the
+full name). One click pops a menu of the known projects, most recent
+first, with a check mark on the open one and each non-ready state
+labeled. One more click switches through the same guarded path as the
+Projects screen (busy runs refuse with a toast; setup and missing
+states keep their prompts). The last entry, "All projects…", opens the
+full Projects screen for create, add, and remove.

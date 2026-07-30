@@ -6,11 +6,11 @@ import shutil
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, QUrl, Qt, Signal
+from PySide6.QtCore import QPoint, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit,
-                               QMainWindow, QMessageBox, QPlainTextEdit,
+                               QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
                                QPushButton, QStackedWidget, QVBoxLayout,
                                QWidget)
 
@@ -51,6 +51,11 @@ from .strings import text
 from .widgets import StageHeader, ToastStack
 
 STAGE_FOR_TASK = {"plan": 0, "build": 1, "repair": 1, "review": 2}
+
+
+def chip_name(name: str) -> str:
+    """The foot chip keeps its width; long project names elide hard."""
+    return name if len(name) <= 24 else name[:23] + "…"
 
 
 def saved_theme() -> str:
@@ -149,7 +154,13 @@ class MainWindow(QMainWindow):
         bar = QWidget()
         bar.setObjectName("FootBar")
         row = QHBoxLayout(bar)
-        row.setContentsMargins(14, 6, 10, 6)
+        row.setContentsMargins(8, 6, 10, 6)
+        self.foot_project = QPushButton("")
+        self.foot_project.setObjectName("FootProject")
+        self.foot_project.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.foot_project.clicked.connect(self._pick_project)
+        row.addWidget(self.foot_project)
+        self._set_project_chip(self.store.config.name)
         self.foot_label = QLabel("")
         self.foot_label.setObjectName("FootLabel")
         row.addWidget(self.foot_label)
@@ -452,7 +463,46 @@ class MainWindow(QMainWindow):
         self._build_screens()
         self._wire_controller()
         self.setWindowTitle(f"{text('app.title')} — {config.name}")
+        self._set_project_chip(config.name)
         self.show_home()
+
+    def _set_project_chip(self, name: str) -> None:
+        self.foot_project.setText(f"{chip_name(name)} ▾")
+        tip = text("foot.project.tip")
+        self.foot_project.setToolTip(
+            f"{name}\n{tip}" if len(name) > 24 else tip)
+
+    def _project_menu(self) -> QMenu:
+        """One click on the foot chip lists every project; one more switches."""
+        menu = QMenu(self)
+        current = Path(self.store.config.repository).resolve()
+        rows = project_ops.project_rows()
+        if not any(Path(row.path).resolve() == current for row in rows):
+            rows.insert(0, project_ops.ProjectRow(
+                path=current, name=self.store.config.name,
+                status=project_ops.READY))
+        for row in rows:
+            label = row.name
+            if row.status != project_ops.READY:
+                label = f"{row.name} — {text('projects.state.' + row.status)}"
+            action = menu.addAction(label)
+            if Path(row.path).resolve() == current:
+                action.setCheckable(True)
+                action.setChecked(True)
+            else:
+                action.triggered.connect(
+                    lambda checked=False, value=str(row.path):
+                    self._open_project(value))
+        menu.addSeparator()
+        menu.addAction(text("projects.all"), self.show_projects)
+        return menu
+
+    def _pick_project(self) -> None:
+        menu = self._project_menu()
+        menu.aboutToHide.connect(menu.deleteLater)
+        corner = self.foot_project.mapToGlobal(QPoint(0, 0))
+        menu.popup(QPoint(corner.x(),
+                          corner.y() - menu.sizeHint().height() - 4))
 
     def _open_project(self, path_value: str) -> None:
         if self.controller.busy:

@@ -77,6 +77,18 @@ QFrame#Toast {{ background: {p.accent_soft}; border: 1px solid {p.accent};
                 border-radius: 9px; }}
 QLabel#ToastText {{ color: {p.ink}; font-size: 13px; font-weight: 600; }}
 #FootLabel {{ color: {p.dim}; font-size: 11px; }}
+QPushButton#FootProject {{ color: {p.ink}; background: {p.chip};
+    border: 1px solid {p.chip_edge}; border-radius: 6px;
+    padding: 4px 10px; font-size: 11.5px; font-weight: 600; }}
+QPushButton#FootProject:hover {{ color: {p.accent}; background: {p.accent_soft};
+                                 border-color: {p.accent}; }}
+QMenu {{ background: {p.surface}; color: {p.ink};
+         border: 1px solid {p.edge}; border-radius: 6px; padding: 5px; }}
+QMenu::item {{ padding: 6px 22px 6px 10px; border-radius: 5px;
+               font-size: 12px; }}
+QMenu::item:selected {{ background: {p.accent_soft}; color: {p.accent}; }}
+QMenu::item:disabled {{ color: {p.faint}; }}
+QMenu::separator {{ height: 1px; background: {p.edge}; margin: 5px 6px; }}
 QStatusBar {{ background: {p.bar}; color: {p.dim}; font-size: 11.5px; }}
 
 QLabel#Title {{ font-size: 19px; font-weight: 600; }}
