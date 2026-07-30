@@ -186,12 +186,16 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     build_handoff = window.current_handoff
     window.exchange.check(path=_build_zip(build_handoff, tmp_path))
 
-    # Review packet: approve.
+    # Review packet: the reply arrives while the person is on another
+    # screen; the window catches it (FR-G1).
     wait_until(qt_app, lambda: _screen(window) == "exchange"
                and window.current_handoff.task_key == "review",
                message="review packet")
     review_handoff = window.current_handoff
-    window.exchange.check(clipboard_text=_review_reply(review_handoff))
+    window.show_history()
+    assert _screen(window) == "history"
+    assert window.exchange.reply_open
+    window._route_reply(clipboard_text=_review_reply(review_handoff))
 
     # Checks pass and the Save screen appears.
     wait_until(qt_app, lambda: _screen(window) == "save", message="save screen")
@@ -228,6 +232,15 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     assert "iterations" in window.done.stat_line.text()
     window.done._copy_merge()
     assert QApplication.clipboard().text().startswith("git merge --no-ff ")
+    assert window.done.first_note.isVisibleTo(window.done)
+    window.done._copy_note()
+    note = QApplication.clipboard().text()
+    assert note.startswith("Saved: Change the value to after.")
+    assert "app.py" in note and "Branch: maintain/" in note
+    window.done.explain_change.emit()
+    assert _screen(window) == "explain"
+    assert "Explain this change" in window.explain.goal_edit.toPlainText()
+    assert window.explain.files and window.explain.files[0].name == "app.py"
     window.show_home()
     assert window.home.momentum.isVisibleTo(window.home)
     assert "1 saved change" in window.home.momentum.text()
@@ -433,6 +446,13 @@ def test_repair_bridge_prefills_and_links_the_run(qt_app, tmp_path, monkeypatch)
     assert linked.status == "in_work"
     window.controller.stop()
     wait_until(qt_app, lambda: not window.controller.busy, message="paused")
+
+    # FR-G4: the issue shows its linked run; one click opens the timeline.
+    window._open_issue(issue.id)
+    assert window.issue_detail.run_button.isVisibleTo(window.issue_detail)
+    assert linked.runs[-1] in window.issue_detail.run_button.text()
+    window.issue_detail.open_run.emit(linked.runs[-1])
+    assert _screen(window) == "run"
 
 
 def _side_envelope(window, content: dict) -> str:

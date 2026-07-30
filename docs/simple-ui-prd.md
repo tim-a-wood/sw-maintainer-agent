@@ -618,3 +618,21 @@ over decoration.
 - F5 The issue list orders by severity, then the newest change.
 - F6 The busy screen shows the elapsed seconds after five seconds.
 - Also: the window close waits for a running engine thread to settle.
+
+### 14.8 The delighter pass (G1–G5)
+
+The rule for this pass: delight through what the tool already knows,
+never through decoration.
+
+- G1 The window catches the reply anywhere. While an exchange waits,
+  a file dropped on any screen — or Ctrl+V outside a text field —
+  goes to the reply validator, exactly as on the Exchange screen.
+- G2 The Done screen offers "Explain this change": the explain flow
+  opens pre-filled with the changed files and the goal.
+- G3 "Copy the change note" puts a paste-ready summary in the
+  clipboard: request, files, checks, iterations, duration, branch.
+  Also on every saved run in the history.
+- G4 An issue with a linked run shows it: "Fixed by run …" opens
+  that run's timeline. The audit trail becomes a walkable story.
+- G5 The first delivered run in a project gets one extra line on the
+  Done screen, once: "Your first saved change in this project."

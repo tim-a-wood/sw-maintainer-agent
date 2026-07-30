@@ -59,7 +59,7 @@ def test_placeholders_format_cleanly():
                "link": "https://x", "task": "build", "n": 2, "label": "Plan",
                "state": "saved", "id": "a3f2c1", "severity": "high",
                "source": "review", "step": "the plan reply", "when": "today",
-               "time": "2:10"}
+               "time": "2:10", "request": "Change the value."}
     for key, value in STR.items():
         names = set(re.findall(r"\{([a-z_]+)\}", value))
         arguments = {name: samples[name] for name in names}

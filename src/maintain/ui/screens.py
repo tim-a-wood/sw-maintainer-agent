@@ -337,6 +337,7 @@ class ExchangeScreen(Screen):
     def __init__(self) -> None:
         super().__init__()
         self.handoff: PacketHandoff | None = None
+        self.reply_open = False
         self.package_style = "zip"
         self.eyebrow = label("", "Eyebrow")
         self.add(self.eyebrow)
@@ -490,6 +491,7 @@ class ExchangeScreen(Screen):
                     else "receive.lead.json")
         self.lead.setText(text(lead_key))
         self.paste_button.setVisible(not zip_reply)
+        self.reply_open = True
         self._unfold()
         self.send_status.set_state("plain", "")
         self.status.set_state("plain", "")
@@ -619,6 +621,7 @@ class ExchangeScreen(Screen):
             return
         result = check_reply(self.handoff, text=clipboard_text, path=path)
         if result.valid:
+            self.reply_open = False
             self._wait_timer.stop()
             self.waiting_label.setText("")
             self.status.set_state("busy", text("receive.checking"))
@@ -907,6 +910,7 @@ class SaveScreen(Screen):
 class DoneScreen(Screen):
     new_change = Signal()
     open_history = Signal()
+    explain_change = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -946,14 +950,31 @@ class DoneScreen(Screen):
         audit = label(text("done.audit"), "Lead")
         audit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.add(audit)
+        self.first_note = label(text("done.first"), "Ok")
+        self.first_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.first_note.setVisible(False)
+        self.add(self.first_note)
         self.message = StatusLine()
         self.add(self.message)
         self.add_gap()
+        extras = QHBoxLayout()
+        extras.setSpacing(8)
+        extras.addStretch(1)
+        for extra in (button(text("done.merge"), "Secondary",
+                             self._copy_merge),
+                      button(text("done.note"), "Secondary",
+                             self._copy_note),
+                      button(text("done.explain"), "Secondary",
+                             self.explain_change.emit)):
+            extra.setStyleSheet("padding: 5px 10px; font-size: 12px;")
+            extras.addWidget(extra)
+        extras.addStretch(1)
+        extras_holder = QWidget()
+        extras_holder.setLayout(extras)
+        self.add(extras_holder)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         buttons.addWidget(button(text("done.new"), "Primary", self.new_change.emit))
-        buttons.addWidget(button(text("done.merge"), "Secondary",
-                                 self._copy_merge))
         buttons.addWidget(button(text("done.history"), "Ghost",
                                  self.open_history.emit))
         buttons.addStretch(1)
@@ -961,11 +982,15 @@ class DoneScreen(Screen):
         holder2.setLayout(buttons)
         self.add(holder2)
         self._branch = ""
+        self._note = ""
 
     def show_record(self, record: RunRecord, files: list[str] = (),
                     checks: int = 0, iterations: int = 0,
-                    duration: str = "") -> None:
+                    duration: str = "", first: bool = False,
+                    note: str = "") -> None:
         self._branch = record.branch
+        self._note = note
+        self.first_note.setVisible(first)
         self.branch.setText(text("done.branch", branch=record.branch))
         self.message.set_state("plain", "")
         files = list(files)
@@ -986,6 +1011,11 @@ class DoneScreen(Screen):
             QGuiApplication.clipboard().setText(
                 f"git merge --no-ff {self._branch}")
             self.message.set_state("ok", text("done.merge.done"))
+
+    def _copy_note(self) -> None:
+        if self._note:
+            QGuiApplication.clipboard().setText(self._note)
+            self.message.set_state("ok", text("done.note.done"))
 
 
 class HistoryRow(QFrame):
@@ -1231,6 +1261,7 @@ class IssueDetailScreen(Screen):
     repair = Signal(str)
     discuss_note = Signal(str, str)   # issue id, question
     close_reason = Signal(str, str)   # issue id, reason
+    open_run = Signal(str)
     reopen = Signal(str)
     remove = Signal(str)
     back = Signal()
@@ -1288,6 +1319,11 @@ class IssueDetailScreen(Screen):
         self.add(self._reasons_holder)
         self.repair_hint = label(text("issue.repair.sub"), "Hint")
         self.add(self.repair_hint)
+        self.run_button = button("", "Ghost",
+                                 lambda: self.open_run.emit(self._run_id))
+        self.run_button.setVisible(False)
+        self._run_id = ""
+        self.add_row(self.run_button)
         self.note_panel = NotePanel()
         self.note_panel.send.connect(
             lambda note: self.discuss_note.emit(self.issue_id, note))
@@ -1350,6 +1386,13 @@ class IssueDetailScreen(Screen):
         self._actions_holder.setVisible(existing)
         self._reasons_holder.setVisible(False)
         self.note_panel.hide()
+        runs = list(issue.runs) if existing else []
+        self._run_id = runs[-1] if runs else ""
+        if self._run_id:
+            key = ("issue.run.fixed" if issue.status == "closed"
+                   else "issue.run.linked")
+            self.run_button.setText(text(key, run=self._run_id))
+        self.run_button.setVisible(bool(self._run_id))
         if existing:
             source = text("issues.source." + issue.source)
             self.eyebrow.setText(
@@ -1701,6 +1744,7 @@ class HistoryScreen(Screen):
 class RunDetailScreen(Screen):
     go_back_to = Signal(int)    # sequence
     undo_last = Signal()
+    copy_note = Signal()
     back = Signal()
 
     def __init__(self) -> None:
@@ -1710,7 +1754,9 @@ class RunDetailScreen(Screen):
         self.subtitle = label("", "Lead")
         self.add(self.subtitle)
         self.undo_button = button(text("run.undo"), "Secondary", self.undo_last.emit)
-        self.add_row(self.undo_button)
+        self.note_button = button(text("done.note"), "Secondary",
+                                  self.copy_note.emit)
+        self.add_row(self.undo_button, self.note_button)
         self._rows = QVBoxLayout()
         self._rows.setSpacing(0)
         holder = QWidget()
@@ -1730,6 +1776,7 @@ class RunDetailScreen(Screen):
         self.undo_target = anchors[-2].sequence if live and len(anchors) >= 2 else -1
         self.undo_button.setVisible(live)
         self.undo_button.setEnabled(self.undo_target >= 0)
+        self.note_button.setVisible(summary.state == "delivered")
         self.clear_layout(self._rows)
         last_index = len(timeline) - 1
         for index, event in enumerate(timeline):

@@ -7,9 +7,10 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout,
-                               QInputDialog, QLabel, QMainWindow, QMessageBox,
+                               QInputDialog, QLabel, QLineEdit,
+                               QMainWindow, QMessageBox, QPlainTextEdit,
                                QPushButton, QStackedWidget, QVBoxLayout,
                                QWidget)
 
@@ -96,12 +97,44 @@ class MainWindow(QMainWindow):
         self._build_screens()
         self._wire_controller()
         self._toasts = ToastStack(self)
+        self.setAcceptDrops(True)
+        paste = QShortcut(QKeySequence.StandardKey.Paste, self)
+        paste.activated.connect(self._paste_anywhere)
         self.show_home()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         if hasattr(self, "_toasts"):
             self._toasts.reposition()
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if self.exchange.reply_open and event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        """FR-G1: the reply lands on any screen and still arrives."""
+        paths = [Path(url.toLocalFile()) for url in event.mimeData().urls()
+                 if url.isLocalFile()]
+        if paths and self.exchange.reply_open:
+            self._route_reply(path=paths[0])
+            event.acceptProposedAction()
+
+    def _paste_anywhere(self) -> None:
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QPlainTextEdit)):
+            focus.paste()
+            return
+        if self.exchange.reply_open:
+            self._route_reply(
+                clipboard_text=QGuiApplication.clipboard().text())
+
+    def _route_reply(self, path=None, clipboard_text: str = "") -> None:
+        if self.stack.currentWidget() is not self.exchange:
+            self.show_screen("exchange")
+        if path is not None:
+            self.exchange.check(path=path)
+        else:
+            self.exchange.check(clipboard_text=clipboard_text)
 
     def closeEvent(self, event) -> None:  # noqa: N802
         """A running engine pauses and settles before the window dies."""
@@ -202,6 +235,7 @@ class MainWindow(QMainWindow):
         self.issue_detail.repair.connect(self._repair_issue)
         self.issue_detail.discuss_note.connect(self._discuss_send)
         self.issue_detail.close_reason.connect(self._close_issue_with)
+        self.issue_detail.open_run.connect(self._open_run)
         self.issue_detail.reopen.connect(self._reopen_issue)
         self.issue_detail.remove.connect(self._remove_issue)
         self.issue_detail.back.connect(self.show_issues)
@@ -261,10 +295,12 @@ class MainWindow(QMainWindow):
 
         self.done.new_change.connect(lambda: self._new_change("feature"))
         self.done.open_history.connect(self.show_history)
+        self.done.explain_change.connect(self._explain_delivered_change)
 
         self.history.open_run.connect(self._open_run)
         self.history.back.connect(self.show_home)
         self.run_detail.back.connect(self.show_history)
+        self.run_detail.copy_note.connect(self._copy_run_note)
         self.run_detail.go_back_to.connect(self._go_back_to)
         self.run_detail.undo_last.connect(
             lambda: self._go_back_to(self.run_detail.undo_target))
@@ -619,6 +655,7 @@ class MainWindow(QMainWindow):
 
     def _end_side(self) -> None:
         self._side = None
+        self.exchange.reply_open = False
         self._set_run_footer(False)
 
     def _side_reply(self, reply) -> None:
@@ -1091,12 +1128,17 @@ class MainWindow(QMainWindow):
             else:
                 self._show_save(record)
         elif state is RunState.DELIVERED:
+            self.exchange.reply_open = False
+            delivered = sum(1 for item in self.controller.runs()
+                            if item.state == "delivered")
             self.done.show_record(
                 record, files=self.controller.changed_files(record),
                 checks=len(record.evidence.get("tests", {})
                            .get("commands", [])),
                 iterations=len(self.controller.timeline(record.run_id)),
-                duration=self._run_duration(record))
+                duration=self._run_duration(record),
+                first=delivered == 1,
+                note=self._change_note(record))
             self._set_run_footer(False)
             self._set_stage(5)
             self.stage_header.setVisible(False)
@@ -1109,6 +1151,41 @@ class MainWindow(QMainWindow):
             self.show_home()
         else:
             self.show_home()
+
+    def _change_note(self, record: RunRecord) -> str:
+        """FR-G3: a paste-ready status line for one saved change."""
+        files = self.controller.changed_files(record)
+        checks = len(record.evidence.get("tests", {}).get("commands", []))
+        iterations = len(self.controller.timeline(record.run_id))
+        request = " ".join(record.request.split())
+        return (
+            f"Saved: {request}\n"
+            f"Files ({len(files)}): {', '.join(files)}\n"
+            f"Checks passed: {checks} · {iterations} iterations · "
+            f"{self._run_duration(record)}\n"
+            f"Branch: {record.branch}\n")
+
+    def _explain_delivered_change(self) -> None:
+        """FR-G2: from the win to its video, pre-filled."""
+        record = self.current_record
+        if record is None:
+            return
+        repository = self.store.config.repository
+        files = [repository / item
+                 for item in self.controller.changed_files(record)
+                 if (repository / item).is_file()]
+        request = " ".join(record.request.split())[:120]
+        self.show_explain()
+        self.explain.goal_edit.setPlainText(
+            text("explain.change.goal", request=request))
+        self.explain.add_files(files)
+
+    def _copy_run_note(self) -> None:
+        record = (self._load_record(self._open_run_id)
+                  if getattr(self, "_open_run_id", "") else None)
+        if record is not None:
+            QGuiApplication.clipboard().setText(self._change_note(record))
+            self.toast(text("done.note.done"))
 
     def _run_duration(self, record: RunRecord) -> str:
         from datetime import datetime
