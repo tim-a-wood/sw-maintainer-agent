@@ -58,7 +58,7 @@ def packet_task_key(role: str, payload: dict) -> str:
     """Map an engine role onto the user-facing packet task type."""
     if role == "scope":
         return "plan"
-    if role in {"review", "scan", "discuss"}:
+    if role in {"review", "scan", "discuss", "explain"}:
         return role
     if role == "implement":
         return "repair" if int(payload.get("attempt", 1) or 1) > 1 else "build"

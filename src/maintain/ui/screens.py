@@ -29,10 +29,12 @@ from .widgets import (ChoiceButton, DiffHighlighter, DropZone, ElidedLabel,
 
 TASK_TITLES = {"plan": "send.plan.title", "build": "send.build.title",
                "repair": "send.repair.title", "review": "send.review.title",
-               "scan": "send.scan.title", "discuss": "send.discuss.title"}
+               "scan": "send.scan.title", "discuss": "send.discuss.title",
+               "explain": "send.explain.title"}
 TASK_STEPS = {"plan": "STEP 1 OF 5 — PLAN", "build": "STEP 2 OF 5 — BUILD",
               "repair": "STEP 2 OF 5 — BUILD", "review": "STEP 3 OF 5 — REVIEW",
-              "scan": "ISSUE SCAN", "discuss": "ISSUE DISCUSSION"}
+              "scan": "ISSUE SCAN", "discuss": "ISSUE DISCUSSION",
+              "explain": "CODE EXPLANATION"}
 
 SEVERITY_CHIPS = {"high": ("issues.severity.high", "fail"),
                   "medium": ("issues.severity.medium", "warn"),
@@ -98,6 +100,7 @@ class HomeScreen(Screen):
     open_settings = Signal()
     open_projects = Signal()
     open_issues = Signal()
+    open_explain = Signal()
     continue_run = Signal(str)   # run_id
 
     def __init__(self, project_name: str, project_path: str) -> None:
@@ -116,6 +119,8 @@ class HomeScreen(Screen):
                  lambda: self.new_change.emit("feature")),
                 ("wrench", "home.fault", "home.fault.sub",
                  lambda: self.new_change.emit("issue")),
+                ("film", "home.explain", "home.explain.sub",
+                 self.open_explain.emit),
                 ("bug", "home.issues", "home.issues.sub.none",
                  self.open_issues.emit),
                 ("history", "home.history", "home.history.sub",
@@ -124,7 +129,7 @@ class HomeScreen(Screen):
                  self.open_projects.emit),
                 ("sliders", "home.settings", "home.settings.sub",
                  self.open_settings.emit))):
-            if index == 2:
+            if index == 3:
                 self.add_gap(4)
             card = ChoiceButton(icon, text(title_key), text(sub_key))
             card.clicked.connect(slot)
@@ -382,7 +387,10 @@ class ReceiveScreen(Screen):
         self.handoff = handoff
         self.eyebrow.setText(TASK_STEPS[handoff.task_key])
         zip_reply = handoff.reply_kind == "zip"
-        self.lead.setText(text("receive.lead.zip" if zip_reply else "receive.lead.json"))
+        lead_key = ("receive.lead.zip" if zip_reply
+                    else "receive.lead.scene" if handoff.reply_kind == "scene"
+                    else "receive.lead.json")
+        self.lead.setText(text(lead_key))
         self.paste_button.setVisible(not zip_reply)
         self.import_button.setVisible(True)
         self.status.set_state("plain", "")
@@ -1154,6 +1162,168 @@ class ScanCheckScreen(Screen):
         self.add_selected.emit(selected)
 
 
+class ExplainScreen(Screen):
+    start = Signal(list, str, str)   # files, goal, audience
+    back = Signal()
+    import_requested = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.add(label(text("explain.title"), "Title"))
+        self.add(label(text("explain.goal").upper(), "Eyebrow"))
+        self.goal_edit = QPlainTextEdit()
+        self.goal_edit.setPlaceholderText(text("explain.goal.placeholder"))
+        self.goal_edit.setFixedHeight(70)
+        self.add(self.goal_edit)
+        self.add(label(text("explain.audience").upper(), "Eyebrow"))
+        self.audience_edit = QLineEdit()
+        self.audience_edit.setPlaceholderText(
+            text("explain.audience.placeholder"))
+        self.add(self.audience_edit)
+        self.add(label(text("explain.files").upper(), "Eyebrow"))
+        zone = DropZone(text("explain.drop.main"), text("explain.drop.sub"))
+        zone.files_dropped.connect(self.add_files)
+        self.add(zone)
+        self.chips = FileChips()
+        self.chips.removed.connect(self._remove)
+        self.add(self.chips)
+        self.add_row(button(text("describe.import"), "Secondary",
+                            self.import_requested.emit))
+        self.message = StatusLine()
+        self.add(self.message)
+        self.add_gap()
+        self.add_row(
+            button(text("explain.start"), "Primary", self._start),
+            button(text("receive.back"), "Ghost", self.back.emit))
+        self.files: list[Path] = []
+
+    def reset(self) -> None:
+        self.goal_edit.setPlainText("")
+        self.audience_edit.setText("")
+        self.files = []
+        self.chips.set_files([])
+        self.message.set_state("plain", "")
+
+    def add_files(self, paths: list) -> None:
+        self.files.extend(Path(item) for item in paths)
+        self.chips.set_files([item.name for item in self.files])
+
+    def _remove(self, index: int) -> None:
+        del self.files[index]
+        self.chips.set_files([item.name for item in self.files])
+
+    def _start(self) -> None:
+        goal = self.goal_edit.toPlainText().strip()
+        if not goal:
+            self.message.set_state("bad", text("explain.goal.empty"))
+            return
+        if not self.files:
+            self.message.set_state("bad", text("explain.files.empty"))
+            return
+        self.message.set_state("plain", "")
+        self.start.emit(list(self.files), goal,
+                        self.audience_edit.text().strip())
+
+
+class ExplainResultScreen(Screen):
+    open_video = Signal()
+    open_folder = Signal()
+    repair = Signal()
+    done = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.add(label("CODE EXPLANATION", "Eyebrow"))
+        self.add(label(text("explain.result.title"), "Title"))
+        self.check_chip = StateChip("PASS", "pass")
+        self.render_chip = StateChip("RUN", "accent")
+        for name_key, chip in (("explain.check.name", self.check_chip),
+                               ("explain.render.name", self.render_chip)):
+            card = QFrame()
+            card.setObjectName("Card")
+            row = QHBoxLayout(card)
+            row.setContentsMargins(13, 10, 13, 10)
+            title = label(text(name_key))
+            font = title.font()
+            font.setBold(True)
+            title.setFont(font)
+            row.addWidget(title, 1)
+            row.addWidget(chip)
+            self.add(card)
+        self.status = StatusLine()
+        self.add(self.status)
+        self.folder_label = ElidedLabel("", "MonoHint")
+        self.add(self.folder_label)
+        self.tail_view = QPlainTextEdit()
+        self.tail_view.setObjectName("Code")
+        self.tail_view.setReadOnly(True)
+        self.tail_view.setFixedHeight(120)
+        self.tail_view.setVisible(False)
+        self.add(self.tail_view)
+        self.add_gap()
+        self.video_button = button(text("explain.open.video"), "Primary",
+                                   self.open_video.emit)
+        self.repair_button = button(text("explain.repair"), "Primary",
+                                    self.repair.emit)
+        self.add_row(self.video_button, self.repair_button)
+        self.repair_hint = label(text("explain.repair.sub"), "Hint")
+        self.add(self.repair_hint)
+        self.add_row(
+            button(text("explain.open.folder"), "Secondary",
+                   self.open_folder.emit),
+            button(text("explain.done"), "Ghost", self.done.emit))
+        self.add(label(text("explain.saved.note"), "Hint"))
+
+    def show_running(self, folder: str) -> None:
+        self.render_chip.set_state("RUN", "accent")
+        self.status.set_state("busy", text("explain.render.running"))
+        self.folder_label.setText(folder)
+        self.tail_view.setVisible(False)
+        self.video_button.setVisible(False)
+        self.repair_button.setVisible(False)
+        self.repair_hint.setVisible(False)
+
+    def show_passed(self) -> None:
+        self.render_chip.set_state("PASS", "pass")
+        self.status.set_state("ok", text("explain.render.passed"))
+        self.video_button.setVisible(True)
+        self.repair_button.setVisible(False)
+        self.repair_hint.setVisible(False)
+
+    def show_failed(self, message: str, tail: str) -> None:
+        self.render_chip.set_state("FAIL", "fail")
+        self.status.set_state("bad", message or text("explain.render.failed"))
+        self.tail_view.setPlainText(tail[-4000:])
+        self.tail_view.setVisible(bool(tail.strip()))
+        self.video_button.setVisible(False)
+        self.repair_button.setVisible(True)
+        self.repair_hint.setVisible(True)
+
+
+class ExplainSettingsPage(Screen):
+    saved = Signal()
+    back = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.add(label(text("settings.explain"), "Title"))
+        self.add(label(text("explain.set.command").upper(), "Eyebrow"))
+        self.command_edit = QLineEdit()
+        self.add(self.command_edit)
+        self.add(label(text("explain.set.command.hint"), "Hint"))
+        self.add(label(text("explain.set.install"), "MonoHint"))
+        self.add_gap()
+        self.add_row(
+            button(text("settings.save"), "Primary", self.saved.emit),
+            button(text("settings.back"), "Ghost", self.back.emit))
+
+    def load(self, command: str) -> None:
+        self.command_edit.setText(command)
+
+    def value(self) -> str:
+        return self.command_edit.text().strip() or "manim"
+
+
 class HistoryScreen(Screen):
     open_run = Signal(str)
     back = Signal()
@@ -1297,12 +1467,14 @@ class SettingsScreen(Screen):
     back = Signal()
 
     ICON_NAMES = {"onedrive": "cloud", "tasks": "file-text", "global": "globe",
-                  "package": "box", "checks": "check-circle"}
+                  "package": "box", "checks": "check-circle",
+                  "explain": "film"}
 
     def __init__(self) -> None:
         super().__init__()
         self.add(label(text("settings.title"), "Title"))
-        for key in ("onedrive", "tasks", "global", "package", "checks"):
+        for key in ("onedrive", "tasks", "global", "package", "checks",
+                    "explain"):
             card = ChoiceButton(self.ICON_NAMES[key], text("settings." + key),
                                 text("settings." + key + ".sub"))
             card.clicked.connect(lambda page=key: self.open_page.emit(page))

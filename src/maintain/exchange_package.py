@@ -132,9 +132,15 @@ def _task_markdown(
         "those fields. Finish creating the downloadable ZIP, then reply only `Maintain output "
         "ready.` Do not return JSON, source code, a patch, or manifest content in the chat."
     )
+    scene_output = (
+        "Return one complete Python scene file inside one fenced code block marked "
+        "`python`. Return no other code blocks, no JSON envelope, and no additional "
+        "files. Short prose around the block is permitted and is ignored."
+    )
     output = (
         zip_output if request.role == "implement" and implementation_transport == "zip"
-        else inline_output if request.role == "implement" else
+        else inline_output if request.role == "implement"
+        else scene_output if request.role == "explain" else
         "Return only one complete JSON envelope in the chat. Do not create or attach output "
         "files, return Markdown, or add explanatory text outside the JSON."
     )
@@ -180,6 +186,14 @@ def _task_markdown(
             "Return `content.reply` as plain text that answers the question about the one "
             "issue in the payload. Optionally return `content.severity` (`high`, `medium`, or "
             "`low`) when the evidence justifies a change. Do not return code changes."
+        ),
+        "explain": (
+            "The scene file must import from `manim` only and contain exactly one `Scene` "
+            "subclass. It must render without user input, and use no network access, no "
+            "LaTeX, no external assets, no secrets, and no paths outside its own folder. "
+            "Show the explained module path inside the animation and end with the main "
+            "invariant. If the supplied code is insufficient, return a short list of missing "
+            "files instead of a code block."
         ),
     }.get(request.role, "Return a concise factual result in `content`.")
     examples: dict[str, dict[str, Any]] = {
@@ -269,6 +283,16 @@ def _task_markdown(
             "did. Use only the package attachments and this one reference URL. Do not use "
             "other internet tools."
         )
+    scene_example = (
+        "```python\n"
+        "from manim import Scene, Text, FadeIn\n"
+        "\n"
+        "\n"
+        "class ModuleExplainScene(Scene):\n"
+        "    def construct(self):\n"
+        '        self.play(FadeIn(Text("The one-line story")))\n'
+        "```\n"
+    )
     example = (
         "```toml\n"
         + "\n".join(
@@ -276,7 +300,8 @@ def _task_markdown(
             for key, value in zip_manifest.items()
         )
         + "\n```\n"
-        if request.role == "implement" and implementation_transport == "zip" else
+        if request.role == "implement" and implementation_transport == "zip"
+        else scene_example if request.role == "explain" else
         "```json\n"
         f"{json.dumps(envelope, ensure_ascii=False, indent=2)}\n"
         "```\n"

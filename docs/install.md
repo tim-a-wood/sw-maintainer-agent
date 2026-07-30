@@ -1,0 +1,56 @@
+# Install and update
+
+One script does the first install and every update. It is idempotent:
+run it again at any time, and it converges to a good state.
+
+## Install day
+
+1. Install Python 3.11 or later from python.org, with the "py launcher"
+   option.
+2. Clone or copy this repository to the computer.
+3. Open PowerShell in the repository folder.
+4. Run:
+
+       .\scripts\setup.ps1
+
+5. Open a new terminal. Start the app with:
+
+       maintain-ui
+
+## Update day
+
+1. Update the repository copy (`git pull`, or copy the new version).
+2. Run the same script again:
+
+       .\scripts\setup.ps1
+
+The script updates the Maintain portion. Manim stays at the pinned
+version until a Maintain release moves the pin; the same script then
+updates both together.
+
+## What the script does
+
+1. Confirms Python 3.11 or later.
+2. Installs or updates pipx, the isolated app installer.
+3. Installs Maintain with the `ui` and `explain` extras:
+   `pipx install --force <repo>[ui,explain]`. The `explain` extra
+   carries Manim Community 0.20.1, pinned.
+4. Installs ffmpeg with winget when it is absent. Manim needs it for
+   the video files; it can never come from pip.
+5. Verifies the result and prints one PASS line for each step.
+
+## Manual fallback
+
+The script wraps four commands. When you prefer them by hand:
+
+    py -3 -m pip install --user --upgrade pipx
+    py -3 -m pipx ensurepath
+    py -3 -m pipx install --force ".[ui,explain]"
+    winget install ffmpeg
+
+## Notes
+
+- The app itself never installs software at run time. When Manim is
+  absent, the render step says so and names the commands above.
+- The Manim command that the app runs is a per-user setting:
+  Settings → Explain. The default is `manim`.

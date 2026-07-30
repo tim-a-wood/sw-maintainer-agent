@@ -503,6 +503,105 @@ def test_discuss_flow_notes_and_severity_confirm(qt_app, tmp_path, monkeypatch):
     assert window._side is None
 
 
+SCENE_REPLY = (
+    "Here is the scene.\n\n"
+    "```python\n"
+    "from manim import Scene, Text, FadeIn\n"
+    "\n"
+    "\n"
+    "class DemoScene(Scene):\n"
+    "    def construct(self):\n"
+    '        self.play(FadeIn(Text("app.py")))\n'
+    "```\n")
+
+
+def _shell_stub(path, body: str) -> str:
+    path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+    path.chmod(0o755)
+    return str(path)
+
+
+def test_explain_flow_render_repair_and_settings(qt_app, tmp_path, monkeypatch):
+    from maintain.repository_memory import load_ui_settings, save_ui_settings
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    toasts: list[str] = []
+    window.toast = toasts.append
+    errors: list[str] = []
+    window.show_error = errors.append
+
+    fail_stub = _shell_stub(tmp_path / "fail-manim",
+                            'echo "Boom on line 3" 1>&2\nexit 1\n')
+    values = load_ui_settings()
+    values["manim_command"] = fail_stub
+    save_ui_settings(values)
+
+    # A file outside the project is refused with a plain message.
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x", encoding="utf-8")
+    window._start_explain([outside], "goal", "")
+    assert "outside" in toasts[-1]
+
+    # The input screen refuses an empty goal, then builds the packet.
+    window.show_explain()
+    assert _screen(window) == "explain"
+    window.explain._start()
+    assert window.explain.message.text()
+    window.explain.goal_edit.setPlainText("Explain the value bound.")
+    window.explain.add_files([config.repository / "app.py"])
+    window.explain._start()
+    assert not errors, errors
+    assert _screen(window) == "send"
+    assert window.current_handoff.task_key == "explain"
+    with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
+        assert "one fenced code block" in archive.read("TASK.md").decode()
+
+    # A reply without a code block is refused on the Receive screen.
+    window.send.continue_button.setEnabled(True)
+    window.send.continue_clicked.emit()
+    window.receive.check(clipboard_text="no code here")
+    assert _screen(window) == "receive"
+
+    # The valid scene reply starts the render; the failing stub reports.
+    window.receive.check(clipboard_text=SCENE_REPLY)
+    assert _screen(window) == "explain-result"
+    wait_until(qt_app, lambda: window.explain_result.render_chip.text() == "FAIL",
+               message="failed render")
+    assert "Boom on line 3" in window.explain_result.tail_view.toPlainText()
+    assert window.explain_result.repair_button.isVisibleTo(window.explain_result)
+
+    # Repair: the new packet carries the error; a good stub then passes.
+    pass_stub = _shell_stub(
+        tmp_path / "pass-manim",
+        'mkdir -p media/videos/scene/1080p60\n'
+        'echo video > "media/videos/scene/1080p60/$3.mp4"\n')
+    values = load_ui_settings()
+    values["manim_command"] = pass_stub
+    save_ui_settings(values)
+    window._repair_explain()
+    assert _screen(window) == "send"
+    request = window._side["exchange"].request
+    assert "Boom on line 3" in request.payload["render_error"]
+    assert request.payload["previous_scene"].startswith("from manim")
+    window.send.continue_button.setEnabled(True)
+    window.send.continue_clicked.emit()
+    window.receive.check(clipboard_text=SCENE_REPLY)
+    wait_until(qt_app, lambda: window.explain_result.render_chip.text() == "PASS",
+               message="passed render")
+    video = window._explain["video"]
+    assert video is not None and Path(video).is_file()
+    assert Path(window._explain["dir"], "render", "scene.py").is_file()
+
+    # The settings page stores the per-user Manim command.
+    window._open_settings_page("explain")
+    assert _screen(window) == "set-explain"
+    window.page_explain.command_edit.setText("my-manim")
+    window._explain_settings_saved()
+    assert load_ui_settings()["manim_command"] == "my-manim"
+    assert not errors, errors
+
+
 def test_stop_pauses_and_home_offers_continue(qt_app, tmp_path, monkeypatch):
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)

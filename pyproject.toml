@@ -22,6 +22,7 @@ classifiers = [
 [project.optional-dependencies]
 browser = ["playwright>=1.52,<2"]
 ui = ["PySide6-Essentials>=6.6,<7"]
+explain = ["manim==0.20.1"]
 
 [project.scripts]
 maintain = "maintain.cli:main"

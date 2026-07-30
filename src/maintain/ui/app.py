@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import shutil
+import threading
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QUrl, Qt, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QMainWindow, QMessageBox,
                                QPushButton, QStackedWidget, QVBoxLayout,
@@ -16,11 +18,14 @@ from maintain.errors import MaintainError
 from maintain.gates import GateDecision
 from maintain.issue_packets import (SideExchange, build_side_packet,
                                     discuss_reply, discuss_request,
+                                    explain_dir, explain_request,
                                     scan_candidates, scan_request,
                                     side_packet_dir)
 from maintain.issues import CLOSED, REASONS
 from maintain.models import RunRecord, RunState
 from maintain.providers.command import parse_response
+from maintain.render import render_scene
+from maintain.scene_check import scene_class_name
 from maintain.providers.manual_ui import PacketHandoff
 from maintain.repository_memory import load_ui_settings, save_ui_settings
 
@@ -30,12 +35,14 @@ from . import projects as project_ops
 from .config_store import ConfigStore
 from .controller import Controller
 from .screens import (BusyScreen, ChecksPage, DescribeScreen, DoneScreen,
-                      FindingsScreen, GlobalPage, HistoryScreen, HomeScreen,
-                      IssueDetailScreen, IssuesScreen, OneDrivePage,
-                      PackagePage, PlanCheckScreen, ProjectsScreen,
-                      ReceiveScreen, RunDetailScreen, SaveScreen,
-                      ScanCheckScreen, SettingsScreen, SendScreen, TasksPage,
-                      TestScreen, documents_count)
+                      ExplainResultScreen, ExplainScreen,
+                      ExplainSettingsPage, FindingsScreen, GlobalPage,
+                      HistoryScreen, HomeScreen, IssueDetailScreen,
+                      IssuesScreen, OneDrivePage, PackagePage,
+                      PlanCheckScreen, ProjectsScreen, ReceiveScreen,
+                      RunDetailScreen, SaveScreen, ScanCheckScreen,
+                      SettingsScreen, SendScreen, TasksPage, TestScreen,
+                      documents_count)
 from .strings import text
 from .widgets import StageHeader
 
@@ -48,6 +55,8 @@ def saved_theme() -> str:
 
 
 class MainWindow(QMainWindow):
+    explain_render_done = Signal(object)   # RenderResult, from the worker
+
     def __init__(self, config: ProjectConfig) -> None:
         super().__init__()
         self.setWindowTitle(f"{text('app.title')} — {config.name}")
@@ -62,6 +71,8 @@ class MainWindow(QMainWindow):
         self._in_test = False
         self._side: dict | None = None
         self._pending_issue_link = ""
+        self._explain: dict | None = None
+        self.explain_render_done.connect(self._explain_render_done)
 
         central = QWidget()
         column = QVBoxLayout(central)
@@ -115,6 +126,9 @@ class MainWindow(QMainWindow):
         self.issues_list = IssuesScreen()
         self.issue_detail = IssueDetailScreen()
         self.scan_check = ScanCheckScreen()
+        self.explain = ExplainScreen()
+        self.explain_result = ExplainResultScreen()
+        self.page_explain = ExplainSettingsPage()
         self.describe = DescribeScreen()
         self.send = SendScreen()
         self.receive = ReceiveScreen()
@@ -136,6 +150,9 @@ class MainWindow(QMainWindow):
                 ("home", self.home), ("projects", self.projects),
                 ("issues", self.issues_list), ("issue", self.issue_detail),
                 ("scan-check", self.scan_check),
+                ("explain", self.explain),
+                ("explain-result", self.explain_result),
+                ("set-explain", self.page_explain),
                 ("describe", self.describe),
                 ("send", self.send), ("receive", self.receive),
                 ("plan", self.plan_check), ("findings", self.findings),
@@ -154,6 +171,7 @@ class MainWindow(QMainWindow):
         self.home.open_settings.connect(lambda: self.show_screen("settings"))
         self.home.open_projects.connect(self.show_projects)
         self.home.open_issues.connect(self.show_issues)
+        self.home.open_explain.connect(self.show_explain)
         self.home.continue_run.connect(self._continue_run)
 
         self.issues_list.open_issue.connect(self._open_issue)
@@ -171,6 +189,16 @@ class MainWindow(QMainWindow):
 
         self.scan_check.add_selected.connect(self._scan_accept)
         self.scan_check.discard.connect(self._scan_discard)
+
+        self.explain.start.connect(self._start_explain)
+        self.explain.back.connect(self.show_home)
+        self.explain.import_requested.connect(self._import_explain_files)
+        self.explain_result.open_video.connect(self._open_explain_video)
+        self.explain_result.open_folder.connect(self._open_explain_folder)
+        self.explain_result.repair.connect(self._repair_explain)
+        self.explain_result.done.connect(self.show_home)
+        self.page_explain.saved.connect(self._explain_settings_saved)
+        self.page_explain.back.connect(lambda: self.show_screen("settings"))
 
         self.projects.open_project.connect(self._open_project)
         self.projects.remove_project.connect(self._remove_project)
@@ -517,9 +545,10 @@ class MainWindow(QMainWindow):
             return
         self._show_side(exchange, packet)
 
-    def _show_side(self, exchange: SideExchange, packet) -> None:
+    def _show_side(self, exchange: SideExchange, packet,
+                   reply_kind: str = "json") -> None:
         handoff = PacketHandoff(request=exchange.request, packet=packet,
-                                reply_kind="json")
+                                reply_kind=reply_kind)
         self._side = {"exchange": exchange, "attachments": [],
                       "handoff": handoff}
         self.current_handoff = handoff
@@ -539,6 +568,9 @@ class MainWindow(QMainWindow):
     def _side_reply(self, reply) -> None:
         side = self._side
         exchange: SideExchange = side["exchange"]
+        if exchange.kind == "explain":
+            self._explain_reply(reply.text)
+            return
         try:
             response = parse_response(reply.text, exchange.request, "manual")
             if exchange.kind == "scan":
@@ -597,6 +629,113 @@ class MainWindow(QMainWindow):
         self._end_side()
         self.toast(text("scan.discarded"))
         self.show_issues()
+
+    # ----- explain (run-less packet loop with a local render) -----
+
+    def show_explain(self) -> None:
+        self.explain.reset()
+        self._set_run_footer(False)
+        self.show_screen("explain")
+
+    def _import_explain_files(self) -> None:
+        paths = self.pick_files()
+        if paths:
+            self.explain.add_files([Path(item) for item in paths])
+
+    def _relative_sources(self, files: list) -> list | None:
+        repository = self.store.config.repository.resolve()
+        values: list[str] = []
+        for item in files:
+            try:
+                values.append(Path(item).resolve()
+                              .relative_to(repository).as_posix())
+            except ValueError:
+                self.toast(text("explain.outside", name=Path(item).name))
+                return None
+        return values
+
+    def _start_explain(self, files: list, goal: str, audience: str) -> None:
+        if self.controller.busy:
+            self.toast(text("issues.busy"))
+            return
+        sources = self._relative_sources(files)
+        if sources is None:
+            return
+        self._launch_explain(sources, goal, audience)
+
+    def _launch_explain(self, sources: list, goal: str, audience: str,
+                        previous_scene: str = "",
+                        render_error: str = "") -> None:
+        config = self.store.config
+        try:
+            request = explain_request(
+                config, sources, goal, audience,
+                previous_scene=previous_scene, render_error=render_error)
+            exchange = SideExchange(
+                kind="explain", request=request,
+                directory=explain_dir(config, request.run_id) / "packets")
+            packet = build_side_packet(exchange, config, [])
+        except MaintainError as exc:
+            self.show_error(str(exc))
+            return
+        self._explain = {"sources": sources, "goal": goal,
+                         "audience": audience, "run_id": request.run_id,
+                         "source": "", "tail": "", "video": None,
+                         "dir": explain_dir(config, request.run_id)}
+        self._show_side(exchange, packet, reply_kind="scene")
+
+    def _explain_reply(self, source: str) -> None:
+        state = self._explain or {}
+        state["source"] = source
+        work = Path(state["dir"]) / "render"
+        self._end_side()
+        self.explain_result.show_running(str(work))
+        self.show_screen("explain-result")
+        command = str(load_ui_settings().get("manim_command", "manim"))
+        class_name = scene_class_name(source)
+
+        def work_thread() -> None:
+            result = render_scene(source, work, manim_command=command,
+                                  scene_class=class_name)
+            self.explain_render_done.emit(result)
+
+        threading.Thread(target=work_thread, daemon=True,
+                         name="maintain-render").start()
+
+    def _explain_render_done(self, result) -> None:
+        state = self._explain or {}
+        if result.ok:
+            state["video"] = result.video
+            self.explain_result.show_passed()
+        else:
+            state["tail"] = result.output_tail
+            self.explain_result.show_failed(result.message, result.output_tail)
+
+    def _open_explain_video(self) -> None:
+        state = self._explain or {}
+        if state.get("video"):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(state["video"])))
+
+    def _open_explain_folder(self) -> None:
+        state = self._explain or {}
+        if state.get("dir"):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(state["dir"])))
+
+    def _repair_explain(self) -> None:
+        state = self._explain or {}
+        if not state:
+            return
+        self._launch_explain(state["sources"], state["goal"],
+                             state["audience"],
+                             previous_scene=state.get("source", ""),
+                             render_error=state.get("tail", ""))
+
+    def _explain_settings_saved(self) -> None:
+        values = load_ui_settings()
+        values["manim_command"] = self.page_explain.value()
+        save_ui_settings(values)
+        self.toast(text("settings.saved"))
+        self.show_screen("settings")
 
     def _set_stage(self, index: int) -> None:
         self.stage_header.setVisible(True)
@@ -903,9 +1042,12 @@ class MainWindow(QMainWindow):
             issue_id = self._side["exchange"].issue_id
             self._end_side()
             self.toast(text("scan.discarded" if kind == "scan"
+                            else "explain.discarded" if kind == "explain"
                             else "discuss.discarded"))
             if kind == "discuss" and issue_id:
                 self._open_issue(issue_id)
+            elif kind == "explain":
+                self.show_home()
             else:
                 self.show_issues()
             return
@@ -927,6 +1069,9 @@ class MainWindow(QMainWindow):
             self.page_package.load(self.store.config.package.style)
         elif page == "checks":
             self.page_checks.load(self.store.checks())
+        elif page == "explain":
+            self.page_explain.load(
+                str(load_ui_settings().get("manim_command", "manim")))
         self.show_screen(f"set-{page}")
 
     def _settings_saved(self) -> None:

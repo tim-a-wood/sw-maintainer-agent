@@ -38,6 +38,19 @@ DISCUSS_INSTRUCTIONS = (
     "return code changes; a repair task does that. Do not use internet tools."
 )
 
+EXPLAIN_INSTRUCTIONS = (
+    "Obey the project ground rules in GLOBAL.md. Explain the supplied code as "
+    "one Manim animation of 20 to 30 seconds. Focus on the problem, the "
+    "inputs, the transformations, the output, and the main invariant. Animate "
+    "relationships and state changes; do not animate source code line by "
+    "line. Use Manim Community 0.20.1. Use no external images, LaTeX, voice, "
+    "plugins, or network resources. Show the explained module path in the "
+    "animation and end with the main invariant. Ground every claim in "
+    "CODEBASE.md; do not invent behavior. If the supplied code is "
+    "insufficient, return a short list of missing files instead of a scene. "
+    "Do not use internet tools."
+)
+
 _SCAN_FALLBACK_FOCUS = "defect fault error bug wrong incorrect missing unsafe"
 
 
@@ -101,6 +114,46 @@ def discuss_request(config: ProjectConfig, issue: Issue,
                 {"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
                  "content": x.content} for x in cited],
         })
+
+
+def explain_request(config: ProjectConfig, files: Sequence[str], goal: str,
+                    audience: str, *, previous_scene: str = "",
+                    render_error: str = "") -> ProviderRequest:
+    selector = ContextSelector(config.repository,
+                               config.source_roots + config.test_roots,
+                               config.exclude_paths, config.max_file_bytes)
+    chosen = selector.exact(set(files))
+    if not chosen:
+        raise ProviderError("No selected file is inside the project sources.")
+    payload = {
+        "mode": "explain",
+        "request": goal.strip(),
+        "audience": audience.strip(),
+        "repository_map": selector.repository_map(),
+        "candidate_files": [
+            {"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
+             "content": x.content} for x in chosen],
+    }
+    instructions = EXPLAIN_INSTRUCTIONS
+    if previous_scene:
+        payload["previous_scene"] = previous_scene
+        payload["render_error"] = render_error[-4000:]
+        instructions = (
+            f"{EXPLAIN_INSTRUCTIONS} The previous scene failed to render; "
+            "payload.render_error holds the error and payload.previous_scene "
+            "holds the file. Return one corrected complete scene file."
+        )
+    return ProviderRequest(
+        schema_version=1,
+        run_id=f"explain-{_stamp()}-{secrets.token_hex(2)}",
+        task_id="explain",
+        role="explain",
+        instructions=f"{PROVIDER_SAFETY_HEADER}\n\n{instructions}",
+        payload=payload)
+
+
+def explain_dir(config: ProjectConfig, run_id: str) -> Path:
+    return Path(config.runtime_root).parent / "explain" / run_id
 
 
 def build_side_packet(exchange: SideExchange, config: ProjectConfig,

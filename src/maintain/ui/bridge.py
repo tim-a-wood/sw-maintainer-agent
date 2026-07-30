@@ -63,6 +63,13 @@ def check_reply(handoff: PacketHandoff, *, text: str = "",
             return ReplyCheck(None, "", keep_as_attachment=True)
     if not source.strip():
         return ReplyCheck(None, "First copy the reply in Copilot.")
+    if handoff.reply_kind == "scene":
+        from maintain.scene_check import checked_scene
+        try:
+            extracted, _ = checked_scene(source)
+        except ProviderError as exc:
+            return ReplyCheck(None, str(exc))
+        return ReplyCheck(ManualReply(kind="scene", text=extracted), "")
     try:
         json.loads(source)
     except json.JSONDecodeError:

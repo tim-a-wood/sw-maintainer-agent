@@ -444,7 +444,7 @@ recorded 2026-07-29. The controls in 13.3 stay required.
    with `maintain package` and the explain prompt. Move the files by
    hand. Record the section 9 measures from the handover document.
    The trial code lives in another repository.
-2. Phase 1 — the feature, when the trial passes. A new task type
+2. Phase 1 — the feature, built after the trial passed. A new task type
    `explain` with the prompt and documents configurable like the
    others. A Home entry "Explain code": select the files, write the
    goal and the audience. The Exchange screen sends the packet. The
@@ -464,7 +464,19 @@ recorded 2026-07-29. The controls in 13.3 stay required.
 - The tool does not install Manim. A plain message shows when Manim
   is absent.
 
-### 13.4 Deferred
+### 13.4 Install and update
+
+- One idempotent script does the first install and every update:
+  `scripts/setup.ps1` (documented in `docs/install.md`). It verifies
+  Python, prepares pipx, installs Maintain with the `ui` and `explain`
+  extras, installs ffmpeg with winget when absent, and verifies the
+  result. The `explain` extra pins Manim Community 0.20.1 beside the
+  prompt contract, so the two move together.
+- The Manim command the app runs is a per-user setting
+  (Settings → Explain, default `manim`). The version pin belongs to
+  the project prompts; the location belongs to the computer.
+
+### 13.5 Deferred
 
 - "Explain this change" from a saved run.
 - All items in section 11 of the handover document: browser control,

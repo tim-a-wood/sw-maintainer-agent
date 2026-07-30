@@ -31,6 +31,8 @@ STR: dict[str, str] = {
     "home.issues": "Issues",
     "home.issues.sub.none": "No open issues.",
     "home.issues.sub.count": "{count} open. Scan, discuss, repair.",
+    "home.explain": "Explain code",
+    "home.explain.sub": "Copilot writes a short video scene. Manim renders it here.",
     "home.projects": "Projects",
     "home.projects.sub": "Create, open, or remove projects.",
     "home.settings": "Settings",
@@ -257,6 +259,46 @@ STR: dict[str, str] = {
     "scan.added": "Added {count} issues.",
     "scan.discard": "Discard",
     "scan.discarded": "The scan is discarded.",
+
+    # Explain
+    "send.explain.title": "Copilot writes the scene.",
+    "receive.lead.scene": "Copilot replies with one Python code block. "
+                          "Copy the full reply. Then select Paste reply.",
+    "explain.title": "Explain code",
+    "explain.goal": "What must the video explain?",
+    "explain.goal.placeholder": "Write the goal in one or two sentences.",
+    "explain.audience": "Who is the audience?",
+    "explain.audience.placeholder": "For example: a developer new to this project.",
+    "explain.files": "The files to explain",
+    "explain.drop.main": "Drop project files here, or click to select them.",
+    "explain.drop.sub": "Only files inside the project go into the packet.",
+    "explain.start": "Start",
+    "explain.files.empty": "First add one project file.",
+    "explain.goal.empty": "First write the goal.",
+    "explain.outside": "This file is outside the project: {name}",
+    "explain.result.title": "The scene and the render",
+    "explain.check.name": "Scene check",
+    "explain.render.name": "Render",
+    "explain.render.running": "Manim renders the scene…",
+    "explain.render.passed": "The render is complete.",
+    "explain.render.failed": "The render failed.",
+    "explain.open.video": "Open the video",
+    "explain.open.folder": "Open the folder",
+    "explain.repair": "Repair with Copilot",
+    "explain.repair.sub": "The tool makes a repair package with the render error.",
+    "explain.done": "Done",
+    "explain.discarded": "The explanation is discarded.",
+    "explain.saved.note": "The scene and the video stay in the folder.",
+
+    # Explain settings
+    "settings.explain": "Explain",
+    "settings.explain.sub": "The Manim command for the local render.",
+    "explain.set.command": "Manim command",
+    "explain.set.command.hint": "The command or the full path of Manim on this "
+                                "computer. This value is for you, not for the "
+                                "project.",
+    "explain.set.install": "Install one time: pip install maintain[explain] — "
+                           "and: winget install ffmpeg",
 
     # Discuss
     "discuss.ask.title": "Discuss with Copilot",

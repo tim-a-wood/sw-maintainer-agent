@@ -62,7 +62,8 @@ class CommandSpec:
     working_directory: str = "."
 
 
-PACKET_TASK_KEYS = ("plan", "build", "repair", "review", "scan", "discuss")
+PACKET_TASK_KEYS = ("plan", "build", "repair", "review", "scan", "discuss",
+                    "explain")
 
 
 @dataclass(frozen=True)
