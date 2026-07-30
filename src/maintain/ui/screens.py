@@ -118,6 +118,46 @@ class Screen(QWidget):
                 widget.deleteLater()
 
 
+class NotePanel(QFrame):
+    """An inline note editor: the content stays visible while you write.
+
+    The text survives a cancel; it clears only after a send. FR-E2."""
+
+    send = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("Card")
+        column = QVBoxLayout(self)
+        column.setContentsMargins(14, 12, 14, 12)
+        column.setSpacing(8)
+        self.question = label("", "Lead")
+        column.addWidget(self.question)
+        self.edit = QPlainTextEdit()
+        self.edit.setFixedHeight(76)
+        column.addWidget(self.edit)
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(button(text("note.send"), "Primary", self._send))
+        row.addWidget(button(text("note.cancel"), "Ghost", self.hide))
+        row.addStretch(1)
+        column.addLayout(row)
+        self.hide()
+
+    def open(self, question: str) -> None:
+        self.question.setText(question)
+        self.setVisible(True)
+        self.edit.setFocus()
+
+    def _send(self) -> None:
+        value = self.edit.toPlainText().strip()
+        if not value:
+            return
+        self.hide()
+        self.edit.setPlainText("")
+        self.send.emit(value)
+
+
 class HomeScreen(Screen):
     new_change = Signal(str)     # mode
     open_history = Signal()
@@ -194,6 +234,7 @@ class DescribeScreen(Screen):
     start = Signal(str, str, list)   # mode, request, attachments
     back = Signal()
     import_requested = Signal()
+    open_checks = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -219,6 +260,11 @@ class DescribeScreen(Screen):
         self.add(self.chips)
         self.message = StatusLine()
         self.add(self.message)
+        self.checks_hint = button(text("describe.checks.hint"), "Ghost",
+                                  self.open_checks.emit)
+        self.checks_hint.setStyleSheet("padding: 2px 6px; font-size: 12px;")
+        self.checks_hint.setVisible(False)
+        self.add_row(self.checks_hint)
         self.add_gap()
         self.add_row(
             button(text("describe.start"), "Primary", self._start),
@@ -233,6 +279,9 @@ class DescribeScreen(Screen):
         self.attachments = []
         self.chips.set_files([])
         self.message.set_state("plain", "")
+
+    def set_checks_hint(self, visible: bool) -> None:
+        self.checks_hint.setVisible(visible)
 
     def set_recent(self, requests: list[str]) -> None:
         """FR-D8: the last requests, one click to reuse."""
@@ -545,7 +594,7 @@ class ExchangeScreen(Screen):
 
 class PlanCheckScreen(Screen):
     accept = Signal()
-    rescope = Signal()
+    rescope_note = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -560,7 +609,11 @@ class PlanCheckScreen(Screen):
         self.add_gap()
         self.add_row(
             button(text("plan.accept"), "Primary", self.accept.emit),
-            button(text("plan.rescope"), "Secondary", self.rescope.emit))
+            button(text("plan.rescope"), "Secondary",
+                   lambda: self.note_panel.open(text("note.body.plan"))))
+        self.note_panel = NotePanel()
+        self.note_panel.send.connect(self.rescope_note.emit)
+        self.add(self.note_panel)
 
     def show_tasks(self, tasks: list[dict]) -> None:
         self.title.setText(text("plan.title.one") if len(tasks) == 1
@@ -590,11 +643,12 @@ class PlanCheckScreen(Screen):
 
 class FindingsScreen(Screen):
     repair = Signal()
-    rescope = Signal()
+    rescope_note = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
-        self.add(label("STEP 3 OF 5 — REVIEW", "Eyebrow"))
+        self.eyebrow = label("STEP 3 OF 5 — REVIEW", "Eyebrow")
+        self.add(self.eyebrow)
         self.title = label("", "Title")
         self.add(self.title)
         self._cards = QVBoxLayout()
@@ -604,11 +658,21 @@ class FindingsScreen(Screen):
         self.add(holder)
         self.add_gap()
         self.add_row(button(text("findings.repair.button"), "Primary",
-                            self.repair.emit))
+                            self.repair.emit),
+                     button(text("findings.rescope"), "Ghost",
+                            lambda: self.note_panel.open(
+                                text("note.body.rescope"))))
         self.add(label(text("findings.repair.sub"), "Hint"))
-        self.add_row(button(text("findings.rescope"), "Ghost", self.rescope.emit))
+        self.note_panel = NotePanel()
+        self.note_panel.send.connect(self.rescope_note.emit)
+        self.add(self.note_panel)
 
-    def show_findings(self, findings: list[dict]) -> None:
+    def show_findings(self, findings: list[dict],
+                      round_number: int = 1) -> None:
+        self.eyebrow.setText("STEP 3 OF 5 — REVIEW"
+                             + (f" · ROUND {round_number}"
+                                if round_number > 1 else ""))
+        self.note_panel.hide()
         self.title.setText(text("findings.title.one") if len(findings) == 1
                            else text("findings.title.many", count=len(findings)))
         self.clear_layout(self._cards)
@@ -638,7 +702,7 @@ class FindingsScreen(Screen):
 
 class TestScreen(Screen):
     repair = Signal()
-    rescope = Signal()
+    rescope_note = Signal(str)
     retry = Signal()
 
     def __init__(self) -> None:
@@ -656,8 +720,13 @@ class TestScreen(Screen):
         self.repair_button = button(text("test.repair"), "Primary", self.repair.emit)
         self.retry_button = button(text("test.retry"), "Secondary",
                                    self.retry.emit)
-        self.rescope_button = button(text("test.rescope"), "Ghost", self.rescope.emit)
+        self.rescope_button = button(
+            text("test.rescope"), "Ghost",
+            lambda: self.note_panel.open(text("note.body.rescope")))
         self.add_row(self.repair_button, self.retry_button, self.rescope_button)
+        self.note_panel = NotePanel()
+        self.note_panel.send.connect(self.rescope_note.emit)
+        self.add(self.note_panel)
         self._set_failed_controls(False)
         self._checks: dict[str, StateChip] = {}
         self._row_frames: dict[str, QVBoxLayout] = {}
@@ -746,7 +815,7 @@ class TestScreen(Screen):
 
 class SaveScreen(Screen):
     accept = Signal()
-    feedback = Signal()
+    feedback_note = Signal(str)
     discard = Signal()
     rerun = Signal()
 
@@ -773,12 +842,17 @@ class SaveScreen(Screen):
         self.add(label(text("save.accept.sub"), "Hint"))
         self.add_gap(2)
         self.add_row(
-            button(text("save.feedback"), "Secondary", self.feedback.emit),
+            button(text("save.feedback"), "Secondary",
+                   lambda: self.note_panel.open(text("note.body.feedback"))),
             button(text("test.run_again"), "Ghost", self.rerun.emit),
             button(text("save.discard"), "Danger", self.discard.emit))
+        self.note_panel = NotePanel()
+        self.note_panel.send.connect(self.feedback_note.emit)
+        self.add(self.note_panel)
 
     def show_record(self, record: RunRecord, changed: list[str], diff: str) -> None:
         self.record = record
+        self.note_panel.hide()
         self.title.setText(text("save.title.one") if len(changed) == 1
                            else text("save.title", count=len(changed)))
         self.files.setText("\n".join(changed))
@@ -1115,7 +1189,7 @@ class IssuesScreen(Screen):
 class IssueDetailScreen(Screen):
     save = Signal()
     repair = Signal(str)
-    discuss = Signal(str)
+    discuss_note = Signal(str, str)   # issue id, question
     close_reason = Signal(str, str)   # issue id, reason
     reopen = Signal(str)
     remove = Signal(str)
@@ -1139,8 +1213,9 @@ class IssueDetailScreen(Screen):
         # FR-P6: the decisions come first; the fields follow.
         self.repair_button = button(text("issue.repair"), "Secondary",
                                     lambda: self.repair.emit(self.issue_id))
-        self.discuss_button = button(text("issue.discuss"), "Secondary",
-                                     lambda: self.discuss.emit(self.issue_id))
+        self.discuss_button = button(
+            text("issue.discuss"), "Secondary",
+            lambda: self.note_panel.open(text("discuss.ask.body")))
         self.close_button = button(text("issue.close"), "Secondary",
                                    self._toggle_reasons)
         self.reopen_button = button(text("issue.reopen"), "Secondary",
@@ -1173,6 +1248,10 @@ class IssueDetailScreen(Screen):
         self.add(self._reasons_holder)
         self.repair_hint = label(text("issue.repair.sub"), "Hint")
         self.add(self.repair_hint)
+        self.note_panel = NotePanel()
+        self.note_panel.send.connect(
+            lambda note: self.discuss_note.emit(self.issue_id, note))
+        self.add(self.note_panel)
         self.add(label(text("issue.field.title").upper(), "Eyebrow"))
         self.title_edit = QLineEdit()
         self.add(self.title_edit)
@@ -1230,6 +1309,7 @@ class IssueDetailScreen(Screen):
         self.message.set_state("plain", "")
         self._actions_holder.setVisible(existing)
         self._reasons_holder.setVisible(False)
+        self.note_panel.hide()
         if existing:
             source = text("issues.source." + issue.source)
             self.eyebrow.setText(

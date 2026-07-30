@@ -509,13 +509,16 @@ def test_discuss_flow_notes_and_severity_confirm(qt_app, tmp_path, monkeypatch):
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)
     window = MainWindow(config)
-    window.ask_note = lambda *args, **kwargs: "Is medium right?"
     window.ask_confirm = lambda *args, **kwargs: True
     issue = window.controller.issues.add(
         title="The bound is wrong", severity="medium",
         file="app.py", line=1, snippet='VALUE = "before"')
 
-    window._discuss_issue(issue.id)
+    # The question comes from the inline panel on the issue screen.
+    window._open_issue(issue.id)
+    window.issue_detail.note_panel.open("question")
+    window.issue_detail.note_panel.edit.setPlainText("Is medium right?")
+    window.issue_detail.note_panel._send()
     assert _screen(window) == "exchange"
     assert window.current_handoff.task_key == "discuss"
     reply = _side_envelope(window, {
@@ -736,3 +739,49 @@ def test_enter_and_escape_drive_the_screen_keys(qt_app, tmp_path, monkeypatch):
     window.show_issues()
     window.issues_list.keyPressEvent(escape)
     assert _screen(window) == "home"
+
+
+def test_toasts_notes_hints_and_round_context(qt_app, tmp_path, monkeypatch):
+    """E1-E6: chips, inline notes, checks hint, round label, audience."""
+    from maintain.repository_memory import load_ui_settings, save_ui_settings
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+
+    # E1: toasts are chips now, at most two.
+    window.toast("The plan is in.")
+    window.toast("Added 1 to the issue list.")
+    window.toast("The review is in.")
+    assert window._toasts.count() == 2
+
+    # E2: the note panel keeps text on cancel and clears after send.
+    panel = window.plan_check.note_panel
+    panel.open("What must change?")
+    panel.edit.setPlainText("Split the task.")
+    panel.hide()
+    assert panel.edit.toPlainText() == "Split the task."
+    sent: list[str] = []
+    window.plan_check.rescope_note.connect(sent.append)
+    panel.open("What must change?")
+    panel._send()
+    assert sent == ["Split the task."]
+    assert panel.edit.toPlainText() == ""
+
+    # E3: the default project has only diff-check, so the hint shows.
+    window._new_change("feature")
+    assert window.describe.checks_hint.isVisibleTo(window.describe)
+
+    # E4: the findings eyebrow names the round from round two on.
+    window.findings.show_findings([{"severity": "low", "file": "a", "line": 1,
+                                    "evidence": "e", "remediation": "r"}], 2)
+    assert "ROUND 2" in window.findings.eyebrow.text()
+    window.findings.show_findings([{"severity": "low", "file": "a", "line": 1,
+                                    "evidence": "e", "remediation": "r"}], 1)
+    assert "ROUND" not in window.findings.eyebrow.text()
+
+    # E5: the audience is remembered.
+    values = load_ui_settings()
+    values["explain_audience"] = "the safety board"
+    save_ui_settings(values)
+    window.show_explain()
+    assert window.explain.audience_edit.text() == "the safety board"

@@ -61,6 +61,7 @@ STR: dict[str, str] = {
     "describe.import": "Import…",
     "describe.start": "Start",
     "describe.empty": "First write the change.",
+    "describe.checks.hint": "Checks now: diff-check only. Add real checks in Settings.",
 
     # Send
     "send.plan.title": "Copilot makes the plan.",
@@ -362,6 +363,8 @@ STR: dict[str, str] = {
                          "The current work stays in the history.",
     "note.title.feedback": "Ask for changes",
     "note.body.feedback": "Tell Copilot what to change. The tool makes a repair package.",
+    "beat.plan.accepted": "Plan accepted.",
+    "beat.repair.starts": "Repair round starts.",
     "note.send": "Send the note",
     "note.cancel": "Go back",
 

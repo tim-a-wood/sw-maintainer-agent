@@ -746,3 +746,60 @@ class DiffHighlighter(QSyntaxHighlighter):
             line_format.setForeground(QColor(DIFF_REMOVED))
             line_format.setBackground(QColor(255, 155, 143, 26))
         self.setFormat(0, len(block_text), line_format)
+
+
+class ToastStack(QWidget):
+    """Floating toast chips above the foot bar. At most two at a time."""
+
+    SHOW_MILLISECONDS = 4000
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.column = QVBoxLayout(self)
+        self.column.setContentsMargins(0, 0, 0, 0)
+        self.column.setSpacing(6)
+        self.column.addStretch(1)
+
+    def push(self, message: str) -> None:
+        while self.count() >= 2:
+            self._remove(self._chips()[0])
+        chip = QFrame(self)
+        chip.setObjectName("Toast")
+        row = QHBoxLayout(chip)
+        row.setContentsMargins(14, 8, 14, 8)
+        text_label = QLabel(message)
+        text_label.setObjectName("ToastText")
+        text_label.setWordWrap(True)
+        row.addWidget(text_label)
+        self.column.addWidget(chip, 0, Qt.AlignmentFlag.AlignHCenter)
+        QTimer.singleShot(self.SHOW_MILLISECONDS,
+                          lambda: self._remove(chip))
+        self.show()
+        self.reposition()
+        QTimer.singleShot(0, self.reposition)
+
+    def _chips(self) -> list[QFrame]:
+        return [self.column.itemAt(index).widget()
+                for index in range(self.column.count())
+                if isinstance(self.column.itemAt(index).widget(), QFrame)]
+
+    def count(self) -> int:
+        return len(self._chips())
+
+    def _remove(self, chip: QFrame | None) -> None:
+        if chip is not None and chip.parent() is not None:
+            chip.setParent(None)
+            chip.deleteLater()
+        self.reposition()
+
+    def reposition(self) -> None:
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        width = min(440, parent.width() - 40)
+        height = self.sizeHint().height()
+        self.setGeometry((parent.width() - width) // 2,
+                         max(0, parent.height() - height - 56),
+                         width, height)
+        self.raise_()

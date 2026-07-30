@@ -47,7 +47,7 @@ from .screens import (BusyScreen, ChecksPage, DescribeScreen, DoneScreen,
                       SaveScreen, ScanCheckScreen, SettingsScreen, TasksPage,
                       TestScreen, documents_count)
 from .strings import text
-from .widgets import StageHeader
+from .widgets import StageHeader, ToastStack
 
 STAGE_FOR_TASK = {"plan": 0, "build": 1, "repair": 1, "review": 2}
 
@@ -95,7 +95,13 @@ class MainWindow(QMainWindow):
         self.screens: dict[str, QWidget] = {}
         self._build_screens()
         self._wire_controller()
+        self._toasts = ToastStack(self)
         self.show_home()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "_toasts"):
+            self._toasts.reposition()
 
     # ----- construction -----
 
@@ -187,7 +193,7 @@ class MainWindow(QMainWindow):
 
         self.issue_detail.save.connect(self._save_issue)
         self.issue_detail.repair.connect(self._repair_issue)
-        self.issue_detail.discuss.connect(self._discuss_issue)
+        self.issue_detail.discuss_note.connect(self._discuss_send)
         self.issue_detail.close_reason.connect(self._close_issue_with)
         self.issue_detail.reopen.connect(self._reopen_issue)
         self.issue_detail.remove.connect(self._remove_issue)
@@ -215,6 +221,8 @@ class MainWindow(QMainWindow):
         self.describe.start.connect(self._start_run)
         self.describe.back.connect(self.show_home)
         self.describe.import_requested.connect(self._import_run_files)
+        self.describe.open_checks.connect(
+            lambda: self._open_settings_page("checks"))
 
         self.exchange.show_global_button.clicked.connect(self._show_global_text)
         self.exchange.show_prompt_button.clicked.connect(self._show_prompt_text)
@@ -228,20 +236,19 @@ class MainWindow(QMainWindow):
         self.exchange.newest_download.connect(self._open_newest_download)
         self.exchange.scan_focus.connect(self._update_scan_focus)
 
-        self.plan_check.accept.connect(
-            lambda: self._answer_gate(GateDecision("accept")))
-        self.plan_check.rescope.connect(
-            lambda: self._gate_with_note("plan", "rescope"))
-        self.findings.repair.connect(
-            lambda: self._answer_gate(GateDecision("repair")))
-        self.findings.rescope.connect(
-            lambda: self._gate_with_note("rescope", "rescope"))
-        self.test.repair.connect(lambda: self._answer_gate(GateDecision("repair")))
-        self.test.rescope.connect(lambda: self._gate_with_note("rescope", "rescope"))
+        self.plan_check.accept.connect(self._accept_plan)
+        self.plan_check.rescope_note.connect(
+            lambda note: self._answer_gate(GateDecision("rescope", note)))
+        self.findings.repair.connect(self._start_repair)
+        self.findings.rescope_note.connect(
+            lambda note: self._answer_gate(GateDecision("rescope", note)))
+        self.test.repair.connect(self._start_repair)
+        self.test.rescope_note.connect(
+            lambda note: self._answer_gate(GateDecision("rescope", note)))
         self.test.retry.connect(lambda: self._answer_gate(GateDecision("retry")))
 
         self.save.accept.connect(self._accept_and_save)
-        self.save.feedback.connect(self._feedback)
+        self.save.feedback_note.connect(self._feedback_send)
         self.save.discard.connect(self._discard)
         self.save.rerun.connect(self._rerun_checks)
 
@@ -563,7 +570,7 @@ class MainWindow(QMainWindow):
             return
         self._show_side(exchange, packet)
 
-    def _discuss_issue(self, issue_id: str) -> None:
+    def _discuss_send(self, issue_id: str, question: str) -> None:
         if self.controller.busy:
             self.toast(text("issues.busy"))
             return
@@ -571,10 +578,6 @@ class MainWindow(QMainWindow):
             issue = self.controller.issues.get(issue_id)
         except MaintainError as exc:
             self.toast(str(exc))
-            return
-        question = self.ask_note(text("discuss.ask.title"),
-                                 text("discuss.ask.body"))
-        if question is None:
             return
         self.controller.issues.add_note(issue_id, "you", question)
         config = self.store.config
@@ -679,6 +682,8 @@ class MainWindow(QMainWindow):
 
     def show_explain(self) -> None:
         self.explain.reset()
+        self.explain.audience_edit.setText(
+            str(load_ui_settings().get("explain_audience", "")))
         self._set_run_footer(False)
         self.show_screen("explain")
 
@@ -706,6 +711,10 @@ class MainWindow(QMainWindow):
         sources = self._relative_sources(files)
         if sources is None:
             return
+        if audience.strip():
+            values = load_ui_settings()
+            values["explain_audience"] = audience.strip()
+            save_ui_settings(values)
         self._launch_explain(sources, goal, audience)
 
     def _launch_explain(self, sources: list, goal: str, audience: str,
@@ -812,6 +821,8 @@ class MainWindow(QMainWindow):
         self.describe.reset(mode)
         self.describe.set_recent(
             list(load_ui_settings().get("recent_requests", [])))
+        self.describe.set_checks_hint(not any(
+            name != "diff-check" for name, _ in self.store.checks()))
         self.show_screen("describe")
 
     def _start_run(self, mode: str, request: str, attachments: list) -> None:
@@ -1017,7 +1028,7 @@ class MainWindow(QMainWindow):
     def _findings_ready(self, record: RunRecord, findings: list) -> None:
         self.current_record = record
         self._set_stage(2)
-        self.findings.show_findings(findings)
+        self.findings.show_findings(findings, max(1, record.attempt))
         self.show_screen("findings")
 
     def _checks_failed(self, record: RunRecord, results: list) -> None:
@@ -1026,18 +1037,17 @@ class MainWindow(QMainWindow):
         self.test.show_failed(results)
         self.show_screen("test")
 
+    def _accept_plan(self) -> None:
+        self.toast(text("beat.plan.accepted"))
+        self._answer_gate(GateDecision("accept"))
+
+    def _start_repair(self) -> None:
+        self.toast(text("beat.repair.starts"))
+        self._answer_gate(GateDecision("repair"))
+
     def _answer_gate(self, decision: GateDecision) -> None:
         self.controller.answer_decision(decision)
         self.show_busy()
-
-    def _gate_with_note(self, kind: str, action: str) -> None:
-        note = self.ask_note(text(f"note.title.{kind}" if kind != "rescope"
-                                  else "note.title.rescope"),
-                             text(f"note.body.{kind}" if kind != "rescope"
-                                  else "note.body.rescope"))
-        if note is None:
-            return
-        self._answer_gate(GateDecision(action, note))
 
     # ----- progress and completion -----
 
@@ -1117,11 +1127,8 @@ class MainWindow(QMainWindow):
         if self.controller.accept_and_deliver(self.current_record.run_id):
             self.show_busy()
 
-    def _feedback(self) -> None:
+    def _feedback_send(self, note: str) -> None:
         if self.current_record is None:
-            return
-        note = self.ask_note(text("note.title.feedback"), text("note.body.feedback"))
-        if note is None:
             return
         if self.controller.feedback(self.current_record.run_id, note):
             self.show_busy()
@@ -1338,7 +1345,7 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, text("error.title"), message)
 
     def toast(self, message: str) -> None:
-        self.statusBar().showMessage(message, 6000)
+        self._toasts.push(message)
 
     def _import_run_files(self) -> None:
         paths = self.pick_files()

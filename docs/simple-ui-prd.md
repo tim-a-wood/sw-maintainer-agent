@@ -588,3 +588,17 @@ effort. The nine accepted items, all UI-layer:
 
 Rejected on purpose: streaks, badges, confetti, sounds. Real numbers
 over decoration.
+
+### 14.6 The third pass (E1–E6)
+
+- E1 Toasts are chips: a bordered card above the foot bar, four
+  seconds, at most two at a time. The status bar is gone.
+- E2 Inline note panels replace the note dialogs on the plan,
+  findings, test, and save screens and for the discuss question. The
+  content stays visible while the person writes; the text survives a
+  cancel.
+- E3 When a project has only diff-check, the Describe screen says so
+  and opens the checks editor on click.
+- E4 The findings eyebrow names the round from round two on.
+- E5 The explain screen remembers the last audience.
+- E6 "Plan accepted." and "Repair round starts." toast as beats.
