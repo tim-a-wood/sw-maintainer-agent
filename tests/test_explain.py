@@ -120,6 +120,30 @@ def test_explain_repair_request_carries_the_error(tmp_path):
     assert "corrected complete scene" in request.instructions
 
 
+def test_every_task_type_has_a_builtin_prompt():
+    from maintain.config import PACKET_TASK_KEYS
+    from maintain.ui.config_store import BUILTIN_PROMPTS
+    assert set(BUILTIN_PROMPTS) == set(PACKET_TASK_KEYS)
+
+
+def test_explain_prompt_override_lands_in_the_packet(tmp_path):
+    from maintain.ui.config_store import ConfigStore
+    config = _config(tmp_path)
+    ConfigStore(config).set_task_prompt(
+        "explain", "Explain only the gust rules, for the safety board.")
+    config = ProjectConfig.load(config.path)
+    request = explain_request(config, ["app.py"], "goal", "")
+    exchange = SideExchange(kind="explain", request=request,
+                            directory=explain_dir(config, request.run_id)
+                            / "packets")
+    packet = build_side_packet(exchange, config, [])
+    with zipfile.ZipFile(packet.zip_path) as archive:
+        task_text = archive.read("TASK.md").decode()
+    assert "Explain only the gust rules, for the safety board." in task_text
+    assert PROVIDER_SAFETY_HEADER in task_text
+    assert "Animate relationships" not in task_text
+
+
 def test_explain_packet_contract_and_members(tmp_path):
     config = _config(tmp_path)
     request = explain_request(config, ["app.py"], "Explain the value.", "")

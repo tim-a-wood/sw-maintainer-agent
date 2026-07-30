@@ -1553,7 +1553,7 @@ class TasksPage(Screen):
         holder.setLayout(tabs)
         self._tab_buttons: dict[str, QPushButton] = {}
         for key in ("project", "plan", "build", "repair", "review", "scan",
-                    "discuss"):
+                    "discuss", "explain"):
             name = text("tasks.project") if key == "project" else key.capitalize()
             control = button(name, "Secondary", lambda k=key: self.set_tab(k))
             control.setStyleSheet("padding: 5px 13px; font-size: 12px;")
