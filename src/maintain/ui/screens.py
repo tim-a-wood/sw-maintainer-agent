@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtGui import QGuiApplication, QKeySequence, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGridLayout,
                                QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
                                QPushButton, QRadioButton, QScrollArea,
@@ -130,6 +131,9 @@ class HomeScreen(Screen):
         super().__init__()
         self.add(label(project_name, "Title"))
         self.add(label(project_path, "MonoHint"))
+        self.momentum = label("", "Hint")
+        self.momentum.setVisible(False)
+        self.add(self.momentum)
         self.add_gap(4)
         self._continue = ChoiceButton("play", "", "", accent_kind="warn")
         self._continue.setVisible(False)
@@ -159,6 +163,10 @@ class HomeScreen(Screen):
             self.add(card)
             if title_key == "home.issues":
                 self._issues_card = card
+
+    def set_momentum(self, value: str) -> None:
+        self.momentum.setText(value)
+        self.momentum.setVisible(bool(value))
 
     def set_issue_count(self, count: int) -> None:
         if self._issues_card is None:
@@ -196,6 +204,12 @@ class DescribeScreen(Screen):
         self.request_edit.setPlaceholderText(text("describe.placeholder"))
         self.request_edit.setFixedHeight(96)
         self.add(self.request_edit)
+        self._recent_holder = QWidget()
+        self._recent_row = QHBoxLayout(self._recent_holder)
+        self._recent_row.setContentsMargins(0, 0, 0, 0)
+        self._recent_row.setSpacing(6)
+        self._recent_holder.setVisible(False)
+        self.add(self._recent_holder)
         zone = DropZone(text("describe.drop.main"), text("describe.drop.sub"))
         zone.files_dropped.connect(self.add_files)
         zone.clicked.connect(self.import_requested.emit)
@@ -219,6 +233,21 @@ class DescribeScreen(Screen):
         self.attachments = []
         self.chips.set_files([])
         self.message.set_state("plain", "")
+
+    def set_recent(self, requests: list[str]) -> None:
+        """FR-D8: the last requests, one click to reuse."""
+        self.clear_layout(self._recent_row)
+        for full in requests[:5]:
+            short = " ".join(full.split())
+            shown = short if len(short) <= 42 else short[:39] + "…"
+            chip = button(shown, "Ghost",
+                          lambda value=full: self.request_edit.setPlainText(
+                              value))
+            chip.setStyleSheet("padding: 3px 9px; font-size: 12px;")
+            chip.setToolTip(full)
+            self._recent_row.addWidget(chip)
+        self._recent_row.addStretch(1)
+        self._recent_holder.setVisible(bool(requests))
 
     def add_files(self, paths: list[Path]) -> None:
         self.attachments.extend(Path(item) for item in paths)
@@ -336,6 +365,8 @@ class ExchangeScreen(Screen):
         receive_head = QLabel(text("exchange.receive.head").upper())
         receive_head.setObjectName("ReceiveHead")
         receive_column.addWidget(receive_head)
+        self.waiting_label = label("", "Hint")
+        receive_column.addWidget(self.waiting_label)
         self.lead = label("", "Lead")
         receive_column.addWidget(self.lead)
         self.newest_button = button(text("exchange.newest"), "Primary",
@@ -362,7 +393,12 @@ class ExchangeScreen(Screen):
         self.status = StatusLine()
         receive_column.addWidget(self.status)
         self.add(receive_frame)
+        self.add(label(text("exchange.copy.key"), "Hint"))
         self.link_state.connect(self._on_link_state)
+        self._wait_start = 0.0
+        self._wait_timer = QTimer(self)
+        self._wait_timer.setInterval(1000)
+        self._wait_timer.timeout.connect(self._tick_waiting)
 
     def show_handoff(self, handoff: PacketHandoff, attachment_names: list[str],
                      document_count: int, scan: bool = False) -> None:
@@ -383,7 +419,28 @@ class ExchangeScreen(Screen):
         self.paste_button.setVisible(not zip_reply)
         self.send_status.set_state("plain", "")
         self.status.set_state("plain", "")
+        self._wait_start = time.monotonic()
+        self._tick_waiting()
+        self._wait_timer.start()
         self.maybe_auto_link()
+
+    def _tick_waiting(self) -> None:
+        """FR-D5: a live sign of life while the person is in Copilot."""
+        elapsed = max(0, int(time.monotonic() - self._wait_start))
+        minutes, seconds = divmod(elapsed, 60)
+        self.waiting_label.setText(
+            text("exchange.waiting", time=f"{minutes}:{seconds:02d}"))
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.matches(QKeySequence.StandardKey.Copy):
+            focus = QApplication.focusWidget()
+            if not isinstance(focus, (QLineEdit, QPlainTextEdit)):
+                if onedrive_settings().folder:
+                    self._copy_link()
+                else:
+                    self._copy_file()
+                return
+        super().keyPressEvent(event)
 
     def update_packet(self, zip_path: Path, attachment_names: list[str],
                       document_count: int) -> None:
@@ -473,6 +530,8 @@ class ExchangeScreen(Screen):
             return
         result = check_reply(self.handoff, text=clipboard_text, path=path)
         if result.valid:
+            self._wait_timer.stop()
+            self.waiting_label.setText("")
             self.status.set_state("busy", text("receive.checking"))
             self.reply_submitted.emit(result.reply)
             return
@@ -752,22 +811,67 @@ class DoneScreen(Screen):
         self.branch = label("", "Mono")
         self.branch.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.add(self.branch)
+        # FR-D1: the win, in numbers.
+        self.stats_card = QFrame()
+        self.stats_card.setObjectName("Card")
+        stats = QVBoxLayout(self.stats_card)
+        stats.setContentsMargins(16, 12, 16, 12)
+        stats.setSpacing(4)
+        self.stat_files = QLabel("")
+        self.stat_files.setObjectName("ChoiceTitle")
+        self.stat_files.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.file_names = QLabel("")
+        self.file_names.setObjectName("Hint")
+        self.file_names.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.stat_line = QLabel("")
+        self.stat_line.setObjectName("Hint")
+        self.stat_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        for widget in (self.stat_files, self.file_names, self.stat_line):
+            stats.addWidget(widget)
+        self.add(self.stats_card)
         audit = label(text("done.audit"), "Lead")
         audit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.add(audit)
+        self.message = StatusLine()
+        self.add(self.message)
         self.add_gap()
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         buttons.addWidget(button(text("done.new"), "Primary", self.new_change.emit))
+        buttons.addWidget(button(text("done.merge"), "Secondary",
+                                 self._copy_merge))
         buttons.addWidget(button(text("done.history"), "Ghost",
                                  self.open_history.emit))
         buttons.addStretch(1)
         holder2 = QWidget()
         holder2.setLayout(buttons)
         self.add(holder2)
+        self._branch = ""
 
-    def show_record(self, record: RunRecord) -> None:
+    def show_record(self, record: RunRecord, files: list[str] = (),
+                    checks: int = 0, iterations: int = 0,
+                    duration: str = "") -> None:
+        self._branch = record.branch
         self.branch.setText(text("done.branch", branch=record.branch))
+        self.message.set_state("plain", "")
+        files = list(files)
+        self.stat_files.setText(
+            text("done.files.one") if len(files) == 1
+            else text("done.files", count=len(files)))
+        shown = " · ".join(files[:3]) + (" …" if len(files) > 3 else "")
+        self.file_names.setText(shown)
+        self.file_names.setVisible(bool(shown))
+        checks_text = (text("done.checks.one") if checks == 1
+                       else text("done.checks", count=checks))
+        self.stat_line.setText(
+            f"{checks_text} · "
+            + text("done.steps", count=iterations, time=duration))
+
+    def _copy_merge(self) -> None:
+        if self._branch:
+            QGuiApplication.clipboard().setText(
+                f"git merge --no-ff {self._branch}")
+            self.message.set_state("ok", text("done.merge.done"))
 
 
 class HistoryRow(QFrame):
@@ -786,9 +890,9 @@ class HistoryRow(QFrame):
         column = QVBoxLayout()
         column.setSpacing(1)
         request = " ".join(summary.request.split())[:64]
-        title = QLabel(f"Run {summary.run_id}")
+        title = QLabel(request or f"Run {summary.run_id}")
         title.setObjectName("ChoiceTitle")
-        sub = QLabel(f"{request} · {summary.updated_at[:10]}")
+        sub = QLabel(f"{summary.run_id} · {summary.updated_at[:10]}")
         sub.setObjectName("ChoiceSub")
         column.addWidget(title)
         column.addWidget(sub)
@@ -1348,6 +1452,12 @@ class ExplainResultScreen(Screen):
         self.add(self.status)
         self.folder_label = ElidedLabel("", "MonoHint")
         self.add(self.folder_label)
+        self.sheet_view = QLabel()
+        self.sheet_view.setVisible(False)
+        self.sheet_view.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.sheet_view.setScaledContents(False)
+        self.sheet_view.mousePressEvent = lambda event: self.open_video.emit()
+        self.add(self.sheet_view)
         self.tail_view = QPlainTextEdit()
         self.tail_view.setObjectName("Code")
         self.tail_view.setReadOnly(True)
@@ -1374,14 +1484,21 @@ class ExplainResultScreen(Screen):
         self.status.set_state("busy", text("explain.render.running"))
         self.folder_label.setText(folder)
         self._output_tail = ""
+        self.sheet_view.setVisible(False)
         self.tail_view.setVisible(False)
         self.video_button.setVisible(False)
         self.repair_button.setVisible(False)
         self.repair_hint.setVisible(False)
 
-    def show_passed(self) -> None:
+    def show_passed(self, sheet=None) -> None:
         self.render_chip.set_state("PASS", "pass")
         self.status.set_state("ok", text("explain.render.passed"))
+        if sheet:
+            pixmap = QPixmap(str(sheet))
+            if not pixmap.isNull():
+                self.sheet_view.setPixmap(pixmap.scaledToWidth(
+                    560, Qt.TransformationMode.SmoothTransformation))
+                self.sheet_view.setVisible(True)
         self.video_button.setVisible(True)
         self.repair_button.setVisible(False)
         self.repair_hint.setVisible(False)

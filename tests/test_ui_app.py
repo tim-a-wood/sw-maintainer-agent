@@ -114,6 +114,8 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     window.ask_note = lambda *args, **kwargs: "Note."
     errors: list[str] = []
     window.show_error = errors.append
+    toasts: list[str] = []
+    window.toast = toasts.append
     reference = tmp_path / "notes.md"
     reference.write_text("# Notes\n", encoding="utf-8")
     window.pick_files = lambda: [str(reference)]
@@ -174,6 +176,7 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
         encoding="utf-8")
     window._open_newest_download()
     wait_until(qt_app, lambda: _screen(window) == "plan", message="plan gate")
+    assert any("plan is in" in item for item in toasts)
     window.plan_check.accept.emit()
 
     # Build packet: reply with the implementation ZIP.
@@ -214,12 +217,22 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     assert any(item.kind == "revert" for item in revert_timeline)
     assert any(item.superseded for item in revert_timeline)
 
-    # Accept and save: the run delivers and the Done screen appears.
+    # Accept and save: the run delivers and the Done screen lands the win.
     window.save.accept.emit()
     wait_until(qt_app, lambda: errors or _screen(window) == "done",
                message="done screen")
     assert not errors, errors
     assert "maintain/" in window.done.branch.text()
+    assert "1 file changed" in window.done.stat_files.text()
+    assert "app.py" in window.done.file_names.text()
+    assert "iterations" in window.done.stat_line.text()
+    window.done._copy_merge()
+    assert QApplication.clipboard().text().startswith("git merge --no-ff ")
+    window.show_home()
+    assert window.home.momentum.isVisibleTo(window.home)
+    assert "1 saved change" in window.home.momentum.text()
+    window.home.new_change.emit("feature")
+    assert window.describe._recent_holder.isVisibleTo(window.describe)
 
     # History lists the run; its timeline is read-only.
     window.done.open_history.emit()

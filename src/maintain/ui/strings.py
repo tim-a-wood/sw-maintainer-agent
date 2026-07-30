@@ -13,6 +13,14 @@ STR: dict[str, str] = {
     # Application
     "app.title": "Maintain",
     "app.footer": "Run {run} · isolated workspace",
+    "app.waiting": "Maintain — waiting: {step}",
+    "wait.step.plan": "the plan reply",
+    "wait.step.build": "the code reply",
+    "wait.step.repair": "the repair reply",
+    "wait.step.review": "the review reply",
+    "wait.step.scan": "the scan reply",
+    "wait.step.discuss": "the answer",
+    "wait.step.explain": "the scene",
 
     # Stages
     "stage.plan": "Plan",
@@ -37,6 +45,10 @@ STR: dict[str, str] = {
     "home.projects.sub": "Create, open, or remove projects.",
     "home.settings": "Settings",
     "home.settings.sub": "OneDrive, prompts, documents, package, checks.",
+    "home.momentum": "{count} saved changes. The last: {when}.",
+    "home.momentum.one": "1 saved change. The last: {when}.",
+    "when.today": "today",
+    "when.yesterday": "yesterday",
     "home.continue": "Continue run {run}",
     "home.continue.sub": "{stage}. The tool waits for you.",
 
@@ -85,6 +97,12 @@ STR: dict[str, str] = {
     "receive.lead.json": "Copilot replies with one reply file. Download "
                          "it in Copilot, then select Open the newest "
                          "download.",
+    "exchange.accepted.plan": "The plan is in.",
+    "exchange.accepted.build": "The code is in.",
+    "exchange.accepted.repair": "The repair is in.",
+    "exchange.accepted.review": "The review is in.",
+    "exchange.waiting": "The tool waits for the reply. {time}",
+    "exchange.copy.key": "Ctrl+C copies the package link again.",
     "exchange.newest": "Open the newest download",
     "exchange.newest.none": "No new file is in the Downloads folder.",
     "exchange.newest.wrong": "The newest download is not the reply: {name}",
@@ -140,6 +158,13 @@ STR: dict[str, str] = {
     # Done
     "done.title": "The change is saved.",
     "done.branch": "Branch: {branch}",
+    "done.files": "{count} files changed",
+    "done.files.one": "1 file changed",
+    "done.checks": "{count} checks passed",
+    "done.checks.one": "1 check passed",
+    "done.steps": "{count} iterations · {time} from start to save",
+    "done.merge": "Copy the merge command",
+    "done.merge.done": "The merge command is in the clipboard.",
     "done.audit": "The audit record is complete.",
     "done.new": "Start a new change",
     "done.history": "View the history",

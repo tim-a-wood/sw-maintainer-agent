@@ -327,6 +327,12 @@ class MainWindow(QMainWindow):
             self._busy_timer.stop()
         if name not in self.RUN_FLOW_SCREENS:
             self.stage_header.setVisible(False)
+        if name == "exchange" and self.current_handoff is not None:
+            step = text("wait.step." + self.current_handoff.task_key)
+            self.setWindowTitle(text("app.waiting", step=step))
+        else:
+            self.setWindowTitle(
+                f"{text('app.title')} — {self.store.config.name}")
         self.stack.setCurrentWidget(self.screens[name])
 
     def show_busy(self, message: str = "") -> None:
@@ -344,7 +350,23 @@ class MainWindow(QMainWindow):
         summary = self.controller.resumable_run()
         self.home.set_resumable(summary)
         self.home.set_issue_count(self.controller.issues.open_count())
+        self.home.set_momentum(self._momentum_line())
         self.show_screen("home")
+
+    def _momentum_line(self) -> str:
+        saved = [item for item in self.controller.runs()
+                 if item.state == "delivered"]
+        if not saved:
+            return ""
+        from datetime import date, timedelta
+        last = saved[0].updated_at[:10]
+        today = date.today()
+        when = (text("when.today") if last == today.isoformat()
+                else text("when.yesterday")
+                if last == (today - timedelta(days=1)).isoformat() else last)
+        if len(saved) == 1:
+            return text("home.momentum.one", when=when)
+        return text("home.momentum", count=len(saved), when=when)
 
     def show_history(self) -> None:
         self.history.show_runs(self.controller.runs())
@@ -740,7 +762,7 @@ class MainWindow(QMainWindow):
         if result.ok:
             state["video"] = result.video
             state["sheet"] = result.sheet
-            self.explain_result.show_passed()
+            self.explain_result.show_passed(result.sheet)
         else:
             state["tail"] = result.output_tail
             self.explain_result.show_failed(result.message, result.output_tail)
@@ -788,10 +810,13 @@ class MainWindow(QMainWindow):
 
     def _new_change(self, mode: str) -> None:
         self.describe.reset(mode)
+        self.describe.set_recent(
+            list(load_ui_settings().get("recent_requests", [])))
         self.show_screen("describe")
 
     def _start_run(self, mode: str, request: str, attachments: list) -> None:
         if self.controller.start_run(mode, request, attachments):
+            self._remember_request(request)
             self._set_stage(0)
             self.show_busy(text("working.plan"))
 
@@ -964,8 +989,19 @@ class MainWindow(QMainWindow):
         if self._side is not None:
             self._side_reply(reply)
             return
+        task_key = (self.current_handoff.task_key
+                    if self.current_handoff else "")
         self.controller.answer_reply(reply)
+        if task_key in {"plan", "build", "repair", "review"}:
+            self.toast(text("exchange.accepted." + task_key))
         self.show_busy()
+
+    def _remember_request(self, request: str) -> None:
+        values = load_ui_settings()
+        recent = [request] + [item for item in values.get(
+            "recent_requests", []) if item != request]
+        values["recent_requests"] = recent[:5]
+        save_ui_settings(values)
 
     def _keep_for_next_packet(self, paths: list) -> None:
         self.controller.run_attachments.extend(Path(item) for item in paths)
@@ -1020,9 +1056,18 @@ class MainWindow(QMainWindow):
         self._in_test = False
         state = RunState(record.state)
         if state is RunState.AWAITING_ACCEPTANCE:
-            self._show_save(record)
+            if self.stack.currentWidget() is self.test:
+                self.test.mark_passed()
+                QTimer.singleShot(600, lambda: self._show_save(record))
+            else:
+                self._show_save(record)
         elif state is RunState.DELIVERED:
-            self.done.show_record(record)
+            self.done.show_record(
+                record, files=self.controller.changed_files(record),
+                checks=len(record.evidence.get("tests", {})
+                           .get("commands", [])),
+                iterations=len(self.controller.timeline(record.run_id)),
+                duration=self._run_duration(record))
             self._set_run_footer(False)
             self._set_stage(5)
             self.stage_header.setVisible(False)
@@ -1035,6 +1080,22 @@ class MainWindow(QMainWindow):
             self.show_home()
         else:
             self.show_home()
+
+    def _run_duration(self, record: RunRecord) -> str:
+        from datetime import datetime
+        try:
+            delta = (datetime.fromisoformat(record.updated_at)
+                     - datetime.fromisoformat(record.created_at))
+        except (TypeError, ValueError):
+            return "-"
+        seconds = max(0, int(delta.total_seconds()))
+        if seconds < 60:
+            return f"{seconds} s"
+        minutes, _ = divmod(seconds, 60)
+        if minutes < 60:
+            return f"{minutes} min"
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours} h {minutes:02d} min"
 
     def _show_save(self, record: RunRecord) -> None:
         self._set_run_footer(True, record.run_id)

@@ -567,3 +567,24 @@ a plain line points to Settings.
   package" rebuilds the packet in place (P7).
 - A toast reports engine-captured and delivery-closed issues (P8).
 - Enter fires the screen's primary action; Esc goes back (P9).
+
+### 14.5 The reward pass (D1–D9)
+
+A second walkthrough scored every beat for reward, momentum, and
+effort. The nine accepted items, all UI-layer:
+
+- D1 The Done screen lands the win: files, checks, iterations,
+  duration, and "Copy the merge command" for the saved branch.
+- D2 Each accepted reply gets a named toast ("The plan is in.").
+- D3 Home shows one momentum line from the run history.
+- D4 The all-green Test screen holds 600 ms before Save.
+- D5 A live "waits for the reply" timer sits in the receive region,
+  and the window title names the awaited step for the taskbar.
+- D6 History rows lead with the request; the run id is the subline.
+- D7 The explain result shows the frame sheet inline; a click opens
+  the video.
+- D8 Describe offers the last five requests as one-click chips.
+- D9 Ctrl+C on the Exchange screen copies the link (or file) again.
+
+Rejected on purpose: streaks, badges, confetti, sounds. Real numbers
+over decoration.
