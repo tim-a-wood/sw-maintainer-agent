@@ -545,13 +545,16 @@ class MainWindow(QMainWindow):
             return
         detail = self.issue_detail.detail_edit.toPlainText()
         severity = self.issue_detail.severity()
+        reference = self.issue_detail.reference_edit.text().strip()
         store = self.controller.issues
         try:
             if self.issue_detail.issue_id:
                 issue = store.update(self.issue_detail.issue_id, title=title,
-                                     detail=detail, severity=severity)
+                                     detail=detail, severity=severity,
+                                     external_ref=reference)
             else:
-                issue = store.add(title=title, detail=detail, severity=severity)
+                issue = store.add(title=title, detail=detail,
+                                  severity=severity, external_ref=reference)
         except MaintainError as exc:
             self.show_error(str(exc))
             return

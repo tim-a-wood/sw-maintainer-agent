@@ -652,3 +652,14 @@ owner asked whether those use cases got the same attention.
   with "and {n} more" when several).
 - H4 The explain screen shows "Last video: {date}. Open the folder."
   for the newest rendered video.
+
+### 14.10 The issue follow-up (I1–I5)
+
+- I1 The all-clear message shows only when no open or in-work issue
+  remains. (Defect fix.)
+- I2 An in-work issue offers "Return to open", so a stopped or
+  discarded repair run cannot strand the status.
+- I3 The scan gate has Select all and Select none.
+- I4 The issue form has an editable Reference field; the store
+  records reference changes as events.
+- I5 The filter tabs carry counts when issues exist.

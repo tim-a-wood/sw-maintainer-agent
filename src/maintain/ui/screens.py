@@ -1248,6 +1248,13 @@ class IssuesScreen(Screen):
                                   else "Secondary")
             control.style().unpolish(control)
             control.style().polish(control)
+        counts = {"all": len(self._issues)}
+        for issue in self._issues:
+            counts[issue.status] = counts.get(issue.status, 0) + 1
+        for key, control in self._tab_buttons.items():
+            base = text("issues.filter." + key)
+            control.setText(f"{base} {counts.get(key, 0)}"
+                            if self._issues else base)
         self.clear_layout(self._rows)
         shown = [issue for issue in self._issues if self._matches(issue)]
         closed = sum(1 for issue in self._issues if issue.status == "closed")
@@ -1358,8 +1365,11 @@ class IssueDetailScreen(Screen):
         self.add(self.detail_edit)
         self.location = label("", "MonoHint")
         self.add(self.location)
-        self.reference = label("", "MonoHint")
-        self.add(self.reference)
+        self.add(label(text("issue.field.reference").upper(), "Eyebrow"))
+        self.reference_edit = QLineEdit()
+        self.reference_edit.setPlaceholderText(
+            text("issue.reference.placeholder"))
+        self.add(self.reference_edit)
         self.snippet_view = QPlainTextEdit()
         self.snippet_view.setObjectName("Code")
         self.snippet_view.setReadOnly(True)
@@ -1434,10 +1444,7 @@ class IssueDetailScreen(Screen):
         self.location.setText(
             f"{text('issue.location')}: {place}" if place else "")
         self.location.setVisible(bool(place))
-        reference = issue.external_ref if existing else ""
-        self.reference.setText(
-            f"{text('issue.reference')}: {reference}" if reference else "")
-        self.reference.setVisible(bool(reference))
+        self.reference_edit.setText(issue.external_ref if existing else "")
         snippet = issue.snippet if existing else ""
         self.snippet_view.setPlainText(snippet)
         self.snippet_view.setVisible(bool(snippet.strip()))
@@ -1459,8 +1466,12 @@ class IssueDetailScreen(Screen):
         self.repair_button.setVisible(existing and not closed)
         self.discuss_button.setVisible(existing and not closed)
         self.repair_hint.setVisible(existing and not closed)
-        self.close_button.setVisible(existing and not closed)
-        self.reopen_button.setVisible(closed)
+        closed_status = existing and issue.status == "closed"
+        in_work = existing and issue.status == "in_work"
+        self.close_button.setVisible(existing and not closed_status)
+        self.reopen_button.setText(
+            text("issue.return.open") if in_work else text("issue.reopen"))
+        self.reopen_button.setVisible(closed_status or in_work)
         self.remove_button.setVisible(existing)
 
 
@@ -1475,6 +1486,13 @@ class ScanCheckScreen(Screen):
         self.add(self.title)
         self.known = label("", "Hint")
         self.add(self.known)
+        select_all = button(text("scan.select.all"), "Ghost",
+                            lambda: self._set_all(True))
+        select_none = button(text("scan.select.none"), "Ghost",
+                             lambda: self._set_all(False))
+        for control in (select_all, select_none):
+            control.setStyleSheet("padding: 3px 8px; font-size: 12px;")
+        self.add_row(select_all, select_none)
         self._rows = QVBoxLayout()
         self._rows.setSpacing(9)
         holder = QWidget()
@@ -1529,6 +1547,10 @@ class ScanCheckScreen(Screen):
                           0, Qt.AlignmentFlag.AlignTop)
             self._rows.addWidget(card)
             self._boxes.append(box)
+
+    def _set_all(self, checked: bool) -> None:
+        for box in self._boxes:
+            box.setChecked(checked)
 
     def _add(self) -> None:
         selected = [index for index, box in enumerate(self._boxes)

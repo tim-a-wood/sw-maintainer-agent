@@ -857,10 +857,27 @@ def test_reference_allclear_and_last_video(qt_app, tmp_path, monkeypatch):
         source="scan", run_id="scan-1")
     issue = window.controller.issues.load()[0]
 
-    # H1: the spreadsheet reference is visible on the detail screen.
+    # H1/I4: the spreadsheet reference shows in the editable field.
     window._open_issue(issue.id)
-    assert "TRACKER-112" in window.issue_detail.reference.text()
-    assert window.issue_detail.reference.isVisibleTo(window.issue_detail)
+    assert window.issue_detail.reference_edit.text() == "TRACKER-112"
+
+    # I2: an in-work issue offers the way back to open.
+    window.controller.issues.set_in_work(issue.id)
+    window._open_issue(issue.id)
+    assert window.issue_detail.reopen_button.isVisibleTo(window.issue_detail)
+    assert "Return to open" in window.issue_detail.reopen_button.text()
+    window._reopen_issue(issue.id)
+    assert window.controller.issues.get(issue.id).status == "open"
+
+    # I4: an edited reference is saved.
+    window._open_issue(issue.id)
+    window.issue_detail.reference_edit.setText("TRACKER-113")
+    window._save_issue()
+    assert window.controller.issues.get(issue.id).external_ref == "TRACKER-113"
+
+    # I5: the filter tabs carry counts.
+    window.show_issues()
+    assert window.issues_list._tab_buttons["open"].text().endswith("1")
 
     # H2: closing the last issue turns the empty state into the all-clear.
     window.controller.issues.close(issue.id, "fixed")

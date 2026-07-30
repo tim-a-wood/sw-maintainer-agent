@@ -266,8 +266,13 @@ class IssueStore:
 
     def update(self, issue_id: str, *, title: str | None = None,
                detail: str | None = None, severity: str | None = None,
+               external_ref: str | None = None,
                actor: str = "you") -> Issue:
         issue = self.get(issue_id)
+        if external_ref is not None and external_ref != issue.external_ref:
+            issue = self._event(issue, actor, "reference",
+                                issue.external_ref, external_ref)
+            issue = replace(issue, external_ref=external_ref.strip())
         if title is not None and title.strip() and title != issue.title:
             issue = self._event(issue, actor, "title", issue.title,
                                 title.strip()[:200])
