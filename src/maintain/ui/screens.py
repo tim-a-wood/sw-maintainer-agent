@@ -1311,11 +1311,12 @@ class IssueDetailScreen(Screen):
                                     lambda: self.remove.emit(self.issue_id))
         self._actions_holder = QWidget()
         actions = QHBoxLayout(self._actions_holder)
-        actions.setSpacing(8)
+        actions.setSpacing(6)
         actions.setContentsMargins(0, 0, 0, 0)
         for control in (self.repair_button, self.discuss_button,
                         self.close_button, self.reopen_button,
                         self.remove_button):
+            control.setStyleSheet("padding: 5px 10px; font-size: 12px;")
             actions.addWidget(control)
         actions.addStretch(1)
         self.add(self._actions_holder)
