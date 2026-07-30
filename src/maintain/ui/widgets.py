@@ -532,12 +532,14 @@ class DropZone(QFrame):
     """A file drop target with a click alternative. Emits local file paths."""
 
     files_dropped = Signal(list)
+    clicked = Signal()
 
     def __init__(self, main: str, sub: str = "", slim: bool = False) -> None:
         super().__init__()
         self.setObjectName("DropZone")
         self.setAcceptDrops(True)
         self.setProperty("active", False)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         column = QVBoxLayout(self)
         pad = 10 if slim else 22
         column.setContentsMargins(16, pad, 16, pad)
@@ -581,6 +583,10 @@ class DropZone(QFrame):
         if paths:
             self.files_dropped.emit(paths)
             event.acceptProposedAction()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 class PacketCard(QFrame):

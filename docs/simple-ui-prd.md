@@ -345,6 +345,8 @@ Stated to keep the scope firm:
    auto-capture + repair bridge; the scan loop with its accept gate;
    the discuss loop.
 5. **M5 — Explain.** Section 13, after the manual trial passes.
+6. **M6 — Exchange rework.** Section 14: the one Exchange screen, the
+   downloadable reply contract, and the small usability set P1–P9.
 
 ## 11. Open points
 
@@ -515,3 +517,53 @@ attachments: PITFALLS.md and EXAMPLE-SCENE.md.
   Szarkowska 2018 eye-tracking study.
 - The pitfalls file follows ManimAgent: keep known faults as rules in
   every packet.
+
+## 14. Exchange rework (M6)
+
+Source: the usability review (docs/usability-review.md, P1–P9,
+all accepted) plus three direct requirements from the owner.
+
+### 14.1 One Exchange screen
+
+Send and Receive are one screen with two marked regions: "Send to
+Copilot" (accent border) and "Receive from Copilot" (green border).
+The reply region is always active; the Continue gate is gone. The
+reply validator stays the real gate. A resumed run returns to the
+same screen with nothing to unlock.
+
+### 14.2 The reply is a downloadable file
+
+Every packet tells Copilot to return its reply as one downloadable
+file: `maintain-output.zip` for implementation, one Markdown file
+with one fenced block for everything else (the JSON envelope, or the
+scene). The person clicks download in Copilot, then selects "Open
+the newest download". The tool takes the newest .zip/.md/.json/.txt
+file from the Downloads folder that is newer than the packet, and
+checks it with the same validator as every other path. The Downloads
+folder is a setting on the OneDrive page. Drop, click-to-select, and
+paste stay as alternatives; a fenced envelope in pasted text or in a
+file is unwrapped before validation.
+
+### 14.3 The link copies itself
+
+When a packet appears and the OneDrive folder is set, the tool
+publishes the packet and puts the link in the clipboard alone
+(setting "auto link", default on, OneDrive page). Without a folder,
+a plain line points to Settings.
+
+### 14.4 The rest of the accepted set
+
+- The busy screen shows only after 600 ms; fast transitions are
+  silent (P3).
+- Every drop zone is also a button; the separate Import buttons are
+  gone (P4).
+- The check-failure screen has "Run the checks again" for flaky
+  checks. The engine allows TEST_FAILED → TESTING and writes the
+  retry evidence as `tests-N.json`, keeping the audit append-only
+  (P5).
+- Issue detail: the decisions sit on top, and Close is an inline
+  five-reason row, not a dialog (P6).
+- The scan focus is a field on the Exchange screen; "Update the
+  package" rebuilds the packet in place (P7).
+- A toast reports engine-captured and delivery-closed issues (P8).
+- Enter fires the screen's primary action; Esc goes back (P9).

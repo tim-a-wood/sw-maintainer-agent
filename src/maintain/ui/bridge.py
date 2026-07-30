@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -70,17 +71,36 @@ def check_reply(handoff: PacketHandoff, *, text: str = "",
         except ProviderError as exc:
             return ReplyCheck(None, str(exc))
         return ReplyCheck(ManualReply(kind="scene", text=extracted), "")
-    try:
-        json.loads(source)
-    except json.JSONDecodeError:
+    candidate = _envelope_text(source)
+    if candidate is None:
         if path is not None:
             return ReplyCheck(None, "", keep_as_attachment=True)
         return ReplyCheck(None, "This is not the reply. The tool expects the JSON reply.")
     try:
-        parse_response(source, request, "manual")
+        parse_response(candidate, request, "manual")
     except ProviderError as exc:
         return ReplyCheck(None, str(exc))
-    return ReplyCheck(ManualReply(kind="json", text=source), "")
+    return ReplyCheck(ManualReply(kind="json", text=candidate), "")
+
+
+_JSON_FENCE = re.compile(r"```(?:json)?[ \t]*\r?\n(.*?)```", re.DOTALL)
+
+
+def _envelope_text(source: str) -> str | None:
+    """The JSON envelope in the reply: bare, or inside one fenced block."""
+    try:
+        json.loads(source)
+        return source
+    except json.JSONDecodeError:
+        pass
+    for match in _JSON_FENCE.finditer(source):
+        block = match.group(1)
+        try:
+            json.loads(block)
+            return block
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 class UiBridge(QObject):

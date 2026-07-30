@@ -1,5 +1,10 @@
 # Usability review — every scenario walked end to end
 
+> Outcome: P1–P9 were all accepted and are implemented, together with
+> the owner's additions: the two marked Send/Receive regions, the
+> downloadable reply contract, and the newest-download pickup with a
+> configurable Downloads folder. See PRD section 14.
+
 Method: each scenario below was driven click-by-click in the real
 application (offscreen, real engine, scripted Copilot replies), counting
 user actions and noting friction. Steps marked ● are user clicks or

@@ -142,6 +142,15 @@ QLabel#PacketGrip {{ color: {p.faint}; font-size: 14px; }}
 QFrame#DropZone {{ border: 2px dashed {p.accent}; border-radius: 10px;
                    background: {p.drop}; }}
 QFrame#DropZone[active="true"] {{ background: {p.accent_soft}; }}
+
+QFrame#SendRegion {{ border: 1px solid {p.edge}; border-left: 3px solid {p.accent};
+                     border-radius: 9px; background: {p.surface}; }}
+QFrame#ReceiveRegion {{ border: 1px solid {p.edge}; border-left: 3px solid {p.ok};
+                        border-radius: 9px; background: {p.surface}; }}
+QLabel#SendHead {{ color: {p.accent}; font-size: 11px; font-weight: 700;
+                   letter-spacing: 1px; }}
+QLabel#ReceiveHead {{ color: {p.ok}; font-size: 11px; font-weight: 700;
+                      letter-spacing: 1px; }}
 QLabel#DropMain {{ font-weight: 600; font-size: 13px; }}
 QLabel#DropSlim {{ color: {p.dim}; font-size: 12px; }}
 

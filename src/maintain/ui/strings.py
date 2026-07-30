@@ -44,7 +44,7 @@ STR: dict[str, str] = {
     "describe.title": "What do you want to change?",
     "describe.fault.title": "What is the fault?",
     "describe.placeholder": "Write the change in one or two sentences.",
-    "describe.drop.main": "Drop files here to add them to the run.",
+    "describe.drop.main": "Drop files here, or click to select them.",
     "describe.drop.sub": "All file types are permitted. They go into every packet.",
     "describe.import": "Import…",
     "describe.start": "Start",
@@ -63,11 +63,9 @@ STR: dict[str, str] = {
     "send.export": "Export…",
     "send.attachments": "Attachments — go into this packet",
     "send.attach.add": "Add files…",
-    "send.attach.drop": "Drop files here, or select Add files…",
+    "send.attach.drop": "Drop files here, or click to select them.",
     "send.contents": "What is in the package?",
-    "send.continue": "Continue",
-    "send.continue.before": "First give the package to Copilot.",
-    "send.continue.after": "Select Continue after you send the package in Copilot.",
+    "send.link.unset": "Set the OneDrive folder in Settings for the automatic link.",
     "send.link.copying": "Copy the package to OneDrive…",
     "send.link.syncing": "OneDrive synchronizes…",
     "send.link.done": "In sync. The link is in the clipboard.",
@@ -79,16 +77,20 @@ STR: dict[str, str] = {
     "send.updated": "The package is updated.",
 
     # Receive
-    "receive.title": "Bring the Copilot reply here.",
-    "receive.lead.zip": "Copilot attaches one file. Its name is maintain-output.zip. "
-                        "Drag it here.",
-    "receive.lead.json": "Copilot replies with one JSON text. Copy it in Copilot. "
-                         "Then select Paste reply.",
+    "exchange.send.head": "Send to Copilot",
+    "exchange.receive.head": "Receive from Copilot",
+    "receive.lead.zip": "Copilot makes one file: maintain-output.zip. "
+                        "Download it in Copilot, then select Open the "
+                        "newest download.",
+    "receive.lead.json": "Copilot replies with one reply file. Download "
+                         "it in Copilot, then select Open the newest "
+                         "download.",
+    "exchange.newest": "Open the newest download",
+    "exchange.newest.none": "No new file is in the Downloads folder.",
+    "exchange.newest.wrong": "The newest download is not the reply: {name}",
+    "exchange.drop.sub": "Or click to select the file.",
     "receive.drop": "Drop the reply here.",
-    "receive.drop.sub.zip": "Or download it in Copilot and select Import.",
-    "receive.drop.sub.json": "A file is also accepted.",
     "receive.paste": "Paste reply",
-    "receive.import": "Import…",
     "receive.checking": "Check the reply…",
     "receive.valid": "The reply matches run {run}.",
     "receive.applied": "Applied. Your project does not change before you accept.",
@@ -250,6 +252,7 @@ STR: dict[str, str] = {
     "send.discuss.title": "Copilot examines the issue.",
     "scan.ask.title": "Scan with Copilot",
     "scan.ask.body": "Tell Copilot where to look. Empty means a full scan.",
+    "scan.update": "Update the package",
     "scan.check.title.one": "Copilot proposes 1 issue.",
     "scan.check.title.many": "Copilot proposes {count} issues.",
     "scan.check.known": "{count} known issues are not shown again.",
@@ -262,7 +265,9 @@ STR: dict[str, str] = {
 
     # Explain
     "send.explain.title": "Copilot writes the scene.",
-    "receive.lead.scene": "Copilot replies with one Python code block. "
+    "receive.lead.scene": "Copilot replies with one scene file. Download "
+                          "it in Copilot, then select Open the newest "
+                          "download. "
                           "Copy the full reply. Then select Paste reply.",
     "explain.title": "Explain code",
     "explain.goal": "What must the video explain?",
@@ -401,6 +406,13 @@ STR: dict[str, str] = {
     "error.title": "The tool needs your attention.",
     "paused.title": "The run is stopped.",
     "paused.body": "Continue the run from the home screen.",
+    "test.retry": "Run the checks again",
+    "issue.close.pick": "Why is it closed?",
+    "issues.captured": "Added {count} to the issue list.",
+    "issues.autoclosed": "Closed {count} on delivery.",
+    "onedrive.autolink": "Copy the link alone when a package is ready.",
+    "exchange.downloads": "Downloads folder",
+    "exchange.downloads.hint": "The tool takes the newest reply file from this folder.",
     "working.plan": "Copilot makes the plan…",
     "working.checks": "The checks run…",
     "working.busy": "The tool works…",

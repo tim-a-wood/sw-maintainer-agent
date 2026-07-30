@@ -112,14 +112,15 @@ def _task_markdown(
         implementation_transport: str = "inline",
 ) -> str:
     inline_output = (
-        "Return only one complete JSON envelope in the chat. Do not create or attach a file, "
-        "do not return Markdown, and do not return a patch. In `content.files`, include one "
-        "object with `path` and `content` for every added or modified file. `content` must be "
-        "the complete final UTF-8 file, not a diff, excerpt, placeholder, or fenced block. Use "
-        "an empty `files` list only for a deletion-only implementation. Put approved deletions "
-        "in `content.deleted_files`. Set `content.changed_files` to exactly the union of the "
-        "`files` paths and `deleted_files`, with no duplicates. Use only paths authorized by "
-        "the supplied task."
+        "Write one complete JSON envelope into one downloadable Markdown file and give the "
+        "file for download; the person clicks download in the chat. Put the envelope inside "
+        "one ```json code block and add nothing else to the file. Do not return a patch. In "
+        "`content.files`, include one object with `path` and `content` for every added or "
+        "modified file. `content` must be the complete final UTF-8 file, not a diff, excerpt, "
+        "placeholder, or fenced block. Use an empty `files` list only for a deletion-only "
+        "implementation. Put approved deletions in `content.deleted_files`. Set "
+        "`content.changed_files` to exactly the union of the `files` paths and "
+        "`deleted_files`, with no duplicates. Use only paths authorized by the supplied task."
     )
     zip_output = (
         "Create and attach one downloadable ZIP file named `maintain-output.zip`. At the ZIP "
@@ -133,16 +134,18 @@ def _task_markdown(
         "ready.` Do not return JSON, source code, a patch, or manifest content in the chat."
     )
     scene_output = (
-        "Return one complete Python scene file inside one fenced code block marked "
-        "`python`. Return no other code blocks, no JSON envelope, and no additional "
-        "files. Short prose around the block is permitted and is ignored."
+        "Write one complete Python scene file into one downloadable Markdown file and give "
+        "the file for download; the person clicks download in the chat. Put the scene inside "
+        "exactly one fenced code block marked `python`, and no other code blocks. Short "
+        "prose around the block is permitted and is ignored."
     )
     output = (
         zip_output if request.role == "implement" and implementation_transport == "zip"
         else inline_output if request.role == "implement"
         else scene_output if request.role == "explain" else
-        "Return only one complete JSON envelope in the chat. Do not create or attach output "
-        "files, return Markdown, or add explanatory text outside the JSON."
+        "Write one complete JSON envelope into one downloadable Markdown file and give the "
+        "file for download; the person clicks download in the chat. Put the envelope inside "
+        "one ```json code block and add nothing else to the file."
     )
     role_contract = {
         "scope": (

@@ -7,10 +7,14 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import (QCheckBox, QFrame, QGridLayout, QHBoxLayout,
-                               QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-                               QRadioButton, QScrollArea, QSpinBox,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGridLayout,
+                               QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
+                               QPushButton, QRadioButton, QScrollArea,
+                               QSpinBox, QVBoxLayout, QWidget)
+
+from maintain.downloads import default_downloads
+from maintain.issues import REASONS
+from maintain.repository_memory import load_ui_settings, save_ui_settings
 
 from maintain.history import IterationEvent, RunSummary
 from maintain.models import RunRecord
@@ -51,6 +55,8 @@ class Screen(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("Screen")
+        self._primary_action = None
+        self._escape_action = None
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
@@ -63,6 +69,23 @@ class Screen(QWidget):
         self.column.addStretch(1)
         scroll.setWidget(inner)
         outer.addWidget(scroll)
+
+    def set_keys(self, primary=None, escape=None) -> None:
+        """Enter fires the primary action; Esc goes back. FR-P9."""
+        self._primary_action = primary
+        self._escape_action = escape
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        if (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and self._primary_action is not None
+                and not isinstance(QApplication.focusWidget(), QPlainTextEdit)):
+            self._primary_action()
+            return
+        if key == Qt.Key.Key_Escape and self._escape_action is not None:
+            self._escape_action()
+            return
+        super().keyPressEvent(event)
 
     def add(self, widget: QWidget) -> QWidget:
         self.column.insertWidget(self.column.count() - 1, widget)
@@ -175,12 +198,11 @@ class DescribeScreen(Screen):
         self.add(self.request_edit)
         zone = DropZone(text("describe.drop.main"), text("describe.drop.sub"))
         zone.files_dropped.connect(self.add_files)
+        zone.clicked.connect(self.import_requested.emit)
         self.add(zone)
         self.chips = FileChips()
         self.chips.removed.connect(self._remove)
         self.add(self.chips)
-        self.add_row(button(text("describe.import"), "Secondary",
-                            self.import_requested.emit))
         self.message = StatusLine()
         self.add(self.message)
         self.add_gap()
@@ -215,79 +237,153 @@ class DescribeScreen(Screen):
         self.start.emit(self.mode, request, list(self.attachments))
 
 
-class SendScreen(Screen):
-    continue_clicked = Signal()
+class ExchangeScreen(Screen):
+    """One screen for the whole exchange: the packet out, the reply in."""
+
+    reply_submitted = Signal(object)   # ManualReply
+    kept_attachment = Signal(list)     # list[Path]
+    import_reply = Signal()
+    newest_download = Signal()
     add_attachments = Signal(list)       # list[Path] added to this packet
     remove_attachment = Signal(int)
     import_attachments = Signal()
     export_requested = Signal()
+    scan_focus = Signal(str)
     link_state = Signal(str, str)        # state, message (internal, thread-safe)
 
     def __init__(self) -> None:
         super().__init__()
         self.handoff: PacketHandoff | None = None
-        self._out_action = False
+        self.package_style = "zip"
         self.eyebrow = label("", "Eyebrow")
         self.add(self.eyebrow)
         self.title = label("", "Title")
         self.add(self.title)
-        self.add(label(text("send.lead"), "Lead"))
+
+        # ---- the send region ----
+        send_frame = QFrame()
+        send_frame.setObjectName("SendRegion")
+        send_column = QVBoxLayout(send_frame)
+        send_column.setContentsMargins(14, 12, 14, 12)
+        send_column.setSpacing(9)
+        send_head = QLabel(text("exchange.send.head").upper())
+        send_head.setObjectName("SendHead")
+        send_column.addWidget(send_head)
+        self.send_lead = label(text("send.lead"), "Lead")
+        send_column.addWidget(self.send_lead)
+        focus_row = QHBoxLayout()
+        focus_row.setSpacing(8)
+        self.focus_edit = QLineEdit()
+        self.focus_edit.setPlaceholderText(text("scan.ask.body"))
+        self.focus_edit.returnPressed.connect(self._emit_focus)
+        focus_row.addWidget(self.focus_edit, 1)
+        focus_row.addWidget(button(text("scan.update"), "Secondary",
+                                   self._emit_focus))
+        self._focus_holder = QWidget()
+        self._focus_holder.setLayout(focus_row)
+        send_column.addWidget(self._focus_holder)
         self.card = PacketCard()
-        self.card.drag_started.connect(self._mark_out)
-        self.add(self.card)
+        send_column.addWidget(self.card)
         self.contents = label("", "Hint")
-        self.add(self.contents)
+        send_column.addWidget(self.contents)
         self.show_global_button = button("GLOBAL.md", "Ghost", None)
         self.show_prompt_button = button("TASK.md", "Ghost", None)
         for control in (self.show_global_button, self.show_prompt_button):
             control.setStyleSheet("padding: 2px 6px; font-size: 11px;")
         contents_label = label(text("send.contents"), "Hint")
         contents_label.setWordWrap(False)
-        row = self.add_row(contents_label, self.show_global_button,
-                           self.show_prompt_button)
-        row.setSpacing(4)
-        self.add_gap(2)
-        self.add(label(text("send.attachments").upper(), "Eyebrow"))
+        contents_row = QHBoxLayout()
+        contents_row.setSpacing(4)
+        for widget in (contents_label, self.show_global_button,
+                       self.show_prompt_button):
+            contents_row.addWidget(widget)
+        contents_row.addStretch(1)
+        contents_holder = QWidget()
+        contents_holder.setLayout(contents_row)
+        send_column.addWidget(contents_holder)
         self.chips = FileChips()
         self.chips.removed.connect(self.remove_attachment.emit)
-        self.add(self.chips)
-        zone = DropZone(text("send.attach.drop"), slim=True)
-        zone.files_dropped.connect(self.add_attachments.emit)
-        self.add(zone)
-        self.add_row(button(text("send.attach.add"), "Secondary",
-                            self.import_attachments.emit))
+        send_column.addWidget(self.chips)
+        attach_zone = DropZone(text("send.attach.drop"), slim=True)
+        attach_zone.files_dropped.connect(self.add_attachments.emit)
+        attach_zone.clicked.connect(self.import_attachments.emit)
+        send_column.addWidget(attach_zone)
+        self.link_button = button(text("send.copy_link"), "Secondary",
+                                  self._copy_link)
+        buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(10)
+        for widget in (self.link_button,
+                       button(text("send.copy_file"), "Secondary",
+                              self._copy_file),
+                       button(text("send.export"), "Secondary",
+                              self.export_requested.emit)):
+            buttons_row.addWidget(widget)
+        buttons_row.addStretch(1)
+        buttons_holder = QWidget()
+        buttons_holder.setLayout(buttons_row)
+        send_column.addWidget(buttons_holder)
+        self.send_status = StatusLine()
+        send_column.addWidget(self.send_status)
+        self.add(send_frame)
         self.add_gap(2)
-        self.link_button = button(text("send.copy_link"), "Primary", self._copy_link)
-        self.add(self.link_button)
-        self.add(label(text("send.copy_link.sub"), "Hint"))
-        self.add_row(
-            button(text("send.copy_file"), "Secondary", self._copy_file),
-            button(text("send.export"), "Secondary", self.export_requested.emit))
+
+        # ---- the receive region ----
+        receive_frame = QFrame()
+        receive_frame.setObjectName("ReceiveRegion")
+        receive_column = QVBoxLayout(receive_frame)
+        receive_column.setContentsMargins(14, 12, 14, 12)
+        receive_column.setSpacing(9)
+        receive_head = QLabel(text("exchange.receive.head").upper())
+        receive_head.setObjectName("ReceiveHead")
+        receive_column.addWidget(receive_head)
+        self.lead = label("", "Lead")
+        receive_column.addWidget(self.lead)
+        self.newest_button = button(text("exchange.newest"), "Primary",
+                                    self.newest_download.emit)
+        newest_row = QHBoxLayout()
+        newest_row.addWidget(self.newest_button)
+        newest_row.addStretch(1)
+        newest_holder = QWidget()
+        newest_holder.setLayout(newest_row)
+        receive_column.addWidget(newest_holder)
+        reply_zone = DropZone(text("receive.drop"), text("exchange.drop.sub"))
+        reply_zone.setMinimumHeight(84)
+        reply_zone.files_dropped.connect(self._dropped)
+        reply_zone.clicked.connect(self.import_reply.emit)
+        receive_column.addWidget(reply_zone)
+        self.paste_button = button(text("receive.paste"), "Secondary",
+                                   self._paste)
+        paste_row = QHBoxLayout()
+        paste_row.addWidget(self.paste_button)
+        paste_row.addStretch(1)
+        paste_holder = QWidget()
+        paste_holder.setLayout(paste_row)
+        receive_column.addWidget(paste_holder)
         self.status = StatusLine()
-        self.add(self.status)
-        self.add_gap(2)
-        self.continue_button = button(text("send.continue"), "Primary",
-                                      self.continue_clicked.emit)
-        self.continue_button.setEnabled(False)
-        self.caption = label(text("send.continue.before"), "Hint")
-        self.caption.setWordWrap(False)
-        self.add_row(self.continue_button, self.caption)
+        receive_column.addWidget(self.status)
+        self.add(receive_frame)
         self.link_state.connect(self._on_link_state)
 
     def show_handoff(self, handoff: PacketHandoff, attachment_names: list[str],
-                     document_count: int) -> None:
+                     document_count: int, scan: bool = False) -> None:
         self.handoff = handoff
-        self._out_action = False
         again = ""
         request = handoff.request
         if handoff.task_key == "plan" and "round-" in request.task_id:
             again = " · AGAIN"
         self.eyebrow.setText(TASK_STEPS[handoff.task_key] + again)
         self.title.setText(text(TASK_TITLES[handoff.task_key]))
+        self._focus_holder.setVisible(scan)
         self.update_packet(handoff.zip_path, attachment_names, document_count)
+        zip_reply = handoff.reply_kind == "zip"
+        lead_key = ("receive.lead.zip" if zip_reply
+                    else "receive.lead.scene" if handoff.reply_kind == "scene"
+                    else "receive.lead.json")
+        self.lead.setText(text(lead_key))
+        self.paste_button.setVisible(not zip_reply)
+        self.send_status.set_state("plain", "")
         self.status.set_state("plain", "")
-        self.continue_button.setEnabled(False)
-        self.caption.setText(text("send.continue.before"))
+        self.maybe_auto_link()
 
     def update_packet(self, zip_path: Path, attachment_names: list[str],
                       document_count: int) -> None:
@@ -299,10 +395,19 @@ class SendScreen(Screen):
             f"{documents}attachments/ — {len(attachment_names)}")
         self.chips.set_files(attachment_names)
 
-    def _mark_out(self) -> None:
-        self._out_action = True
-        self.continue_button.setEnabled(True)
-        self.caption.setText(text("send.continue.after"))
+    def _emit_focus(self) -> None:
+        self.scan_focus.emit(self.focus_edit.text().strip())
+
+    # ---- send side ----
+
+    def maybe_auto_link(self) -> None:
+        """FR-P2: publish and copy the link alone when a packet appears."""
+        if not load_ui_settings().get("auto_link", True):
+            return
+        if not onedrive_settings().folder:
+            self.send_status.set_state("plain", text("send.link.unset"))
+            return
+        self._copy_link()
 
     def _copy_file(self) -> None:
         if self.handoff is None:
@@ -311,8 +416,7 @@ class SendScreen(Screen):
         mime = QMimeData()
         mime.setUrls([QUrl.fromLocalFile(str(self.card.packet_path))])
         QGuiApplication.clipboard().setMimeData(mime)
-        self.status.set_state("ok", text("send.file.copied"))
-        self._mark_out()
+        self.send_status.set_state("ok", text("send.file.copied"))
 
     def _copy_link(self) -> None:
         if self.handoff is None:
@@ -320,9 +424,8 @@ class SendScreen(Screen):
         settings = onedrive_settings()
         packet = self.card.packet_path
         self.link_button.setEnabled(False)
-        self.status.set_state("busy", text("send.link.copying"))
-        style = getattr(self.parent(), "package_style", "zip")
-        expand = style == "folder"
+        self.send_status.set_state("busy", text("send.link.copying"))
+        expand = self.package_style == "folder"
 
         def work() -> None:
             try:
@@ -337,63 +440,23 @@ class SendScreen(Screen):
     def _on_link_state(self, state: str, value: str) -> None:
         self.link_button.setEnabled(True)
         if state == "error":
-            self.status.set_state("bad", value)
+            self.send_status.set_state("bad", value)
             return
         if value:
             QGuiApplication.clipboard().setText(value)
         if state == SYNCED:
-            self.status.set_state(
+            self.send_status.set_state(
                 "ok", f"{text('send.link.done')} {text('send.link.paste')}")
         elif state == PENDING:
-            self.status.set_state("warn", text("send.link.manual"))
+            self.send_status.set_state("warn", text("send.link.manual"))
         else:
-            self.status.set_state(
+            self.send_status.set_state(
                 "plain", f"{text('send.link.paste')} {text('send.link.manual')}")
-        self._mark_out()
 
     def mark_exported(self, name: str) -> None:
-        self.status.set_state("ok", text("send.exported", name=name))
-        self._mark_out()
+        self.send_status.set_state("ok", text("send.exported", name=name))
 
-
-class ReceiveScreen(Screen):
-    reply_submitted = Signal(object)   # ManualReply
-    kept_attachment = Signal(list)     # list[Path]
-    back = Signal()
-    import_requested = Signal()
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.handoff: PacketHandoff | None = None
-        self.eyebrow = label("", "Eyebrow")
-        self.add(self.eyebrow)
-        self.add(label(text("receive.title"), "Title"))
-        self.lead = label("", "Lead")
-        self.add(self.lead)
-        zone = DropZone(text("receive.drop"), "")
-        zone.setMinimumHeight(110)
-        zone.files_dropped.connect(self._dropped)
-        self.add(zone)
-        self.paste_button = button(text("receive.paste"), "Primary", self._paste)
-        self.import_button = button(text("receive.import"), "Secondary",
-                                    self.import_requested.emit)
-        self.add_row(self.paste_button, self.import_button)
-        self.status = StatusLine()
-        self.add(self.status)
-        self.add_gap()
-        self.add_row(button(text("receive.back"), "Ghost", self.back.emit))
-
-    def show_handoff(self, handoff: PacketHandoff) -> None:
-        self.handoff = handoff
-        self.eyebrow.setText(TASK_STEPS[handoff.task_key])
-        zip_reply = handoff.reply_kind == "zip"
-        lead_key = ("receive.lead.zip" if zip_reply
-                    else "receive.lead.scene" if handoff.reply_kind == "scene"
-                    else "receive.lead.json")
-        self.lead.setText(text(lead_key))
-        self.paste_button.setVisible(not zip_reply)
-        self.import_button.setVisible(True)
-        self.status.set_state("plain", "")
+    # ---- receive side ----
 
     def _paste(self) -> None:
         if self.handoff is None:
@@ -517,6 +580,7 @@ class FindingsScreen(Screen):
 class TestScreen(Screen):
     repair = Signal()
     rescope = Signal()
+    retry = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -531,8 +595,10 @@ class TestScreen(Screen):
         self.add(self.outcome)
         self.add_gap()
         self.repair_button = button(text("test.repair"), "Primary", self.repair.emit)
+        self.retry_button = button(text("test.retry"), "Secondary",
+                                   self.retry.emit)
         self.rescope_button = button(text("test.rescope"), "Ghost", self.rescope.emit)
-        self.add_row(self.repair_button, self.rescope_button)
+        self.add_row(self.repair_button, self.retry_button, self.rescope_button)
         self._set_failed_controls(False)
         self._checks: dict[str, StateChip] = {}
         self._row_frames: dict[str, QVBoxLayout] = {}
@@ -548,6 +614,7 @@ class TestScreen(Screen):
 
     def _set_failed_controls(self, visible: bool) -> None:
         self.repair_button.setVisible(visible)
+        self.retry_button.setVisible(visible)
         self.rescope_button.setVisible(visible)
 
     def on_progress(self, phase: str, label_key: str, message: str) -> None:
@@ -945,7 +1012,7 @@ class IssueDetailScreen(Screen):
     save = Signal()
     repair = Signal(str)
     discuss = Signal(str)
-    close_issue = Signal(str)
+    close_reason = Signal(str, str)   # issue id, reason
     reopen = Signal(str)
     remove = Signal(str)
     back = Signal()
@@ -965,6 +1032,43 @@ class IssueDetailScreen(Screen):
         head_holder = QWidget()
         head_holder.setLayout(head)
         self.add(head_holder)
+        # FR-P6: the decisions come first; the fields follow.
+        self.repair_button = button(text("issue.repair"), "Secondary",
+                                    lambda: self.repair.emit(self.issue_id))
+        self.discuss_button = button(text("issue.discuss"), "Secondary",
+                                     lambda: self.discuss.emit(self.issue_id))
+        self.close_button = button(text("issue.close"), "Secondary",
+                                   self._toggle_reasons)
+        self.reopen_button = button(text("issue.reopen"), "Secondary",
+                                    lambda: self.reopen.emit(self.issue_id))
+        self.remove_button = button(text("issue.remove"), "Danger",
+                                    lambda: self.remove.emit(self.issue_id))
+        self._actions_holder = QWidget()
+        actions = QHBoxLayout(self._actions_holder)
+        actions.setSpacing(8)
+        actions.setContentsMargins(0, 0, 0, 0)
+        for control in (self.repair_button, self.discuss_button,
+                        self.close_button, self.reopen_button,
+                        self.remove_button):
+            actions.addWidget(control)
+        actions.addStretch(1)
+        self.add(self._actions_holder)
+        self._reasons_holder = QWidget()
+        reasons = QHBoxLayout(self._reasons_holder)
+        reasons.setSpacing(6)
+        reasons.setContentsMargins(0, 0, 0, 0)
+        reasons.addWidget(label(text("issue.close.pick"), "Hint"))
+        for reason in REASONS:
+            control = button(text("issues.reason." + reason), "Secondary",
+                             lambda r=reason: self.close_reason.emit(
+                                 self.issue_id, r))
+            control.setStyleSheet("padding: 4px 10px; font-size: 12px;")
+            reasons.addWidget(control)
+        reasons.addStretch(1)
+        self._reasons_holder.setVisible(False)
+        self.add(self._reasons_holder)
+        self.repair_hint = label(text("issue.repair.sub"), "Hint")
+        self.add(self.repair_hint)
         self.add(label(text("issue.field.title").upper(), "Eyebrow"))
         self.title_edit = QLineEdit()
         self.add(self.title_edit)
@@ -1004,20 +1108,9 @@ class IssueDetailScreen(Screen):
         self.add_row(
             button(text("issue.save"), "Primary", self.save.emit),
             button(text("history.back"), "Ghost", self.back.emit))
-        self.repair_button = button(text("issue.repair"), "Secondary",
-                                    lambda: self.repair.emit(self.issue_id))
-        self.discuss_button = button(text("issue.discuss"), "Secondary",
-                                     lambda: self.discuss.emit(self.issue_id))
-        self.add_row(self.repair_button, self.discuss_button)
-        self.repair_hint = label(text("issue.repair.sub"), "Hint")
-        self.add(self.repair_hint)
-        self.close_button = button(text("issue.close"), "Secondary",
-                                   lambda: self.close_issue.emit(self.issue_id))
-        self.reopen_button = button(text("issue.reopen"), "Secondary",
-                                    lambda: self.reopen.emit(self.issue_id))
-        self.remove_button = button(text("issue.remove"), "Danger",
-                                    lambda: self.remove.emit(self.issue_id))
-        self.add_row(self.close_button, self.reopen_button, self.remove_button)
+
+    def _toggle_reasons(self) -> None:
+        self._reasons_holder.setVisible(not self._reasons_holder.isVisible())
 
     def severity(self) -> str:
         if self.radio_high.isChecked():
@@ -1031,6 +1124,8 @@ class IssueDetailScreen(Screen):
         existing = issue is not None
         self.issue_id = issue.id if existing else ""
         self.message.set_state("plain", "")
+        self._actions_holder.setVisible(existing)
+        self._reasons_holder.setVisible(False)
         if existing:
             source = text("issues.source." + issue.source)
             self.eyebrow.setText(
@@ -1183,12 +1278,11 @@ class ExplainScreen(Screen):
         self.add(label(text("explain.files").upper(), "Eyebrow"))
         zone = DropZone(text("explain.drop.main"), text("explain.drop.sub"))
         zone.files_dropped.connect(self.add_files)
+        zone.clicked.connect(self.import_requested.emit)
         self.add(zone)
         self.chips = FileChips()
         self.chips.removed.connect(self._remove)
         self.add(self.chips)
-        self.add_row(button(text("describe.import"), "Secondary",
-                            self.import_requested.emit))
         self.message = StatusLine()
         self.add(self.message)
         self.add_gap()
@@ -1528,6 +1622,13 @@ class OneDrivePage(Screen):
         self.timeout_edit.setFixedWidth(120)
         self.add_row(self.timeout_edit)
         self.add(label(text("onedrive.timeout.hint"), "Hint"))
+        self.add_gap(2)
+        self.autolink_box = QCheckBox(text("onedrive.autolink"))
+        self.add(self.autolink_box)
+        self.add(label(text("exchange.downloads").upper(), "Eyebrow"))
+        self.downloads_edit = QLineEdit()
+        self.add(self.downloads_edit)
+        self.add(label(text("exchange.downloads.hint"), "Hint"))
         self.add_gap()
         self.add_row(
             button(text("settings.save"), "Primary", self._save),
@@ -1538,6 +1639,10 @@ class OneDrivePage(Screen):
         self.folder_edit.setText(settings.folder)
         self.link_edit.setText(settings.link_base)
         self.timeout_edit.setValue(settings.timeout_seconds)
+        values = load_ui_settings()
+        self.autolink_box.setChecked(bool(values.get("auto_link", True)))
+        self.downloads_edit.setText(
+            str(values.get("downloads_path") or default_downloads()))
 
     def _preview(self, value: str) -> None:
         base = value.strip().rstrip("/")
@@ -1549,6 +1654,10 @@ class OneDrivePage(Screen):
             folder=self.folder_edit.text().strip(),
             link_base=self.link_edit.text().strip(),
             timeout_seconds=int(self.timeout_edit.value())))
+        values = load_ui_settings()
+        values["auto_link"] = self.autolink_box.isChecked()
+        values["downloads_path"] = self.downloads_edit.text().strip()
+        save_ui_settings(values)
         self.saved.emit()
 
 

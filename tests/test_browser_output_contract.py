@@ -90,13 +90,12 @@ def test_implementation_task_uses_one_inline_json_contract(tmp_path: Path) -> No
     package = build_exchange_package(_request(), tmp_path / "package")
     task = package.paths[0].read_text(encoding="utf-8")
 
-    assert "Return only one complete JSON envelope" in task
+    assert "one complete JSON envelope" in task
+    assert "downloadable Markdown file" in task
     assert '"files": [' in task
     assert '"path": "exact/repository/path"' in task
     assert '"content": "complete final file contents\\n"' in task
-    assert "Do not create or attach a file" in task
     assert "maintain-output.zip" not in task
-    assert "downloadable Markdown" not in task
 
 
 def test_m365_implementation_task_uses_downloadable_zip_contract(

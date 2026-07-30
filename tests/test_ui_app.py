@@ -128,7 +128,7 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     window.describe._start()
 
     # Plan packet arrives.
-    wait_until(qt_app, lambda: _screen(window) == "send", message="plan packet")
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="plan packet")
     handoff = window.current_handoff
     assert handoff.task_key == "plan"
     assert handoff.zip_path.is_file()
@@ -144,36 +144,51 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     with zipfile.ZipFile(handoff.zip_path) as archive:
         assert "attachments/extra.txt" in set(archive.namelist())
 
-    # A wrong reply is refused and the screen stays open.
-    window.send.continue_button.setEnabled(True)
-    window.send.continue_clicked.emit()
-    assert _screen(window) == "receive"
-    window.receive.check(clipboard_text="this is not json")
-    assert _screen(window) == "receive"
-    assert window.receive.status.text()
+    # One screen, two visible regions, no Continue gate.
+    from PySide6.QtWidgets import QFrame
+    assert window.exchange.findChild(QFrame, "SendRegion") is not None
+    assert window.exchange.findChild(QFrame, "ReceiveRegion") is not None
+    assert not hasattr(window.exchange, "continue_button")
 
-    # The valid plan reply advances to the plan gate.
-    window.receive.check(clipboard_text=_scope_reply(handoff))
+    # A wrong reply is refused and the screen stays open.
+    assert _screen(window) == "exchange"
+    window.exchange.check(clipboard_text="this is not json")
+    assert _screen(window) == "exchange"
+    assert window.exchange.status.text()
+
+    # The plan reply arrives as a downloaded Markdown file with a fenced
+    # envelope; the newest-download path finds and accepts it.
+    from maintain.repository_memory import load_ui_settings, save_ui_settings
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    values = load_ui_settings()
+    values["downloads_path"] = str(downloads)
+    save_ui_settings(values)
+    window._open_newest_download()
+    assert "No new file" in window.exchange.status.text()
+    (downloads / "old-notes.md").write_text("stale", encoding="utf-8")
+    os.utime(downloads / "old-notes.md", (1000000, 1000000))
+    reply_file = downloads / "maintain-reply.md"
+    reply_file.write_text(
+        "Here is the reply.\n\n```json\n" + _scope_reply(handoff) + "\n```\n",
+        encoding="utf-8")
+    window._open_newest_download()
     wait_until(qt_app, lambda: _screen(window) == "plan", message="plan gate")
     window.plan_check.accept.emit()
 
     # Build packet: reply with the implementation ZIP.
-    wait_until(qt_app, lambda: _screen(window) == "send"
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
                and window.current_handoff.task_key == "build",
                message="build packet")
     build_handoff = window.current_handoff
-    window.send.continue_button.setEnabled(True)
-    window.send.continue_clicked.emit()
-    window.receive.check(path=_build_zip(build_handoff, tmp_path))
+    window.exchange.check(path=_build_zip(build_handoff, tmp_path))
 
     # Review packet: approve.
-    wait_until(qt_app, lambda: _screen(window) == "send"
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
                and window.current_handoff.task_key == "review",
                message="review packet")
     review_handoff = window.current_handoff
-    window.send.continue_button.setEnabled(True)
-    window.send.continue_clicked.emit()
-    window.receive.check(clipboard_text=_review_reply(review_handoff))
+    window.exchange.check(clipboard_text=_review_reply(review_handoff))
 
     # Checks pass and the Save screen appears.
     wait_until(qt_app, lambda: _screen(window) == "save", message="save screen")
@@ -187,14 +202,12 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     build_anchor = next(item for item in window.controller.timeline(record.run_id)
                         if item.kind == "build_applied")
     window._go_back_to(build_anchor.sequence)
-    wait_until(qt_app, lambda: errors or (_screen(window) == "send"
+    wait_until(qt_app, lambda: errors or (_screen(window) == "exchange"
                and window.current_handoff.task_key == "review"),
                message="review packet after go-back")
     assert not errors, errors
     second_review = window.current_handoff
-    window.send.continue_button.setEnabled(True)
-    window.send.continue_clicked.emit()
-    window.receive.check(clipboard_text=_review_reply(second_review))
+    window.exchange.check(clipboard_text=_review_reply(second_review))
     wait_until(qt_app, lambda: _screen(window) == "save", message="save again")
     record = window.current_record
     revert_timeline = window.controller.timeline(record.run_id)
@@ -377,8 +390,7 @@ def test_issue_crud_from_the_screens(qt_app, tmp_path, monkeypatch):
     assert "1" in window.home._issues_card.sub_label.text()
 
     # Close with a reason, reopen, then remove for good.
-    window.ask_choice = lambda title, body, options: options[1]  # wont_fix
-    window._close_issue(issue.id)
+    window._close_issue_with(issue.id, "wont_fix")
     closed = window.controller.issues.get(issue.id)
     assert closed.status == "closed" and closed.closed_reason == "wont_fix"
     window._reopen_issue(issue.id)
@@ -402,7 +414,7 @@ def test_repair_bridge_prefills_and_links_the_run(qt_app, tmp_path, monkeypatch)
     assert window.describe.mode == "issue"
 
     window.describe._start()
-    wait_until(qt_app, lambda: _screen(window) == "send", message="scan packet")
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="scan packet")
     linked = window.controller.issues.get(issue.id)
     assert window.current_handoff.request.run_id in linked.runs
     assert linked.status == "in_work"
@@ -427,11 +439,19 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     window.toast = toasts.append
 
     window._start_scan()
-    assert _screen(window) == "send"
+    assert _screen(window) == "exchange"
     assert window._side is not None
     assert window.current_handoff.task_key == "scan"
     with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
         assert {"TASK.md", "GLOBAL.md", "CODEBASE.md"} <= set(archive.namelist())
+
+    # FR-P7: the focus field sits on the exchange screen; no dialog opened.
+    assert window.exchange._focus_holder.isVisibleTo(window.exchange)
+    window.exchange.focus_edit.setText("look at the loader")
+    window.exchange._emit_focus()
+    assert window._side["exchange"].request.payload["request"] == (
+        "look at the loader")
+    assert window.current_handoff.task_key == "scan"
 
     # A dragged reference file lands in the packet.
     sheet = tmp_path / "tracker.csv"
@@ -440,9 +460,7 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
         assert "attachments/tracker.csv" in set(archive.namelist())
 
-    window.send.continue_button.setEnabled(True)
-    window.send.continue_clicked.emit()
-    assert _screen(window) == "receive"
+    assert _screen(window) == "exchange"
     reply = _side_envelope(window, {"issues": [
         {"title": "The value is wrong", "severity": "high", "file": "app.py",
          "line": 1, "snippet": 'VALUE = "before"',
@@ -450,7 +468,7 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
         {"title": "Invented point", "severity": "low", "file": "app.py",
          "line": 2, "snippet": "not_in_the_file()", "detail": ""},
     ]})
-    window.receive.check(clipboard_text=reply)
+    window.exchange.check(clipboard_text=reply)
     assert _screen(window) == "scan-check"
     boxes = window.scan_check._boxes
     assert len(boxes) == 2
@@ -464,13 +482,11 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
 
     # The same finding again is dropped before the gate.
     window._start_scan()
-    window.send.continue_button.setEnabled(True)
-    window.send.continue_clicked.emit()
     reply = _side_envelope(window, {"issues": [
         {"title": "The value is wrong again", "severity": "high",
          "file": "app.py", "line": 1, "snippet": 'VALUE = "before"',
          "detail": ""}]})
-    window.receive.check(clipboard_text=reply)
+    window.exchange.check(clipboard_text=reply)
     assert _screen(window) == "issues"
     assert len(window.controller.issues.load()) == 1
     assert any("1" in item for item in toasts)
@@ -487,14 +503,12 @@ def test_discuss_flow_notes_and_severity_confirm(qt_app, tmp_path, monkeypatch):
         file="app.py", line=1, snippet='VALUE = "before"')
 
     window._discuss_issue(issue.id)
-    assert _screen(window) == "send"
+    assert _screen(window) == "exchange"
     assert window.current_handoff.task_key == "discuss"
-    window.send.continue_button.setEnabled(True)
-    window.send.continue_clicked.emit()
     reply = _side_envelope(window, {
         "reply": "No. The bound loses data, so high is right.",
         "severity": "high"})
-    window.receive.check(clipboard_text=reply)
+    window.exchange.check(clipboard_text=reply)
 
     assert _screen(window) == "issue"
     final = window.controller.issues.get(issue.id)
@@ -552,19 +566,17 @@ def test_explain_flow_render_repair_and_settings(qt_app, tmp_path, monkeypatch):
     window.explain.add_files([config.repository / "app.py"])
     window.explain._start()
     assert not errors, errors
-    assert _screen(window) == "send"
+    assert _screen(window) == "exchange"
     assert window.current_handoff.task_key == "explain"
     with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
         assert "one fenced code block" in archive.read("TASK.md").decode()
 
     # A reply without a code block is refused on the Receive screen.
-    window.send.continue_button.setEnabled(True)
-    window.send.continue_clicked.emit()
-    window.receive.check(clipboard_text="no code here")
-    assert _screen(window) == "receive"
+    window.exchange.check(clipboard_text="no code here")
+    assert _screen(window) == "exchange"
 
     # The valid scene reply starts the render; the failing stub reports.
-    window.receive.check(clipboard_text=SCENE_REPLY)
+    window.exchange.check(clipboard_text=SCENE_REPLY)
     assert _screen(window) == "explain-result"
     wait_until(qt_app, lambda: window.explain_result.render_chip.text() == "FAIL",
                message="failed render")
@@ -581,13 +593,11 @@ def test_explain_flow_render_repair_and_settings(qt_app, tmp_path, monkeypatch):
     values["manim_command"] = pass_stub
     save_ui_settings(values)
     window._repair_explain()
-    assert _screen(window) == "send"
+    assert _screen(window) == "exchange"
     request = window._side["exchange"].request
     assert "Boom on line 3" in request.payload["render_error"]
     assert request.payload["previous_scene"].startswith("from manim")
-    window.send.continue_button.setEnabled(True)
-    window.send.continue_clicked.emit()
-    window.receive.check(clipboard_text=SCENE_REPLY)
+    window.exchange.check(clipboard_text=SCENE_REPLY)
     wait_until(qt_app, lambda: window.explain_result.render_chip.text() == "PASS",
                message="passed render")
     video = window._explain["video"]
@@ -612,7 +622,7 @@ def test_stop_pauses_and_home_offers_continue(qt_app, tmp_path, monkeypatch):
     window.home.new_change.emit("feature")
     window.describe.request_edit.setPlainText("Change the value to after.")
     window.describe._start()
-    wait_until(qt_app, lambda: _screen(window) == "send", message="plan packet")
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="plan packet")
 
     window._stop_run()
     wait_until(qt_app, lambda: _screen(window) == "home", message="home after stop")
@@ -622,7 +632,94 @@ def test_stop_pauses_and_home_offers_continue(qt_app, tmp_path, monkeypatch):
 
     # Continue resumes the run and asks for the plan packet again.
     window._continue_run(summary.run_id)
-    wait_until(qt_app, lambda: _screen(window) == "send", message="resumed packet")
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="resumed packet")
     assert window.current_handoff.task_key == "plan"
     window.controller.stop()
     wait_until(qt_app, lambda: not window.controller.busy, message="pause settled")
+
+
+def test_flaky_check_retry_reruns_and_passes(qt_app, tmp_path, monkeypatch):
+    """FR-P5: Run the checks again from the failure screen, no repair round."""
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    repository = tmp_path / "project"
+    repository.mkdir()
+    _git(repository, "init", "-b", "main")
+    _git(repository, "config", "user.name", "T")
+    _git(repository, "config", "user.email", "t@example.invalid")
+    (repository / "app.py").write_text('VALUE = "before"\n', encoding="utf-8")
+    marker = tmp_path / "flaky-marker"
+    (repository / "flaky.py").write_text(
+        "import pathlib, sys\n"
+        "marker = pathlib.Path(sys.argv[1])\n"
+        "if marker.exists():\n"
+        "    sys.exit(0)\n"
+        "marker.write_text('seen')\n"
+        "sys.exit(1)\n", encoding="utf-8")
+    _git(repository, "add", "-A")
+    _git(repository, "commit", "-m", "initial")
+    data = default_config(repository, "manual-ui")
+    data["audit"] = {"runtime_root": str(tmp_path / "runtime")}
+    data["execution"]["minimum_free_disk_bytes"] = 1
+    data["verification"]["commands"] = {
+        "flaky": {"argv": ["python3", "flaky.py", str(marker)],
+                  "phase": "verify", "timeout_seconds": 60}}
+    path = repository / ".maintain.json"
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    config = ProjectConfig.load(path)
+
+    window = MainWindow(config)
+    errors: list[str] = []
+    window.show_error = errors.append
+
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="plan packet")
+    window.exchange.check(clipboard_text=_scope_reply(window.current_handoff))
+    wait_until(qt_app, lambda: _screen(window) == "plan", message="plan gate")
+    window.plan_check.accept.emit()
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "build",
+               message="build packet")
+    window.exchange.check(path=_build_zip(window.current_handoff, tmp_path))
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "review",
+               message="review packet")
+    window.exchange.check(clipboard_text=_review_reply(window.current_handoff))
+
+    # The flaky check fails once; the failure screen offers the retry.
+    wait_until(qt_app, lambda: _screen(window) == "test"
+               and window.test.retry_button.isVisibleTo(window.test),
+               message="failure screen")
+    assert marker.is_file()
+    window.test.retry.emit()
+
+    # The retry runs the checks again in the same workspace; they pass.
+    wait_until(qt_app, lambda: _screen(window) == "save", message="save screen",
+               timeout=60.0)
+    assert not errors, errors
+
+
+def test_enter_and_escape_drive_the_screen_keys(qt_app, tmp_path, monkeypatch):
+    """FR-P9: Enter fires the primary action; Esc goes back."""
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+
+    fired: list[str] = []
+    window.plan_check.set_keys(lambda: fired.append("accept"),
+                               lambda: fired.append("back"))
+    enter = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return,
+                      Qt.KeyboardModifier.NoModifier)
+    window.plan_check.keyPressEvent(enter)
+    escape = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape,
+                       Qt.KeyboardModifier.NoModifier)
+    window.plan_check.keyPressEvent(escape)
+    assert fired == ["accept", "back"]
+
+    # Esc from the issues list goes home (wired by the application).
+    window.show_issues()
+    window.issues_list.keyPressEvent(escape)
+    assert _screen(window) == "home"

@@ -240,6 +240,10 @@ class WorkflowEngine:
                         record, record.evidence.get("tests", {}).get("commands", []))
                     if decision.action == "rescope":
                         self._rescope(record, store, decision.note)
+                    elif decision.action == "retry":
+                        record.evidence["check_round"] = int(
+                            record.evidence.get("check_round", 1)) + 1
+                        self._move(record, store, RunState.TESTING)
                     else:
                         self._repair_or_stop(record, store)
                 elif state is RunState.REPAIRING:
@@ -1202,8 +1206,11 @@ class WorkflowEngine:
                     "post_command_tree_hash": post_command_diff.tree_hash}
         record.evidence["tests"] = evidence
         task_id = record.tasks[record.task_index]["id"]
+        round_number = int(record.evidence.get("check_round", 1))
+        tests_name = ("tests.json" if round_number == 1
+                      else f"tests-{round_number}.json")
         artifact = store.write_artifact(
-            f"{self._attempt_dir(record, task_id)}/tests.json", evidence)
+            f"{self._attempt_dir(record, task_id)}/{tests_name}", evidence)
         store.append("local_verification", {"tree_hash": diff.tree_hash, "passed": passed,
                                             "artifacts": [artifact]})
         unavailable_matlab = [result for result in results if result.matlab and result.exit_code == 127]

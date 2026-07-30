@@ -6,7 +6,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Qt, Signal
+from PySide6.QtCore import QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QMainWindow, QMessageBox,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout,
                                QWidget)
 
 from maintain.config import ProjectConfig
+from maintain.downloads import default_downloads, newest_reply
 from maintain.errors import MaintainError
 from maintain.gates import GateDecision
 from maintain.issue_packets import (SideExchange, build_side_packet,
@@ -21,7 +22,7 @@ from maintain.issue_packets import (SideExchange, build_side_packet,
                                     explain_dir, explain_request,
                                     scan_candidates, scan_request,
                                     side_packet_dir)
-from maintain.issues import CLOSED, REASONS
+from maintain.issues import CLOSED
 from maintain.models import RunRecord, RunState
 from maintain.providers.command import parse_response
 from maintain.render import render_scene
@@ -36,15 +37,15 @@ from . import theme as theme_module
 from . import projects as project_ops
 from .config_store import ConfigStore
 from .controller import Controller
+from .bridge import check_reply
 from .screens import (BusyScreen, ChecksPage, DescribeScreen, DoneScreen,
-                      ExplainResultScreen, ExplainScreen,
+                      ExchangeScreen, ExplainResultScreen, ExplainScreen,
                       ExplainSettingsPage, FindingsScreen, GlobalPage,
                       HistoryScreen, HomeScreen, IssueDetailScreen,
                       IssuesScreen, OneDrivePage, PackagePage,
-                      PlanCheckScreen, ProjectsScreen, ReceiveScreen,
-                      RunDetailScreen, SaveScreen, ScanCheckScreen,
-                      SettingsScreen, SendScreen, TasksPage, TestScreen,
-                      documents_count)
+                      PlanCheckScreen, ProjectsScreen, RunDetailScreen,
+                      SaveScreen, ScanCheckScreen, SettingsScreen, TasksPage,
+                      TestScreen, documents_count)
 from .strings import text
 from .widgets import StageHeader
 
@@ -75,6 +76,9 @@ class MainWindow(QMainWindow):
         self._pending_issue_link = ""
         self._explain: dict | None = None
         self.explain_render_done.connect(self._explain_render_done)
+        self._busy_timer = QTimer(self)
+        self._busy_timer.setSingleShot(True)
+        self._busy_timer.timeout.connect(self._busy_now)
 
         central = QWidget()
         column = QVBoxLayout(central)
@@ -132,8 +136,8 @@ class MainWindow(QMainWindow):
         self.explain_result = ExplainResultScreen()
         self.page_explain = ExplainSettingsPage()
         self.describe = DescribeScreen()
-        self.send = SendScreen()
-        self.receive = ReceiveScreen()
+        self.exchange = ExchangeScreen()
+        self.exchange.package_style = config.package.style
         self.plan_check = PlanCheckScreen()
         self.findings = FindingsScreen()
         self.test = TestScreen()
@@ -156,7 +160,7 @@ class MainWindow(QMainWindow):
                 ("explain-result", self.explain_result),
                 ("set-explain", self.page_explain),
                 ("describe", self.describe),
-                ("send", self.send), ("receive", self.receive),
+                ("exchange", self.exchange),
                 ("plan", self.plan_check), ("findings", self.findings),
                 ("test", self.test), ("save", self.save), ("done", self.done),
                 ("history", self.history), ("run", self.run_detail),
@@ -184,7 +188,7 @@ class MainWindow(QMainWindow):
         self.issue_detail.save.connect(self._save_issue)
         self.issue_detail.repair.connect(self._repair_issue)
         self.issue_detail.discuss.connect(self._discuss_issue)
-        self.issue_detail.close_issue.connect(self._close_issue)
+        self.issue_detail.close_reason.connect(self._close_issue_with)
         self.issue_detail.reopen.connect(self._reopen_issue)
         self.issue_detail.remove.connect(self._remove_issue)
         self.issue_detail.back.connect(self.show_issues)
@@ -212,18 +216,17 @@ class MainWindow(QMainWindow):
         self.describe.back.connect(self.show_home)
         self.describe.import_requested.connect(self._import_run_files)
 
-        self.send.continue_clicked.connect(lambda: self.show_screen("receive"))
-        self.send.show_global_button.clicked.connect(self._show_global_text)
-        self.send.show_prompt_button.clicked.connect(self._show_prompt_text)
-        self.send.add_attachments.connect(self._add_packet_files)
-        self.send.remove_attachment.connect(self._remove_packet_file)
-        self.send.import_attachments.connect(self._import_packet_files)
-        self.send.export_requested.connect(self._export_packet)
-
-        self.receive.reply_submitted.connect(self._reply_submitted)
-        self.receive.kept_attachment.connect(self._keep_for_next_packet)
-        self.receive.back.connect(lambda: self.show_screen("send"))
-        self.receive.import_requested.connect(self._import_reply)
+        self.exchange.show_global_button.clicked.connect(self._show_global_text)
+        self.exchange.show_prompt_button.clicked.connect(self._show_prompt_text)
+        self.exchange.add_attachments.connect(self._add_packet_files)
+        self.exchange.remove_attachment.connect(self._remove_packet_file)
+        self.exchange.import_attachments.connect(self._import_packet_files)
+        self.exchange.export_requested.connect(self._export_packet)
+        self.exchange.reply_submitted.connect(self._reply_submitted)
+        self.exchange.kept_attachment.connect(self._keep_for_next_packet)
+        self.exchange.import_reply.connect(self._import_reply)
+        self.exchange.newest_download.connect(self._open_newest_download)
+        self.exchange.scan_focus.connect(self._update_scan_focus)
 
         self.plan_check.accept.connect(
             lambda: self._answer_gate(GateDecision("accept")))
@@ -235,6 +238,7 @@ class MainWindow(QMainWindow):
             lambda: self._gate_with_note("rescope", "rescope"))
         self.test.repair.connect(lambda: self._answer_gate(GateDecision("repair")))
         self.test.rescope.connect(lambda: self._gate_with_note("rescope", "rescope"))
+        self.test.retry.connect(lambda: self._answer_gate(GateDecision("retry")))
 
         self.save.accept.connect(self._accept_and_save)
         self.save.feedback.connect(self._feedback)
@@ -265,6 +269,20 @@ class MainWindow(QMainWindow):
         self.page_package.saved.connect(self._package_saved)
         self.page_checks.saved.connect(self._checks_saved)
 
+        self.describe.set_keys(self.describe._start, self.show_home)
+        self.exchange.set_keys(self._open_newest_download)
+        self.plan_check.set_keys(self.plan_check.accept.emit)
+        self.findings.set_keys(self.findings.repair.emit)
+        self.test.set_keys(self.test.repair.emit)
+        self.save.set_keys(self.save.accept.emit)
+        self.explain.set_keys(self.explain._start, self.show_home)
+        self.issue_detail.set_keys(self.issue_detail.save.emit,
+                                   self.show_issues)
+        self.issues_list.set_keys(escape=self.show_home)
+        self.history.set_keys(escape=self.show_home)
+        self.projects.set_keys(escape=self.show_home)
+        self.settings.set_keys(escape=self.show_home)
+
     def _wire_controller(self) -> None:
         bridge = self.controller.bridge
         bridge.packet_ready.connect(self._packet_ready)
@@ -274,6 +292,7 @@ class MainWindow(QMainWindow):
         self.controller.progress_event.connect(self._progress)
         self.controller.run_settled.connect(self._run_settled)
         self.controller.run_error.connect(self._run_failed)
+        self.controller.issues_notice.connect(self._issues_notice)
 
     # ----- theme -----
 
@@ -301,12 +320,23 @@ class MainWindow(QMainWindow):
     # ----- navigation -----
 
     RUN_FLOW_SCREENS = frozenset(
-        {"send", "receive", "plan", "findings", "test", "save", "done", "busy"})
+        {"exchange", "plan", "findings", "test", "save", "done", "busy"})
 
     def show_screen(self, name: str) -> None:
+        if name != "busy":
+            self._busy_timer.stop()
         if name not in self.RUN_FLOW_SCREENS:
             self.stage_header.setVisible(False)
         self.stack.setCurrentWidget(self.screens[name])
+
+    def show_busy(self, message: str = "") -> None:
+        """FR-P3: the busy screen shows only when the work takes long."""
+        self.busy.show_message(message or text("working.busy"))
+        self._busy_timer.start(600)
+
+    def _busy_now(self) -> None:
+        if self.controller.busy:
+            self.show_screen("busy")
 
     def show_home(self) -> None:
         self._set_run_footer(False)
@@ -451,13 +481,7 @@ class MainWindow(QMainWindow):
         self.issue_detail.load(issue)
         self.toast(text("issue.saved"))
 
-    def _close_issue(self, issue_id: str) -> None:
-        labels = [text("issues.reason." + reason) for reason in REASONS]
-        chosen = self.ask_choice(text("issue.close.title", id=issue_id),
-                                 text("issue.close.body"), labels)
-        if chosen is None:
-            return
-        reason = REASONS[labels.index(chosen)]
+    def _close_issue_with(self, issue_id: str, reason: str) -> None:
         self.controller.issues.close(issue_id, reason)
         self.toast(text("issue.closed", id=issue_id))
         self.show_issues()
@@ -502,10 +526,7 @@ class MainWindow(QMainWindow):
         if self.controller.busy:
             self.toast(text("issues.busy"))
             return
-        focus = self.ask_note(text("scan.ask.title"), text("scan.ask.body"),
-                              allow_empty=True)
-        if focus is None:
-            return
+        focus = ""
         config = self.store.config
         known = [issue for issue in self.controller.issues.load()
                  if issue.status != CLOSED]
@@ -558,10 +579,10 @@ class MainWindow(QMainWindow):
         self._set_run_footer(True, exchange.request.run_id)
         self.foot_history.setVisible(False)
         self.foot_label.setText(exchange.request.run_id)
-        self.send.show_handoff(handoff, [],
-                               documents_count(self.store, exchange.kind))
-        self.receive.show_handoff(handoff)
-        self.show_screen("send")
+        self.exchange.show_handoff(handoff, [],
+                                   documents_count(self.store, exchange.kind),
+                                   scan=exchange.kind == "scan")
+        self.show_screen("exchange")
 
     def _end_side(self) -> None:
         self._side = None
@@ -581,7 +602,7 @@ class MainWindow(QMainWindow):
             else:
                 parsed = discuss_reply(response.content)
         except MaintainError as exc:
-            self.receive.status.set_state("bad", str(exc))
+            self.exchange.status.set_state("bad", str(exc))
             return
         if exchange.kind == "scan":
             known = self.controller.issues.known_fingerprints()
@@ -771,9 +792,8 @@ class MainWindow(QMainWindow):
 
     def _start_run(self, mode: str, request: str, attachments: list) -> None:
         if self.controller.start_run(mode, request, attachments):
-            self.busy.show_message(text("working.plan"))
             self._set_stage(0)
-            self.show_screen("busy")
+            self.show_busy(text("working.plan"))
 
     def _continue_run(self, run_id: str) -> None:
         summary = next((item for item in self.controller.runs()
@@ -784,9 +804,8 @@ class MainWindow(QMainWindow):
                 self._show_save(record)
                 return
         if self.controller.resume(run_id):
-            self.busy.show_message(text("working.busy"))
             self._set_run_footer(True, run_id)
-            self.show_screen("busy")
+            self.show_busy()
 
     def _load_record(self, run_id: str) -> RunRecord | None:
         import json
@@ -810,10 +829,10 @@ class MainWindow(QMainWindow):
             self._pending_issue_link = ""
         self._set_run_footer(True, handoff.request.run_id)
         self._set_stage(STAGE_FOR_TASK[handoff.task_key])
-        self.send.show_handoff(handoff, self._packet_names(),
-                               documents_count(self.store, handoff.task_key))
-        self.receive.show_handoff(handoff)
-        self.show_screen("send")
+        self.exchange.show_handoff(handoff, self._packet_names(),
+                                   documents_count(self.store,
+                                                   handoff.task_key))
+        self.show_screen("exchange")
 
     def _packet_names(self) -> list[str]:
         if self._side is not None:
@@ -857,14 +876,15 @@ class MainWindow(QMainWindow):
                                         packet=packet, reply_kind="json")
                 self._side["handoff"] = handoff
                 self.current_handoff = handoff
+                self.exchange.handoff = handoff
             else:
                 self.controller.rebuild_packet(self.current_handoff)
         except MaintainError as exc:
             self.toast(str(exc))
             return
-        self.send.update_packet(self.current_handoff.zip_path, self._packet_names(),
-                                documents_count(self.store,
-                                                self.current_handoff.task_key))
+        self.exchange.update_packet(
+            self.current_handoff.zip_path, self._packet_names(),
+            documents_count(self.store, self.current_handoff.task_key))
         self.toast(text("send.updated"))
 
     def _export_packet(self) -> None:
@@ -873,20 +893,79 @@ class MainWindow(QMainWindow):
         destination = self.pick_save(self.current_handoff.zip_path.name)
         if destination:
             shutil.copyfile(self.current_handoff.zip_path, destination)
-            self.send.mark_exported(Path(destination).name)
+            self.exchange.mark_exported(Path(destination).name)
 
     def _import_reply(self) -> None:
         paths = self.pick_files()
         if paths:
-            self.receive.check(path=paths[0])
+            self.exchange.check(path=paths[0])
+
+    def _open_newest_download(self) -> None:
+        """FR-P1: take the reply from the Downloads folder, newest first."""
+        if self.current_handoff is None:
+            return
+        values = load_ui_settings()
+        root = Path(str(values.get("downloads_path") or default_downloads()))
+        try:
+            since = self.current_handoff.zip_path.stat().st_mtime - 5.0
+        except OSError:
+            since = 0.0
+        found = newest_reply(root, since)
+        if found is None:
+            self.exchange.status.set_state("warn", text("exchange.newest.none"))
+            return
+        result = check_reply(self.current_handoff, path=found)
+        if result.valid:
+            self.exchange.status.set_state("busy", text("receive.checking"))
+            self._reply_submitted(result.reply)
+        elif result.message:
+            self.exchange.status.set_state("bad",
+                                           f"{found.name}: {result.message}")
+        else:
+            self.exchange.status.set_state(
+                "warn", text("exchange.newest.wrong", name=found.name))
+
+    def _update_scan_focus(self, focus: str) -> None:
+        """FR-P7: aim the scan from the exchange screen itself."""
+        if self._side is None or self._side["exchange"].kind != "scan":
+            return
+        config = self.store.config
+        known = [issue for issue in self.controller.issues.load()
+                 if issue.status != CLOSED]
+        try:
+            request = scan_request(config, focus, known)
+            exchange = SideExchange(
+                kind="scan", request=request,
+                directory=side_packet_dir(config, request.run_id))
+            packet = build_side_packet(exchange, config,
+                                       self._side["attachments"])
+        except MaintainError as exc:
+            self.show_error(str(exc))
+            return
+        handoff = PacketHandoff(request=request, packet=packet,
+                                reply_kind="json")
+        self._side.update({"exchange": exchange, "handoff": handoff})
+        self.current_handoff = handoff
+        self.exchange.handoff = handoff
+        self.foot_label.setText(request.run_id)
+        self.exchange.update_packet(handoff.zip_path, self._packet_names(),
+                                    documents_count(self.store, "scan"))
+        self.toast(text("send.updated"))
+
+    def _issues_notice(self, kind: str, count: int) -> None:
+        """FR-P8: say what the engine put into or took from the issue list."""
+        self.toast(text("issues.captured", count=count) if kind == "captured"
+                   else text("issues.autoclosed", count=count))
+        self.home.set_issue_count(sum(
+            1 for issue in self.controller.issues.load()
+            if issue.status != CLOSED))
 
     def _reply_submitted(self, reply) -> None:
         if self._side is not None:
             self._side_reply(reply)
             return
         self.controller.answer_reply(reply)
-        self.busy.show_message(text("working.busy"))
-        self.show_screen("busy")
+        self.show_busy()
 
     def _keep_for_next_packet(self, paths: list) -> None:
         self.controller.run_attachments.extend(Path(item) for item in paths)
@@ -913,8 +992,7 @@ class MainWindow(QMainWindow):
 
     def _answer_gate(self, decision: GateDecision) -> None:
         self.controller.answer_decision(decision)
-        self.busy.show_message(text("working.busy"))
-        self.show_screen("busy")
+        self.show_busy()
 
     def _gate_with_note(self, kind: str, action: str) -> None:
         note = self.ask_note(text(f"note.title.{kind}" if kind != "rescope"
@@ -976,8 +1054,7 @@ class MainWindow(QMainWindow):
         if self.current_record is None:
             return
         if self.controller.accept_and_deliver(self.current_record.run_id):
-            self.busy.show_message(text("working.busy"))
-            self.show_screen("busy")
+            self.show_busy()
 
     def _feedback(self) -> None:
         if self.current_record is None:
@@ -986,8 +1063,7 @@ class MainWindow(QMainWindow):
         if note is None:
             return
         if self.controller.feedback(self.current_record.run_id, note):
-            self.busy.show_message(text("working.busy"))
-            self.show_screen("busy")
+            self.show_busy()
 
     def _discard(self) -> None:
         if self.current_record is None:
@@ -998,15 +1074,13 @@ class MainWindow(QMainWindow):
                                 text("discard.yes"), text("discard.no")):
             return
         if self.controller.discard(self.current_record.run_id):
-            self.busy.show_message(text("working.busy"))
-            self.show_screen("busy")
+            self.show_busy()
 
     def _rerun_checks(self) -> None:
         if self.current_record is None:
             return
         if self.controller.rerun_checks(self.current_record.run_id):
-            self.busy.show_message(text("working.checks"))
-            self.show_screen("busy")
+            self.show_busy(text("working.checks"))
 
     # ----- history and revert -----
 
@@ -1046,8 +1120,7 @@ class MainWindow(QMainWindow):
             self.controller.stop()
         if self.controller.revert_and_continue(self._open_run_id, sequence):
             self.toast(text("run.went_back"))
-            self.busy.show_message(text("working.busy"))
-            self.show_screen("busy")
+            self.show_busy()
 
     # ----- stop -----
 
@@ -1133,6 +1206,7 @@ class MainWindow(QMainWindow):
         self.page_tasks.refresh()
 
     def _after_config_change(self) -> None:
+        self.exchange.package_style = self.store.config.package.style
         if not self.controller.busy:
             self.controller = Controller(self.store.config)
             self._wire_controller()
