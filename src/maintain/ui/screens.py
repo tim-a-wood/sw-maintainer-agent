@@ -11,7 +11,7 @@ from PySide6.QtGui import QGuiApplication, QKeySequence, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGridLayout,
                                QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
                                QPushButton, QRadioButton, QScrollArea,
-                               QSpinBox, QVBoxLayout, QWidget)
+                               QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
 
 from maintain.downloads import default_downloads
 from maintain.issues import REASONS
@@ -284,11 +284,14 @@ class DescribeScreen(Screen):
         self.checks_hint.setVisible(visible)
 
     def set_recent(self, requests: list[str]) -> None:
-        """FR-D8: the last requests, one click to reuse."""
+        """FR-D8: the last requests, one click to reuse.
+
+        At most three chips, hard-elided, and the row never widens the
+        page (FR-F1)."""
         self.clear_layout(self._recent_row)
-        for full in requests[:5]:
+        for full in requests[:3]:
             short = " ".join(full.split())
-            shown = short if len(short) <= 42 else short[:39] + "…"
+            shown = short if len(short) <= 24 else short[:21] + "…"
             chip = button(shown, "Ghost",
                           lambda value=full: self.request_edit.setPlainText(
                               value))
@@ -296,6 +299,8 @@ class DescribeScreen(Screen):
             chip.setToolTip(full)
             self._recent_row.addWidget(chip)
         self._recent_row.addStretch(1)
+        self._recent_holder.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                          QSizePolicy.Policy.Preferred)
         self._recent_holder.setVisible(bool(requests))
 
     def add_files(self, paths: list[Path]) -> None:
