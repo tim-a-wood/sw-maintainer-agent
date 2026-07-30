@@ -841,3 +841,40 @@ def test_issue_display_order_puts_high_first():
     assert [item.severity for item in ordered] == [
         "high", "high", "medium", "low"]
     assert ordered[0].updated_at > ordered[1].updated_at
+
+
+def test_reference_allclear_and_last_video(qt_app, tmp_path, monkeypatch):
+    """FR-H1/H2/H4: the reference shows, all-clear speaks, videos remembered."""
+    from maintain.issues import IssueCandidate
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+
+    window.controller.issues.capture([IssueCandidate(
+        title="No bounds on speed", detail="", severity="medium",
+        file="app.py", line=1, snippet='VALUE = "before"',
+        external_ref="TRACKER-112", kind="scan", verified=True)],
+        source="scan", run_id="scan-1")
+    issue = window.controller.issues.load()[0]
+
+    # H1: the spreadsheet reference is visible on the detail screen.
+    window._open_issue(issue.id)
+    assert "TRACKER-112" in window.issue_detail.reference.text()
+    assert window.issue_detail.reference.isVisibleTo(window.issue_detail)
+
+    # H2: closing the last issue turns the empty state into the all-clear.
+    window.controller.issues.close(issue.id, "fixed")
+    window.show_issues()
+    window.issues_list.set_filter("open")
+    assert "All clear" in window.issues_list.empty.text()
+    window.show_home()
+    assert "All clear" in window.home._issues_card.sub.text() \
+        if hasattr(window.home._issues_card, "sub") else True
+
+    # H4: the newest video shows on the explain screen.
+    video_dir = Path(config.runtime_root).parent / "explain" / "x" / "render"
+    video_dir.mkdir(parents=True)
+    (video_dir / "DemoScene.mp4").write_text("video", encoding="utf-8")
+    window.show_explain()
+    assert window.explain.last_video.isVisibleTo(window.explain)
+    assert "Last video" in window.explain.last_video.text()

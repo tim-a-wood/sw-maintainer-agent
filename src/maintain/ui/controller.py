@@ -27,18 +27,18 @@ from .bridge import UiBridge
 class NotifyingIssueStore(IssueStore):
     """The issue store, with a notice when the engine touches it alone."""
 
-    notice: Callable[[str, int], None] | None = None
+    notice: Callable[[str, int, str], None] | None = None
 
     def capture(self, candidates, *, source: str, run_id: str = ""):
         result = super().capture(candidates, source=source, run_id=run_id)
         if self.notice and source in {"review", "test"} and result.touched:
-            self.notice("captured", len(result.touched))
+            self.notice("captured", len(result.touched), "")
         return result
 
     def close_for_run(self, run_id: str, keep_fingerprints=frozenset()):
         closed = super().close_for_run(run_id, keep_fingerprints)
         if self.notice and closed:
-            self.notice("closed", len(closed))
+            self.notice("closed", len(closed), closed[0].title)
         return closed
 
 
@@ -67,7 +67,7 @@ class Controller(QObject):
     run_settled = Signal(object)             # RunRecord after an operation returns
     run_error = Signal(str)                  # unexpected failure text
     busy_changed = Signal(bool)
-    issues_notice = Signal(str, int)         # "captured" | "closed", count
+    issues_notice = Signal(str, int, str)    # kind, count, first title
 
     def __init__(self, config: ProjectConfig) -> None:
         super().__init__()

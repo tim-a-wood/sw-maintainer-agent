@@ -42,20 +42,22 @@ def test_notifying_store_reports_engine_captures_and_closes(tmp_path):
     from maintain.ui.controller import NotifyingIssueStore
     store = NotifyingIssueStore(runtime_root=tmp_path / "runtime",
                                 repository=tmp_path)
-    events: list[tuple[str, int]] = []
-    store.notice = lambda kind, count: events.append((kind, count))
+    events: list[tuple[str, int, str]] = []
+    store.notice = lambda kind, count, label: events.append(
+        (kind, count, label))
 
     candidate = IssueCandidate(
         title="The check failed", detail="", severity="medium", file="",
         line=0, snippet="tests", external_ref="", kind="test", verified=True)
     store.capture([candidate], source="test", run_id="run-1")
-    assert events == [("captured", 1)]
+    assert events == [("captured", 1, "")]
 
     # A human add and a scan capture stay silent; those flows toast alone.
     store.add(title="Human entry", detail="")
     store.capture([candidate], source="scan", run_id="run-2")
-    assert events == [("captured", 1)]
+    assert events == [("captured", 1, "")]
 
     closed = store.close_for_run("run-1")
     assert len(closed) == 1
-    assert events == [("captured", 1), ("closed", 1)]
+    assert events == [("captured", 1, ""),
+                      ("closed", 1, "The check failed")]

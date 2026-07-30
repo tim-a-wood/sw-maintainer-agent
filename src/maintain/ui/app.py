@@ -246,6 +246,7 @@ class MainWindow(QMainWindow):
         self.explain.start.connect(self._start_explain)
         self.explain.back.connect(self.show_home)
         self.explain.import_requested.connect(self._import_explain_files)
+        self.explain.open_videos.connect(self._open_last_video_dir)
         self.explain_result.open_video.connect(self._open_explain_video)
         self.explain_result.open_folder.connect(self._open_explain_folder)
         self.explain_result.repair.connect(self._repair_explain)
@@ -399,7 +400,10 @@ class MainWindow(QMainWindow):
         self._pending_issue_link = ""
         summary = self.controller.resumable_run()
         self.home.set_resumable(summary)
-        self.home.set_issue_count(self.controller.issues.open_count())
+        issues = self.controller.issues.load()
+        self.home.set_issue_count(
+            sum(1 for issue in issues if issue.status != CLOSED),
+            sum(1 for issue in issues if issue.status == CLOSED))
         self.home.set_momentum(self._momentum_line())
         self.show_screen("home")
 
@@ -729,8 +733,28 @@ class MainWindow(QMainWindow):
         self.explain.reset()
         self.explain.audience_edit.setText(
             str(load_ui_settings().get("explain_audience", "")))
+        newest = self._newest_video()
+        self._last_video_dir = newest.parent if newest else None
+        from datetime import datetime
+        when = (datetime.fromtimestamp(newest.stat().st_mtime)
+                .strftime("%Y-%m-%d") if newest else "")
+        self.explain.set_last_video(when)
         self._set_run_footer(False)
         self.show_screen("explain")
+
+    def _newest_video(self):
+        root = Path(self.store.config.runtime_root).parent / "explain"
+        try:
+            videos = list(root.rglob("*.mp4"))
+        except OSError:
+            return None
+        return max(videos, key=lambda item: item.stat().st_mtime,
+                   default=None)
+
+    def _open_last_video_dir(self) -> None:
+        if getattr(self, "_last_video_dir", None):
+            QDesktopServices.openUrl(
+                QUrl.fromLocalFile(str(self._last_video_dir)))
 
     def _import_explain_files(self) -> None:
         paths = self.pick_files()
@@ -1041,13 +1065,19 @@ class MainWindow(QMainWindow):
                                     documents_count(self.store, "scan"))
         self.toast(text("send.updated"))
 
-    def _issues_notice(self, kind: str, count: int) -> None:
-        """FR-P8: say what the engine put into or took from the issue list."""
-        self.toast(text("issues.captured", count=count) if kind == "captured"
-                   else text("issues.autoclosed", count=count))
-        self.home.set_issue_count(sum(
-            1 for issue in self.controller.issues.load()
-            if issue.status != CLOSED))
+    def _issues_notice(self, kind: str, count: int, label: str) -> None:
+        """FR-P8 + FR-H3: name what the engine closed."""
+        if kind == "captured":
+            self.toast(text("issues.captured", count=count))
+        elif count == 1:
+            self.toast(text("issues.closed.one", title=label))
+        else:
+            self.toast(text("issues.closed.more", title=label,
+                            count=count - 1))
+        issues = self.controller.issues.load()
+        self.home.set_issue_count(
+            sum(1 for issue in issues if issue.status != CLOSED),
+            sum(1 for issue in issues if issue.status == CLOSED))
 
     def _reply_submitted(self, reply) -> None:
         if self._side is not None:

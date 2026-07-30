@@ -39,6 +39,7 @@ STR: dict[str, str] = {
     "home.issues": "Issues",
     "home.issues.sub.none": "No open issues.",
     "home.issues.sub.count": "{count} open. Scan, discuss, repair.",
+    "home.issues.sub.allclear": "All clear. {count} closed.",
     "home.explain": "Explain code",
     "home.explain.sub": "Copilot writes a short video scene. Manim renders it here.",
     "home.projects": "Projects",
@@ -229,6 +230,7 @@ STR: dict[str, str] = {
     # Issues
     "issues.title": "Issues",
     "issues.empty": "No issues yet. Add one, or scan with Copilot.",
+    "issues.allclear": "All clear. {count} closed in this project.",
     "issues.add": "Add an issue…",
     "issues.scan": "Scan with Copilot",
     "issues.filter.all": "All",
@@ -259,6 +261,7 @@ STR: dict[str, str] = {
     "issue.field.title": "Title",
     "issue.field.detail": "Detail",
     "issue.field.severity": "Severity",
+    "issue.reference": "Reference",
     "issue.location": "Location",
     "issue.snippet": "The cited code",
     "issue.notes": "Notes",
@@ -304,6 +307,7 @@ STR: dict[str, str] = {
                           "it in Copilot, then select Open the newest "
                           "download. "
                           "Copy the full reply. Then select Paste reply.",
+    "explain.last": "Last video: {when}. Open the folder.",
     "explain.title": "Explain code",
     "explain.goal": "What must the video explain?",
     "explain.goal.placeholder": "Write the goal in one or two sentences.",
@@ -447,6 +451,8 @@ STR: dict[str, str] = {
     "issue.close.pick": "Why is it closed?",
     "issues.captured": "Added {count} to the issue list.",
     "issues.autoclosed": "Closed {count} on delivery.",
+    "issues.closed.one": "Closed: {title}.",
+    "issues.closed.more": "Closed: {title} and {count} more.",
     "onedrive.autolink": "Copy the link alone when a package is ready.",
     "exchange.downloads": "Downloads folder",
     "exchange.downloads.hint": "The tool takes the newest reply file from this folder.",

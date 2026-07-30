@@ -636,3 +636,19 @@ never through decoration.
   that run's timeline. The audit trail becomes a walkable story.
 - G5 The first delivered run in a project gets one extra line on the
   Done screen, once: "Your first saved change in this project."
+
+### 14.9 The issue-arc pass (H1–H4)
+
+A focused pass over the issue tracker and the explain arc, after the
+owner asked whether those use cases got the same attention.
+
+- H1 The external reference is visible: on the issue detail
+  ("Reference: …") and in the list row. The spreadsheet round-trip
+  no longer needs a search by title.
+- H2 The all-clear moment: when the open list is empty but closed
+  issues exist, the list says "All clear. {n} closed in this
+  project." and the Home card says "All clear. {n} closed."
+- H3 The delivery close toast names the issue ("Closed: {title}.",
+  with "and {n} more" when several).
+- H4 The explain screen shows "Last video: {date}. Open the folder."
+  for the newest rendered video.

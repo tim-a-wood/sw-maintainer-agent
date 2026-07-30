@@ -208,10 +208,11 @@ class HomeScreen(Screen):
         self.momentum.setText(value)
         self.momentum.setVisible(bool(value))
 
-    def set_issue_count(self, count: int) -> None:
+    def set_issue_count(self, count: int, closed: int = 0) -> None:
         if self._issues_card is None:
             return
         sub = (text("home.issues.sub.count", count=count) if count
+               else text("home.issues.sub.allclear", count=closed) if closed
                else text("home.issues.sub.none"))
         self._issues_card.set_texts(text("home.issues"), sub)
 
@@ -1166,7 +1167,8 @@ class IssueRowWidget(QFrame):
         title.setObjectName("ChoiceTitle")
         source = text("issues.source." + issue.source)
         place = f"{issue.file}:{issue.line}" if issue.file else issue.id
-        sub = ElidedLabel(f"{source} · {place}", "MonoHint")
+        reference = f" · {issue.external_ref}" if issue.external_ref else ""
+        sub = ElidedLabel(f"{source} · {place}{reference}", "MonoHint")
         column.addWidget(title)
         column.addWidget(sub)
         row.addLayout(column, 1)
@@ -1248,6 +1250,11 @@ class IssuesScreen(Screen):
             control.style().polish(control)
         self.clear_layout(self._rows)
         shown = [issue for issue in self._issues if self._matches(issue)]
+        closed = sum(1 for issue in self._issues if issue.status == "closed")
+        if not shown and closed and self._filter in {"open", "in_work"}:
+            self.empty.setText(text("issues.allclear", count=closed))
+        else:
+            self.empty.setText(text("issues.empty"))
         self.empty.setVisible(not shown)
         for issue in shown:
             row = IssueRowWidget(issue)
@@ -1349,6 +1356,8 @@ class IssueDetailScreen(Screen):
         self.add(self.detail_edit)
         self.location = label("", "MonoHint")
         self.add(self.location)
+        self.reference = label("", "MonoHint")
+        self.add(self.reference)
         self.snippet_view = QPlainTextEdit()
         self.snippet_view.setObjectName("Code")
         self.snippet_view.setReadOnly(True)
@@ -1423,6 +1432,10 @@ class IssueDetailScreen(Screen):
         self.location.setText(
             f"{text('issue.location')}: {place}" if place else "")
         self.location.setVisible(bool(place))
+        reference = issue.external_ref if existing else ""
+        self.reference.setText(
+            f"{text('issue.reference')}: {reference}" if reference else "")
+        self.reference.setVisible(bool(reference))
         snippet = issue.snippet if existing else ""
         self.snippet_view.setPlainText(snippet)
         self.snippet_view.setVisible(bool(snippet.strip()))
@@ -1528,6 +1541,7 @@ class ExplainScreen(Screen):
     start = Signal(list, str, str)   # files, goal, audience
     back = Signal()
     import_requested = Signal()
+    open_videos = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -1552,6 +1566,10 @@ class ExplainScreen(Screen):
         self.add(self.chips)
         self.message = StatusLine()
         self.add(self.message)
+        self.last_video = button("", "Ghost", self.open_videos.emit)
+        self.last_video.setStyleSheet("padding: 2px 6px; font-size: 12px;")
+        self.last_video.setVisible(False)
+        self.add_row(self.last_video)
         self.add_gap()
         self.add_row(
             button(text("explain.start"), "Primary", self._start),
@@ -1564,6 +1582,12 @@ class ExplainScreen(Screen):
         self.files = []
         self.chips.set_files([])
         self.message.set_state("plain", "")
+
+    def set_last_video(self, when: str) -> None:
+        """FR-H4: the newest video, one click from the input screen."""
+        self.last_video.setText(
+            text("explain.last", when=when) if when else "")
+        self.last_video.setVisible(bool(when))
 
     def add_files(self, paths: list) -> None:
         self.files.extend(Path(item) for item in paths)
