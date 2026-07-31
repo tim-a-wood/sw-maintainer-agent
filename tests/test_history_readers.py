@@ -98,3 +98,49 @@ def test_transition_guards_refuse_unproven_promotions():
                       evidence={"verified_tree_hash": "t1"})
     with pytest.raises(PolicyError, match="unchanged verified tree"):
         transition(drifted, RunState.ACCEPTED)
+
+
+def test_cancel_is_reachable_everywhere_but_delivering():
+    from maintain.policy import TRANSITIONS
+    assert RunState.CANCELLED not in TRANSITIONS[RunState.DELIVERING]
+    for state in (RunState.SCOPING, RunState.TESTING, RunState.REVIEWING,
+                  RunState.IMPLEMENTING, RunState.AWAITING_ACCEPTANCE):
+        assert RunState.CANCELLED in TRANSITIONS[state], state
+
+
+def test_verified_needs_both_proofs_on_the_same_tree():
+    stale_review = _record("testing", evidence={
+        "review": {"decision": "approve", "tree_hash": "old"},
+        "tests": {"passed": True, "tree_hash": "t1"}})
+    with pytest.raises(PolicyError, match="review"):
+        transition(stale_review, RunState.VERIFIED, tree_hash="t1")
+
+    stale_tests = _record("testing", evidence={
+        "review": {"decision": "approve", "tree_hash": "t1"},
+        "tests": {"passed": True, "tree_hash": "old"}})
+    with pytest.raises(PolicyError, match="verification"):
+        transition(stale_tests, RunState.VERIFIED, tree_hash="t1")
+
+    unproven = _record("awaiting_acceptance", tree_hash="",
+                       evidence={"verified_tree_hash": ""})
+    with pytest.raises(PolicyError, match="verified tree"):
+        transition(unproven, RunState.ACCEPTED)
+
+
+def test_superseded_marks_exclude_the_revert_target_itself(tmp_path):
+    run_dir = tmp_path / "run-2"
+    run_dir.mkdir()
+    events = [
+        json.dumps({"type": "iteration", "sequence": 2,
+                    "payload": {"label": "Plan approved", "kind": "plan_approved"}}),
+        json.dumps({"type": "iteration", "sequence": 4,
+                    "payload": {"label": "Build applied", "kind": "build_applied"}}),
+        json.dumps({"type": "iteration", "sequence": 6,
+                    "payload": {"label": "Went back", "kind": "revert",
+                                "target_sequence": 2}}),
+    ]
+    (run_dir / "audit.jsonl").write_text("\n".join(events) + "\n",
+                                        encoding="utf-8")
+    timeline = run_timeline(tmp_path, "run-2")
+    marks = {item.sequence: item.superseded for item in timeline}
+    assert marks == {2: False, 4: True, 6: False}

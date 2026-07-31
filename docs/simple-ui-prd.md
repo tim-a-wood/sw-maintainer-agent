@@ -687,3 +687,20 @@ caught two real defects, both fixed: the package-style radios were
 not exclusive (after a switch to folder, zip could never be selected
 again), and a corrupt or non-ZIP file dropped during a build step
 raised an unhandled error instead of a message or an attachment.
+
+### 14.13 The verification batch
+
+Four verification activities beyond coverage, recorded in full in
+`docs/quality-report.md`:
+
+- The rescope and issue-mode journeys close the last worthwhile
+  coverage gaps: rescope from all three gates, and issue mode with a
+  reproduction check for both outcomes.
+- Static analysis (ruff, mypy) is codified in `pyproject.toml`; the
+  real findings are fixed.
+- Mutation testing measured whether the tests bite; twelve killer
+  tests were added, and the transition policy now kills 100% of its
+  mutants.
+- A live assistant (a Claude agent standing in for Copilot, which this
+  environment cannot reach) completed a real two-task run end to end
+  from the packets alone; the delivered branch passes its own tests.

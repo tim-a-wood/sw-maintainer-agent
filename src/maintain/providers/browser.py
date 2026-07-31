@@ -7,11 +7,10 @@ import hashlib
 import os
 import re
 import time
-import tomllib
 import zipfile
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 

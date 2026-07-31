@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from maintain.cli import main as cli_main
-from maintain.config import ConfigurationError, PackagePolicy, ProjectConfig, default_config
+from maintain.config import ConfigurationError, ProjectConfig, default_config
 from maintain.engine import PROVIDER_SAFETY_HEADER, SCOPE_INSTRUCTIONS
 from maintain.errors import ProviderError
 from maintain.models import ProviderRequest

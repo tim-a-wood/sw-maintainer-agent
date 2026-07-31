@@ -146,3 +146,13 @@ def test_expand_refuses_unsafe_members_and_replaces_the_old_folder(tmp_path):
         with pytest.raises(ConfigurationError, match="unsafe"):
             expand_packet_folder(hostile, target_root)
         hostile.unlink()
+
+
+def test_publish_without_expand_keeps_the_packet_zipped(tmp_path):
+    packet = _packet(tmp_path)
+    result = publish_packet(
+        packet, OneDriveSettings(folder=str(tmp_path / "flat")),
+        prober=lambda path: SYNCED, sleeper=lambda seconds: None,
+        clock=iter(range(100)).__next__)
+    assert result.copied_path.is_file()
+    assert not (tmp_path / "flat" / packet.stem).exists()

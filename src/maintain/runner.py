@@ -257,7 +257,7 @@ class _WindowsJob:
             information.BasicLimitInformation.LimitFlags = 0x00002000
             configured = kernel32.SetInformationJobObject(
                 handle, 9, ctypes.byref(information), ctypes.sizeof(information))
-            process_handle = wintypes.HANDLE(getattr(process, "_handle"))
+            process_handle = wintypes.HANDLE(process._handle)
             if not configured or not kernel32.AssignProcessToJobObject(handle, process_handle):
                 kernel32.CloseHandle(handle)
                 return None

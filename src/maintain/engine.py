@@ -24,7 +24,7 @@ from .errors import (
     RecoveryError,
     VerificationError,
 )
-from .gates import GateDecision, WorkflowGates
+from .gates import WorkflowGates
 from .models import ProviderRequest, RunRecord, RunState
 from .locking import FileLock
 from .policy import transition

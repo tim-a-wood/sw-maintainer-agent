@@ -1,6 +1,6 @@
 """PoC-derived, artifact-first Microsoft 365 Copilot client."""
 from __future__ import annotations
-import time, zipfile
+import time
 from pathlib import Path
 from typing import Protocol
 try:
@@ -13,7 +13,7 @@ from .browser import (GlobalDeadline, attach_file_to_chat, get_or_create_page, l
 from .downloads import (download_file_after_baseline, snapshot_download_control_counts,
                         validate_saved_markdown, validate_saved_zip)
 from .models import select_copilot_model
-from .result import ArtifactResult, ARTIFACT_RECEIVED, SUBMISSION_CONFIRMED
+from .result import ArtifactResult, ARTIFACT_RECEIVED
 
 class CopilotArtifactClient(Protocol):
     def create_markdown_artifact(self,*,prompt:str,exchange_package:Path,output_filename:str,transient_dir:Path)->ArtifactResult: ...

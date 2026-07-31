@@ -132,7 +132,7 @@ def probe_scene(source: str, work_dir: Path, scene_class: str, *,
     try:
         completed = subprocess.run(
             [python_command, "probe.py", scene_class], cwd=work_dir,
-            capture_output=True, text=True, timeout=PROBE_TIMEOUT_SECONDS)
+            capture_output=True, text=True, timeout=PROBE_TIMEOUT_SECONDS, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return []
     if completed.returncode != 0:

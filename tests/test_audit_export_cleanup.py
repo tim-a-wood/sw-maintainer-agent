@@ -147,3 +147,16 @@ def test_cleanup_removes_only_old_terminal_unaccepted_runs(tmp_path):
     _run(root, "f-20200101-000000-brkn", state="cancelled", updated="not-a-date")
     with pytest.raises(RecoveryError, match="retention"):
         cleanup_runs(root, 30)
+
+
+def test_export_creates_nested_destination_folders(tmp_path):
+    store = _store(tmp_path, "f-20260731-120000-nest")
+    store.save_record({"run_id": "f-20260731-120000-nest", "state": "failed"})
+    destination = tmp_path / "deep" / "nested" / "audit.zip"
+    assert store.export(destination) == destination
+
+
+def test_cleanup_accepts_the_minimum_retention_of_one_day(tmp_path):
+    root = tmp_path / "runtime"
+    _run(root, "f-20200101-000000-once", state="cancelled", updated=OLD)
+    assert cleanup_runs(root, 1) == ["f-20200101-000000-once"]

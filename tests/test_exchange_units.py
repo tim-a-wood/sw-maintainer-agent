@@ -135,3 +135,9 @@ def test_check_reply_text_branches(tmp_path):
     prose.write_text("Just prose, no envelope.", encoding="utf-8")
     also_kept = check_reply(handoff, path=prose)
     assert not also_kept.valid and also_kept.keep_as_attachment
+
+
+def test_newest_reply_takes_a_file_changed_exactly_at_since(tmp_path):
+    from maintain.downloads import newest_reply
+    _touch(tmp_path / "exact.md", 5000.0)
+    assert newest_reply(tmp_path, since=5000.0).name == "exact.md"

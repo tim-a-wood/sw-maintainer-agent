@@ -286,7 +286,6 @@ def test_diff_line_kinds_cover_headers_changes_and_ambiguity():
 
 
 def test_save_screen_diff_view_highlights(qt_app, tmp_path, monkeypatch):
-    from PySide6.QtGui import QTextCursor
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)
     window = MainWindow(config)

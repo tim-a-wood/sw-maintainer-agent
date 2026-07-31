@@ -39,6 +39,22 @@ where = ["src"]
 [tool.setuptools.package-data]
 maintain = ["data/explain/*.md"]
 
+# Static analysis: pyflakes, import and syntax errors, and bugbear on
+# everything; the compact one-statement-per-line style in the parser and
+# automation modules is accepted as-is.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/maintain/artifacts/*" = ["E701", "E702"]
+"src/maintain/verification/*" = ["E401", "E701", "E702"]
+"src/maintain/workflows/*" = ["E701", "E702"]
+"src/maintain/copilot/*" = ["E401", "E701", "E702", "F401", "F841"]
+"src/maintain/repository/*" = ["E401", "E701", "E702", "F841"]
+"src/maintain/providers/browser.py" = ["B904"]
+"src/maintain/providers/base.py" = ["B027"]
+"tests/*" = ["E701", "E702"]
+
 # Coverage measures the maintain-ui application. The omitted modules are
 # surfaces the desktop app never imports or constructs: the legacy CLI
 # front end, the browser-automation providers and their copilot client,

@@ -1064,7 +1064,7 @@ class MainWindow(QMainWindow):
     def _import_reply(self) -> None:
         paths = self.pick_files()
         if paths:
-            self.exchange.check(path=paths[0])
+            self.exchange.check(path=Path(paths[0]))
 
     def _open_newest_download(self) -> None:
         """FR-P1: take the reply from the Downloads folder, newest first."""

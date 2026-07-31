@@ -6,4 +6,5 @@ from .manual_ui import ManualUiProvider
 from .openai import OpenAIResponsesProvider
 
 __all__ = ["Provider", "ChatGPTBrowserProvider", "M365CopilotBrowserProvider",
-           "CodexProvider", "CommandProvider", "FileExchangeProvider", "OpenAIResponsesProvider"]
+           "CodexProvider", "CommandProvider", "FileExchangeProvider", "ManualUiProvider",
+           "OpenAIResponsesProvider"]

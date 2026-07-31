@@ -19,7 +19,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from maintain.models import RunState  # noqa: E402
 from maintain.ui.app import MainWindow  # noqa: E402
@@ -34,12 +33,14 @@ def _zip_reply(handoff, directory: Path, content: str) -> Path:
     """An implementation ZIP matching the handoff, for build and repair."""
     request = handoff.request
     reply = directory / f"maintain-output-{request.task_id}.zip"
+    manifest = (f'schema_version = 1\nrun_id = "{request.run_id}"\n'
+                f'task_id = "{request.task_id}"\nrole = "{request.role}"\n'
+                'files = ["app.py"]\ndeleted_files = []\n')
+    if request.payload.get("mode") == "issue":
+        manifest += ('root_cause_statement = "app.py line 1 sets VALUE '
+                     'to before."\nroot_cause_evidence_paths = ["app.py"]\n')
     with zipfile.ZipFile(reply, "w") as archive:
-        archive.writestr(
-            "IMPLEMENTATION.toml",
-            f'schema_version = 1\nrun_id = "{request.run_id}"\n'
-            f'task_id = "{request.task_id}"\nrole = "{request.role}"\n'
-            'files = ["app.py"]\ndeleted_files = []\n')
+        archive.writestr("IMPLEMENTATION.toml", manifest)
         archive.writestr("files/app.py", content)
     return reply
 
@@ -53,6 +54,33 @@ def _review_json(handoff, findings: list | None = None) -> str:
         "content": {
             "decision": "changes_requested" if findings else "approve",
             "findings": findings or []}})
+
+
+def _issue_scope_reply(handoff) -> str:
+    """A scope reply for issue mode: the root cause is required."""
+    value = json.loads(_scope_reply(handoff))
+    value["content"]["root_cause"] = {
+        "statement": "app.py line 1 sets VALUE to before.",
+        "evidence_paths": ["app.py"]}
+    return json.dumps(value)
+
+
+def _drive_to_plan_gate(qt_app, window, reply) -> None:
+    """Answer every scope packet (the engine may expand context) until
+    the plan gate opens."""
+    answered: set[int] = set()
+
+    def ready() -> bool:
+        if _screen(window) == "plan":
+            return True
+        handoff = window.current_handoff
+        if (_screen(window) == "exchange" and handoff is not None
+                and handoff.task_key == "plan" and id(handoff) not in answered):
+            answered.add(id(handoff))
+            window.exchange.check(clipboard_text=reply(handoff))
+        return False
+
+    wait_until(qt_app, ready, timeout=60.0, message="plan gate")
 
 
 def _wired_window(tmp_path, monkeypatch) -> tuple[MainWindow, list, list]:
@@ -434,3 +462,176 @@ def test_every_screen_paints_in_both_themes(qt_app, tmp_path, monkeypatch):
     assert not window.grab().isNull()
     window.toggle_theme()
     assert not errors, errors
+
+
+# ---------- rescope from every gate ----------
+
+def test_rescope_from_plan_findings_and_failed_checks(
+        qt_app, tmp_path, monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    flag = tmp_path / "checks-flag"
+    window._open_settings_page("checks")
+    window.page_checks._add_row(
+        "flag", f'{sys.executable} -c "import sys, pathlib; '
+                f"sys.exit(0 if pathlib.Path('{flag}').exists() else 1)\"")
+    window.page_checks._save()
+
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+
+    def answer_plan(note: str | None = None) -> None:
+        wait_until(qt_app, lambda: _screen(window) == "exchange"
+                   and window.current_handoff.task_key == "plan",
+                   message="plan packet")
+        window.exchange.check(clipboard_text=_scope_reply(window.current_handoff))
+        wait_until(qt_app, lambda: _screen(window) == "plan",
+                   message="plan gate")
+        if note is None:
+            window.plan_check.accept.emit()
+        else:
+            window.plan_check.rescope_note.emit(note)
+
+    def answer_build() -> None:
+        wait_until(qt_app, lambda: _screen(window) == "exchange"
+                   and window.current_handoff.task_key == "build",
+                   message="build packet")
+        window.exchange.check(path=_zip_reply(
+            window.current_handoff, tmp_path, 'VALUE = "after"\n'))
+
+    def answer_review(findings: list | None = None) -> None:
+        wait_until(qt_app, lambda: _screen(window) == "exchange"
+                   and window.current_handoff.task_key == "review",
+                   message="review packet")
+        window.exchange.check(
+            clipboard_text=_review_json(window.current_handoff, findings))
+
+    # Round one: the plan itself is sent back for changes.
+    answer_plan(note="Split the plan smaller.")
+
+    # Round two: the plan passes; the review points lead to a rescope.
+    answer_plan()
+    answer_build()
+    answer_review([{"severity": "medium", "file": "app.py", "line": 1,
+                    "title": "Wrong scope",
+                    "evidence": "The change needs a wider scope.",
+                    "remediation": "Plan it again."}])
+    wait_until(qt_app, lambda: _screen(window) == "findings",
+               message="findings gate")
+    window.findings.rescope_note.emit("Scope the fix wider.")
+
+    # Round three: the failed check leads to the last rescope.
+    answer_plan()
+    answer_build()
+    answer_review()
+    wait_until(qt_app, lambda: _screen(window) == "test"
+               and window.test.retry_button.isVisibleTo(window.test),
+               message="failed checks", timeout=60.0)
+    window.test.rescope_note.emit("The checks need another plan.")
+
+    # Round four passes end to end once the flag exists.
+    flag.write_text("ready\n", encoding="utf-8")
+    answer_plan()
+    answer_build()
+    answer_review()
+    wait_until(qt_app, lambda: _screen(window) == "save", message="save",
+               timeout=60.0)
+    record = window.current_record
+
+    timeline = window.controller.timeline(record.run_id)
+    notes = [item.sub for item in timeline if item.kind == "rescope"]
+    assert notes == ["Split the plan smaller.", "Scope the fix wider.",
+                     "The checks need another plan."]
+
+    window.save.accept.emit()
+    wait_until(qt_app, lambda: errors or _screen(window) == "done",
+               message="done", timeout=60.0)
+    assert not errors, errors
+
+
+# ---------- the issue mode with a reproduction check ----------
+
+def _issue_project(tmp_path, monkeypatch, argv: list[str]):
+    import json as json_module
+
+    from maintain.config import ProjectConfig
+
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    data = json_module.loads(config.path.read_text(encoding="utf-8"))
+    data.setdefault("verification", {}).setdefault("commands", {})["repro"] = {
+        "argv": argv, "phase": "reproduce"}
+    config.path.write_text(json_module.dumps(data, indent=2) + "\n",
+                           encoding="utf-8")
+    return MainWindow(ProjectConfig.load(config.path))
+
+
+def test_issue_mode_reproduces_fixes_and_verifies(qt_app, tmp_path, monkeypatch):
+    window = _issue_project(tmp_path, monkeypatch, [
+        sys.executable, "-c",
+        "import sys, pathlib; sys.exit("
+        "0 if 'after' in pathlib.Path('app.py').read_text() else 1)"])
+    window.ask_confirm = lambda *args, **kwargs: True
+    errors: list[str] = []
+    window.show_error = errors.append
+    window.toast = lambda *args, **kwargs: None
+
+    window.home.new_change.emit("issue")
+    assert _screen(window) == "describe"
+    window.describe.request_edit.setPlainText("The value is wrong. Repair it.")
+    window.describe._start()
+
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "plan",
+               message="plan packet")
+    assert window.current_handoff.request.payload.get("mode") == "issue"
+    _drive_to_plan_gate(qt_app, window, _issue_scope_reply)
+    window.plan_check.accept.emit()
+
+    # The reproduction runs before the fix; the build packet follows it.
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "build",
+               message="build packet", timeout=60.0)
+    window.exchange.check(path=_zip_reply(
+        window.current_handoff, tmp_path, 'VALUE = "after"\n'))
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "review",
+               message="review packet")
+    window.exchange.check(clipboard_text=_review_json(window.current_handoff))
+
+    wait_until(qt_app, lambda: _screen(window) == "save", message="save",
+               timeout=60.0)
+    record = window.current_record
+    reproduction = record.evidence.get("pre_fix_reproduction", [])
+    assert reproduction and reproduction[0]["exit_code"] != 0
+    tested = [item["name"] for item in
+              record.evidence.get("tests", {}).get("commands", [])]
+    assert "repro" in tested
+
+    window.save.accept.emit()
+    wait_until(qt_app, lambda: errors or _screen(window) == "done",
+               message="done", timeout=60.0)
+    assert not errors, errors
+
+
+def test_issue_mode_refuses_a_fault_that_does_not_reproduce(
+        qt_app, tmp_path, monkeypatch):
+    window = _issue_project(tmp_path, monkeypatch,
+                            [sys.executable, "-c", "raise SystemExit(0)"])
+    window.ask_confirm = lambda *args, **kwargs: True
+    toasts: list[str] = []
+    window.toast = toasts.append
+    window.show_error = toasts.append
+
+    window.home.new_change.emit("issue")
+    window.describe.request_edit.setPlainText("A fault that is not real.")
+    window.describe._start()
+    _drive_to_plan_gate(qt_app, window, _issue_scope_reply)
+    window.plan_check.accept.emit()
+
+    # The issue does not reproduce; the run pauses and says why.
+    wait_until(qt_app, lambda: not window.controller.busy
+               and _screen(window) == "home", message="paused", timeout=60.0)
+    assert any("did not reproduce" in item for item in toasts)
+    paused = window.controller.resumable_run()
+    assert paused is not None and paused.display_state == "Waiting"

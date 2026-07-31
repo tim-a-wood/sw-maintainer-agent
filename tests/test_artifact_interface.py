@@ -1,9 +1,12 @@
 from __future__ import annotations
-import json, tempfile, unittest, zipfile
+import json
+import tempfile
+import unittest
+import zipfile
 from pathlib import Path
 from maintain.artifacts.implementation import parse_markdown_implementation, parse_zip_implementation
 from maintain.artifacts.markdown import headings_outside_fences
-from maintain.artifacts.review import parse_review, compare_findings
+from maintain.artifacts.review import parse_review
 from maintain.artifacts.validation import validate_repository_path
 from maintain.copilot.package import create_exchange_package, validate_exchange_package
 from maintain.workflows.state import Checkpoint, next_resume_action
