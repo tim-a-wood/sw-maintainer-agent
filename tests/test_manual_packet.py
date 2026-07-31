@@ -1,4 +1,4 @@
-"""M1: packet configuration, packet builder, manual provider, OneDrive, CLI."""
+"""M1: packet configuration, packet builder, manual provider, CLI."""
 
 from __future__ import annotations
 
@@ -16,8 +16,6 @@ from maintain.config import ConfigurationError, ProjectConfig, default_config
 from maintain.engine import PROVIDER_SAFETY_HEADER, SCOPE_INSTRUCTIONS
 from maintain.errors import ProviderError
 from maintain.models import ProviderRequest
-from maintain.onedrive import (OneDriveSettings, PENDING, SYNCED, UNKNOWN,
-                               compose_link, expand_packet_folder, publish_packet)
 from maintain.providers.manual_ui import (ManualExchangeCancelled, ManualReply,
                                           ManualUiProvider)
 from maintain.zip_package import build_packet, packet_task_key
@@ -247,71 +245,6 @@ def test_manual_provider_rejects_foreign_envelope(tmp_path):
                          lambda handoff: ManualReply(kind="json", text=json.dumps(envelope)))
     with pytest.raises(ProviderError, match="different task"):
         provider.exchange(_request())
-
-
-# ---------- onedrive ----------
-
-def test_compose_link_quotes_the_name():
-    assert compose_link("https://x/y/", "maintain a.zip") == "https://x/y/maintain%20a.zip"
-    assert compose_link("", "a.zip") == ""
-
-
-def test_publish_packet_copies_waits_and_links(tmp_path):
-    packet = tmp_path / "maintain-r-plan.zip"
-    with zipfile.ZipFile(packet, "w") as archive:
-        archive.writestr("TASK.md", "task")
-    states = iter([PENDING, PENDING, SYNCED])
-    waited = []
-    result = publish_packet(
-        packet,
-        OneDriveSettings(folder=str(tmp_path / "OneDrive"), link_base="https://od/x",
-                         timeout_seconds=30),
-        prober=lambda path: next(states),
-        sleeper=waited.append,
-        clock=lambda: float(len(waited)))
-    assert result.copied_path.is_file()
-    assert result.sync_state == SYNCED
-    assert result.link == "https://od/x/maintain-r-plan.zip"
-    assert waited
-
-
-def test_publish_packet_timeout_reports_pending(tmp_path):
-    packet = tmp_path / "p.zip"
-    with zipfile.ZipFile(packet, "w") as archive:
-        archive.writestr("TASK.md", "task")
-    ticks = iter(range(0, 200, 20))
-    result = publish_packet(
-        packet,
-        OneDriveSettings(folder=str(tmp_path / "OneDrive"), timeout_seconds=30),
-        prober=lambda path: PENDING,
-        sleeper=lambda seconds: None,
-        clock=lambda: float(next(ticks)))
-    assert result.sync_state == PENDING
-    assert result.link == ""
-
-
-def test_publish_packet_expands_folder_fallback(tmp_path):
-    packet = tmp_path / "maintain-r-plan.zip"
-    with zipfile.ZipFile(packet, "w") as archive:
-        archive.writestr("TASK.md", "task")
-        archive.writestr("documents/docs/standards.md", "standards")
-    result = publish_packet(
-        packet,
-        OneDriveSettings(folder=str(tmp_path / "OneDrive"), timeout_seconds=10),
-        expand_folder=True,
-        prober=lambda path: UNKNOWN,
-        sleeper=lambda seconds: None)
-    expanded = result.copied_path.parent / "maintain-r-plan"
-    assert (expanded / "TASK.md").read_text(encoding="utf-8") == "task"
-    assert (expanded / "documents" / "docs" / "standards.md").is_file()
-
-
-def test_expand_packet_folder_rejects_unsafe_members(tmp_path):
-    packet = tmp_path / "bad.zip"
-    with zipfile.ZipFile(packet, "w") as archive:
-        archive.writestr("../escape.md", "bad")
-    with pytest.raises(ConfigurationError):
-        expand_packet_folder(packet, tmp_path / "target")
 
 
 # ---------- CLI ----------

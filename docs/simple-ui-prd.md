@@ -879,3 +879,23 @@ The same pass rewrote the sync-not-confirmed outcome on the exchange
 screen. It said "Look at the file in File Explorer" — but the link was
 already composed and in the clipboard. The line now leads with that,
 and File Explorer is the fallback advice, not the instruction.
+
+### 14.23 OneDrive is abandoned; the Markdown file is the route
+
+The OneDrive link transport never earned its keep on the real machine:
+a sync watch that timed out, a probe that popped windows, an outcome
+line that needed three rewrites. Decision: abandon it. The whole
+transport left the product — the publish module, the staged ticker,
+the link button, the settings page, the auto-link switch, the folder
+package style that existed only to serve it, and every string.
+
+The main route is now the one Markdown packet, handed over directly:
+when a packet appears, the file is already in the clipboard and the
+status line says so — paste into Copilot, send, done. Ctrl+C copies it
+again; Export stays for a copy on disk. The ZIP style remains as the
+one fallback. The Downloads folder setting, which lived on the
+OneDrive page, moved to its own small Settings page. Stored configs
+with the retired folder style load as ZIP.
+
+Parked, not forgotten: the OneDrive module lives in the git history
+(v0.9.1 and earlier) if a link transport ever returns.

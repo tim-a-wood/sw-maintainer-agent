@@ -45,7 +45,7 @@ STR: dict[str, str] = {
     "home.projects": "Projects",
     "home.projects.sub": "Create, open, or remove projects.",
     "home.settings": "Settings",
-    "home.settings.sub": "OneDrive, prompts, documents, package, checks.",
+    "home.settings.sub": "Prompts, documents, package, checks, downloads.",
     "home.momentum": "{count} saved changes. The last: {when}.",
     "home.momentum.one": "1 saved change. The last: {when}.",
     "when.today": "today",
@@ -71,22 +71,12 @@ STR: dict[str, str] = {
     "send.review.title": "Copilot examines the change.",
     "send.lead": "Give this package to Copilot. Use one of the ways below.",
     "send.drag": "Drag this package into Copilot.",
-    "send.copy_link": "Copy OneDrive link",
-    "send.copy_link.sub": "Recommended. Copilot opens the package from OneDrive.",
-    "send.copy_file": "Copy file",
+    "send.copy_file": "Copy the package",
     "send.export": "Export…",
     "send.attachments": "Attachments — go into this packet",
     "send.attach.add": "Add files…",
     "send.attach.drop": "Drop files here, or click to select them.",
     "send.contents": "What is in the package?",
-    "send.link.unset": "Set the OneDrive folder in Settings for the automatic link.",
-    "send.link.done": "In sync. The link is in the clipboard.",
-    "send.link.paste": "Paste the link into Copilot. Then send the message.",
-    "send.link.pending": "The link is in the clipboard — paste it into Copilot. "
-                         "If Copilot cannot open it, wait for the check mark in "
-                         "File Explorer.",
-    "send.link.manual": "Look at the file in File Explorer. When you see the check mark, "
-                        "paste the link.",
     "send.file.copied": "The package is in the clipboard. Paste it into Copilot.",
     "send.exported": "Saved {name}.",
     "send.updated": "The package is updated.",
@@ -105,7 +95,7 @@ STR: dict[str, str] = {
     "exchange.accepted.repair": "The repair is in.",
     "exchange.accepted.review": "The review is in.",
     "exchange.waiting": "The tool waits for the reply. {time}",
-    "exchange.copy.key": "Ctrl+C copies the package link again.",
+    "exchange.copy.key": "Ctrl+C copies the package again.",
     "exchange.sent": "Sent · {name}",
     "exchange.sent.show": "Show",
     "exchange.newest": "Open the newest download",
@@ -230,8 +220,6 @@ STR: dict[str, str] = {
     "projects.all": "All projects…",
     "include.code": "Include the project code and tests",
     "code.added": "Added {count} code files to the package.",
-    "send.step.copy": "Copy the package to OneDrive",
-    "send.step.sync": "Wait for the synchronization",
     "package.markdown": "One Markdown file",
     "package.markdown.sub": "The whole packet in one readable file. "
                             "The tool extracts the text from PDF and "
@@ -424,8 +412,8 @@ STR: dict[str, str] = {
 
     # Settings
     "settings.title": "Settings",
-    "settings.onedrive": "OneDrive",
-    "settings.onedrive.sub": "The folder and the link for packages.",
+    "settings.downloads": "Downloads",
+    "settings.downloads.sub": "The folder where the tool finds the Copilot replies.",
     "settings.tasks": "Task prompts & documents",
     "settings.tasks.sub": "Boilerplate prompts and documents, per task or for the project.",
     "settings.global": "Global prompt",
@@ -437,16 +425,6 @@ STR: dict[str, str] = {
     "settings.save": "Save",
     "settings.saved": "Saved.",
     "settings.back": "Back",
-
-    "onedrive.folder": "Package folder",
-    "onedrive.folder.hint": "The tool copies each package into this folder.",
-    "onedrive.browse": "Browse…",
-    "onedrive.link": "Link address of the folder",
-    "onedrive.link.hint": "Open the folder in OneDrive on the web. Copy the address. "
-                          "Paste it here.",
-    "onedrive.example": "Example link: {link}",
-    "onedrive.timeout": "Synchronization wait limit (seconds)",
-    "onedrive.timeout.hint": "After this time, the tool asks you to check File Explorer.",
 
     "tasks.project": "Project",
     "tasks.docs.project": "Documents for every packet",
@@ -465,11 +443,9 @@ STR: dict[str, str] = {
     "global.reset": "Reset to the template",
     "global.reset.done": "The template is restored. Select Save to keep it.",
 
-    "package.zip": "One ZIP (standard)",
-    "package.zip.sub": "The tool sends one ZIP. Copilot opens it from the OneDrive link.",
-    "package.folder": "ZIP + open folder (fallback)",
-    "package.folder.sub": "The tool also expands the files into a folder. "
-                          "Use this only when Copilot cannot open the ZIP members.",
+    "package.zip": "One ZIP (fallback)",
+    "package.zip.sub": "The tool sends one ZIP file. Use this only when the "
+                       "Markdown file does not work.",
 
     "checks.lead": "The tool runs these commands on this computer in the Test step.",
     "checks.add": "Add a check",
@@ -486,7 +462,6 @@ STR: dict[str, str] = {
     "issues.autoclosed": "Closed {count} on delivery.",
     "issues.closed.one": "Closed: {title}.",
     "issues.closed.more": "Closed: {title} and {count} more.",
-    "onedrive.autolink": "Copy the link alone when a package is ready.",
     "exchange.downloads": "Downloads folder",
     "exchange.downloads.hint": "The tool takes the newest reply file from this folder.",
     "working.plan": "Copilot makes the plan…",

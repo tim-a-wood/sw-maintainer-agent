@@ -156,9 +156,11 @@ automation runs in this mode.
   **Maintain UI** shortcut.
 - Set up a project for it with `maintain init /path/to/project --provider
   manual-ui`, or let the UI create the configuration on first open.
-- The primary transport is the OneDrive link: the tool copies the packet into
-  a configured folder, watches synchronization, and puts the link in the
-  clipboard. Drag and drop, file copy, and export stay available.
+- The primary transport is one Markdown file: the tool compiles the whole
+  packet — prompts, code, extracted reference text — into a single `.md`
+  and puts it in the clipboard the moment it is ready. One paste attaches
+  it in Copilot. Drag and drop and export stay available; a one-ZIP
+  fallback style remains in Settings.
 - Every run records an iteration timeline. You can go back to any anchor
   iteration; later iterations stay in the history as superseded.
 - Boilerplate prompts and standards documents are configurable per project

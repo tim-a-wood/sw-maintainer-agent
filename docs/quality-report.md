@@ -71,7 +71,7 @@ added for them. Second pass over the re-tested modules:
 | ui/config_store.py | 12/20 | 16/20 |
 | audit.py | 30/39 | 32/39 |
 | history.py | 12/16 | 13/16 |
-| onedrive.py | 18/24 | 19/24 |
+| onedrive.py | 18/24 | 19/24 (module since removed with the OneDrive transport) |
 
 The killer tests now pin, among others: CANCELLED is reachable from
 every active state except DELIVERING; VERIFIED demands review and
@@ -124,8 +124,8 @@ import edges.
 - Shared data channels, named so they stay deliberate: the
   `RunRecord.evidence` dictionary (the run's data bus between engine
   phases, persisted in `run.json`), the settings JSON file behind
-  `repository_memory` (projects, theme, OneDrive, Downloads path,
-  recents), `theme.ACTIVE` (one process-wide palette read by painting
+  `repository_memory` (projects, theme, Downloads path, recents),
+  `theme.ACTIVE` (one process-wide palette read by painting
   widgets), and `os.environ` copied into check subprocesses.
 
 ## 5. Live exchange with a real assistant
@@ -166,5 +166,6 @@ the assertions bite (100% mutation kill on the transition policy, the
 strongest guard in the system), the dependency structure points the
 right way with one managed cycle, and a live model can complete the
 whole loop from the packets alone. The remaining risk sits where only
-the real machine can look: Windows, OneDrive's real sync attributes,
-and the real Copilot's file handling.
+the real machine can look: Windows and the real Copilot's file
+handling. (The OneDrive sync-attribute risk retired with the OneDrive
+transport itself.)

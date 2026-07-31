@@ -99,7 +99,6 @@ def _wired_window(tmp_path, monkeypatch) -> tuple[MainWindow, list, list]:
 
 def test_settings_round_trip_through_every_page(qt_app, tmp_path, monkeypatch):
     from maintain.config import ProjectConfig
-    from maintain.onedrive import onedrive_settings
     from maintain.repository_memory import load_ui_settings
     from maintain.ui.screens import documents_count
     from maintain.ui.strings import text as ui_text
@@ -108,26 +107,14 @@ def test_settings_round_trip_through_every_page(qt_app, tmp_path, monkeypatch):
     window.home.open_settings.emit()
     assert _screen(window) == "settings"
 
-    # OneDrive: folder, link, timeout, auto-link, and the Downloads path.
-    window.pick_directory = lambda: str(tmp_path / "onedrive")
-    window._open_settings_page("onedrive")
-    assert _screen(window) == "set-onedrive"
-    window.page_onedrive.browse.emit()
-    assert window.page_onedrive.folder_edit.text() == str(tmp_path / "onedrive")
-    window.page_onedrive.link_edit.setText("https://1drv.example/maintain/")
-    assert "maintain-run-plan.zip" in window.page_onedrive.example.text()
-    window.page_onedrive.timeout_edit.setValue(33)
-    window.page_onedrive.autolink_box.setChecked(False)
-    window.page_onedrive.downloads_edit.setText(str(tmp_path / "dl"))
-    window.page_onedrive._save()
+    # Downloads: the folder where the tool finds the Copilot replies.
+    window._open_settings_page("downloads")
+    assert _screen(window) == "set-downloads"
+    window.page_downloads.downloads_edit.setText(str(tmp_path / "dl"))
+    window.page_downloads._save()
     assert _screen(window) == "settings"
     assert toasts[-1] == ui_text("settings.saved")
-    stored = onedrive_settings()
-    assert stored.folder == str(tmp_path / "onedrive")
-    assert stored.link_base == "https://1drv.example/maintain/"
-    assert stored.timeout_seconds == 33
     values = load_ui_settings()
-    assert values["auto_link"] is False
     assert values["downloads_path"] == str(tmp_path / "dl")
 
     # Global prompt: template first, then the saved file wins, then reset.
@@ -180,18 +167,18 @@ def test_settings_round_trip_through_every_page(qt_app, tmp_path, monkeypatch):
     window.page_tasks.remove_doc.emit(None, "docs.md")
     assert not window.store.config.package.documents
 
-    # Package style: folder, persisted on disk, then back to zip.
-    window._open_settings_page("package")
-    window.page_package.folder_radio.setChecked(True)
-    window.page_package._save()
-    assert window.store.config.package.style == "folder"
-    assert window.exchange.package_style == "folder"
-    reloaded = ProjectConfig.load(window.store.path)
-    assert reloaded.package.style == "folder"
+    # Package style: zip, persisted on disk, then back to markdown.
     window._open_settings_page("package")
     window.page_package.zip_radio.setChecked(True)
     window.page_package._save()
     assert window.store.config.package.style == "zip"
+    assert window.exchange.package_style == "zip"
+    reloaded = ProjectConfig.load(window.store.path)
+    assert reloaded.package.style == "zip"
+    window._open_settings_page("package")
+    window.page_package.markdown_radio.setChecked(True)
+    window.page_package._save()
+    assert window.store.config.package.style == "markdown"
 
     # Checks: an added row saves; a command-less row is refused with a message.
     window._open_settings_page("checks")
@@ -462,7 +449,7 @@ def test_every_screen_paints_in_both_themes(qt_app, tmp_path, monkeypatch):
     window, errors, _ = _wired_window(tmp_path, monkeypatch)
     for name in ("home", "describe", "projects", "issues", "issue",
                  "scan-check", "explain", "history", "settings", "busy",
-                 "set-onedrive", "set-tasks", "set-global", "set-package",
+                 "set-downloads", "set-tasks", "set-global", "set-package",
                  "set-checks", "set-explain"):
         window.show_screen(name)
         image = window.grab()
@@ -955,57 +942,28 @@ def test_package_page_offers_and_saves_all_three_styles(qt_app, tmp_path,
     assert window.store.config.package.style == "markdown"
 
 
-def test_link_publish_shows_stages_and_gates_the_ready_state(
-        qt_app, tmp_path, monkeypatch):
-    from maintain import onedrive as onedrive_module
-    from maintain.onedrive import PublishResult
+def test_packet_lands_in_the_clipboard_on_arrival(qt_app, tmp_path,
+                                                  monkeypatch):
+    """The main route: the one Markdown file is in the clipboard the
+    moment the packet appears — one paste into Copilot, done."""
+    from maintain.ui.strings import text as ui_text
 
     window, errors, toasts = _wired_window(tmp_path, monkeypatch)
-    from maintain.repository_memory import load_ui_settings, save_ui_settings
-    values = load_ui_settings()
-    values["onedrive"] = {"folder": str(tmp_path / "cloud"),
-                          "link_base": "https://1drv.example/m/"}
-    save_ui_settings(values)
-
-    holds = {"stage": None, "finish": None}
-
-    def fake_publish(path, settings, *, expand_folder=False, on_stage=None,
-                     **kwargs):
-        holds["stage"] = on_stage
-        import time as time_module
-        while holds["finish"] is None:
-            time_module.sleep(0.01)
-        return holds["finish"]
-
-    monkeypatch.setattr("maintain.ui.screens.publish_packet", fake_publish)
     window.home.new_change.emit("feature")
     window.describe.request_edit.setPlainText("Change the value to after.")
     window.describe._start()
     wait_until(qt_app, lambda: _screen(window) == "exchange",
                message="plan packet")
-    wait_until(qt_app, lambda: holds["stage"] is not None,
-               message="publish start")   # auto-link fired
-    assert not window.exchange.link_button.isEnabled()
-    assert window.exchange.link_steps._active is not None   # copying row spins
-    # One story at a time: while the steps tick, the status line says
-    # nothing — a busy line here once contradicted the completed step.
-    assert window.exchange.send_status.text() == ""
-
-    holds["stage"]("copied")
-    wait_until(qt_app, lambda: window.exchange.link_steps._column.count() == 2,
-               message="sync row")
-    assert window.exchange.send_status.text() == ""
-    holds["finish"] = PublishResult(
-        copied_path=tmp_path / "cloud" / "x.md",
-        link="https://1drv.example/m/x.md", sync_state=onedrive_module.SYNCED,
-        waited_seconds=1.0)
-    wait_until(qt_app, lambda: window.exchange.link_button.isEnabled(),
-               message="ready state")
-    assert window.exchange.link_steps._active is None       # both rows ✓
-    from maintain.ui.strings import text as ui_text
-    assert ui_text("send.link.done") in window.exchange.send_status.text()
     from PySide6.QtWidgets import QApplication
-    assert QApplication.clipboard().text() == "https://1drv.example/m/x.md"
+    mime = QApplication.clipboard().mimeData()
+    assert mime.hasUrls(), "the packet file is not in the clipboard"
+    copied = Path(mime.urls()[0].toLocalFile())
+    assert copied.suffix == ".md" and copied.is_file()
+    assert window.exchange.send_status.text() == ui_text("send.file.copied")
+    # The region stays open — attachments are still at hand; only a
+    # copy by hand folds it to the one-line summary (FR-F2).
+    exchange = window.exchange
+    assert exchange._send_full.isVisibleTo(exchange)
     window._stop_run()
     wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
     assert not errors, errors
@@ -1232,22 +1190,6 @@ def test_explain_result_hints_at_setup_without_the_player(qt_app, tmp_path,
     screen.show_running(str(tmp_path))
     screen.show_passed(None, None)
     assert not screen.video_hint.isVisibleTo(screen)
-
-
-def test_pending_link_outcome_leads_with_the_copied_link(qt_app, tmp_path,
-                                                         monkeypatch):
-    """When the sync watch gives up, the person still has the link —
-    the outcome line says that first, File Explorer second."""
-    from maintain.onedrive import PENDING
-
-    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
-    window.exchange._on_link_state(PENDING, "https://1drv.example/m/x.md")
-    line = window.exchange.send_status.text()
-    assert "clipboard" in line and "File Explorer" in line
-    # Without a link base there is no link; the old advice stands alone.
-    window.exchange._on_link_state(PENDING, "")
-    assert window.exchange.send_status.text().startswith("Look at the file")
-    assert not errors, errors
 
 
 def test_manim_install_also_brings_the_video_player(monkeypatch):

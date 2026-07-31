@@ -41,13 +41,13 @@ from .config_store import ConfigStore
 from .controller import Controller
 from .bridge import check_reply
 from .screens import (BusyScreen, ChecksPage, DescribeScreen, DoneScreen,
-                      ExchangeScreen, ExplainResultScreen, ExplainScreen,
-                      ExplainSettingsPage, FindingsScreen, GlobalPage,
-                      HistoryScreen, HomeScreen, IssueDetailScreen,
-                      IssuesScreen, OneDrivePage, PackagePage,
-                      PlanCheckScreen, ProjectsScreen, RunDetailScreen,
-                      SaveScreen, ScanCheckScreen, SettingsScreen, TasksPage,
-                      TestScreen, documents_count)
+                      DownloadsPage, ExchangeScreen, ExplainResultScreen,
+                      ExplainScreen, ExplainSettingsPage, FindingsScreen,
+                      GlobalPage, HistoryScreen, HomeScreen, IssueDetailScreen,
+                      IssuesScreen, PackagePage, PlanCheckScreen,
+                      ProjectsScreen, RunDetailScreen, SaveScreen,
+                      ScanCheckScreen, SettingsScreen, TasksPage, TestScreen,
+                      documents_count)
 from .strings import text
 from .widgets import StageHeader, ToastStack
 
@@ -249,7 +249,7 @@ class MainWindow(QMainWindow):
         self.run_detail = RunDetailScreen()
         self.busy = BusyScreen()
         self.settings = SettingsScreen()
-        self.page_onedrive = OneDrivePage()
+        self.page_downloads = DownloadsPage()
         self.page_tasks = TasksPage(self.store)
         self.page_global = GlobalPage(self.store)
         self.page_package = PackagePage()
@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
                 ("test", self.test), ("save", self.save), ("done", self.done),
                 ("history", self.history), ("run", self.run_detail),
                 ("busy", self.busy), ("settings", self.settings),
-                ("set-onedrive", self.page_onedrive),
+                ("set-downloads", self.page_downloads),
                 ("set-tasks", self.page_tasks), ("set-global", self.page_global),
                 ("set-package", self.page_package),
                 ("set-checks", self.page_checks)]:
@@ -364,11 +364,10 @@ class MainWindow(QMainWindow):
 
         self.settings.back.connect(self.show_home)
         self.settings.open_page.connect(self._open_settings_page)
-        for page in (self.page_onedrive, self.page_tasks, self.page_global,
+        for page in (self.page_downloads, self.page_tasks, self.page_global,
                      self.page_package, self.page_checks):
             page.back.connect(lambda: self.show_screen("settings"))
-        self.page_onedrive.saved.connect(self._settings_saved)
-        self.page_onedrive.browse.connect(self._browse_onedrive_folder)
+        self.page_downloads.saved.connect(self._settings_saved)
         self.page_tasks.saved.connect(self._settings_saved)
         self.page_tasks.add_doc.connect(self._add_document)
         self.page_tasks.remove_doc.connect(self._remove_document)
@@ -1537,8 +1536,8 @@ class MainWindow(QMainWindow):
     # ----- settings -----
 
     def _open_settings_page(self, page: str) -> None:
-        if page == "onedrive":
-            self.page_onedrive.load()
+        if page == "downloads":
+            self.page_downloads.load()
         elif page == "tasks":
             self.page_tasks.set_tab("project")
         elif page == "global":
@@ -1556,11 +1555,6 @@ class MainWindow(QMainWindow):
         self._after_config_change()
         self.toast(text("settings.saved"))
         self.show_screen("settings")
-
-    def _browse_onedrive_folder(self) -> None:
-        selected = self.pick_directory()
-        if selected:
-            self.page_onedrive.folder_edit.setText(selected)
 
     def _package_saved(self, style: str) -> None:
         try:

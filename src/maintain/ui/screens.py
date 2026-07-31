@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from pathlib import Path
 
@@ -11,8 +10,7 @@ from PySide6.QtGui import QGuiApplication, QKeySequence, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QFrame,
                                QGridLayout, QHBoxLayout, QLabel, QLineEdit,
                                QPlainTextEdit, QPushButton, QRadioButton,
-                               QScrollArea, QSizePolicy, QSpinBox,
-                               QVBoxLayout, QWidget)
+                               QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
 from maintain.downloads import default_downloads
 from maintain.issues import REASONS
@@ -20,9 +18,6 @@ from maintain.repository_memory import load_ui_settings, save_ui_settings
 
 from maintain.history import IterationEvent, RunSummary
 from maintain.models import RunRecord
-from maintain.onedrive import (PENDING, SYNCED, OneDriveSettings,
-                               onedrive_settings, publish_packet,
-                               save_onedrive_settings)
 from maintain.providers.manual_ui import PacketHandoff
 from maintain.zip_package import global_prompt_text
 
@@ -344,14 +339,12 @@ class ExchangeScreen(Screen):
     import_attachments = Signal()
     export_requested = Signal()
     scan_focus = Signal(str)
-    link_state = Signal(str, str)        # state, message (internal, thread-safe)
-    link_stage = Signal(str)             # publish stage (internal, thread-safe)
 
     def __init__(self) -> None:
         super().__init__()
         self.handoff: PacketHandoff | None = None
         self.reply_open = False
-        self.package_style = "zip"
+        self.package_style = "markdown"
         self.column.setContentsMargins(26, 14, 26, 16)
         self.column.setSpacing(8)
         self.eyebrow = label("", "Eyebrow")
@@ -414,12 +407,9 @@ class ExchangeScreen(Screen):
         attach_zone.files_dropped.connect(self.add_attachments.emit)
         attach_zone.clicked.connect(self.import_attachments.emit)
         send_column.addWidget(attach_zone)
-        self.link_button = button(text("send.copy_link"), "Secondary",
-                                  self._copy_link)
         buttons_row = QHBoxLayout()
         buttons_row.setSpacing(10)
-        for widget in (self.link_button,
-                       button(text("send.copy_file"), "Secondary",
+        for widget in (button(text("send.copy_file"), "Primary",
                               self._copy_file),
                        button(text("send.export"), "Secondary",
                               self.export_requested.emit)):
@@ -428,9 +418,6 @@ class ExchangeScreen(Screen):
         buttons_holder = QWidget()
         buttons_holder.setLayout(buttons_row)
         send_column.addWidget(buttons_holder)
-        self.link_steps = StepTicker()
-        self.link_steps.setVisible(False)
-        send_column.addWidget(self.link_steps)
         outer_send = self._send_full.parentWidget().layout()
         summary_row = QHBoxLayout()
         summary_row.setSpacing(10)
@@ -484,8 +471,6 @@ class ExchangeScreen(Screen):
         receive_column.addWidget(self.status)
         self.add(receive_frame)
         self.add(label(text("exchange.copy.key"), "Hint"))
-        self.link_state.connect(self._on_link_state)
-        self.link_stage.connect(self._on_link_stage)
         self._wait_start = 0.0
         self._wait_timer = QTimer(self)
         self._wait_timer.setInterval(1000)
@@ -515,7 +500,7 @@ class ExchangeScreen(Screen):
         self._wait_start = time.monotonic()
         self._tick_waiting()
         self._wait_timer.start()
-        self.maybe_auto_link()
+        self.auto_copy()
 
     def _tick_waiting(self) -> None:
         """FR-D5: a live sign of life while the person is in Copilot."""
@@ -528,10 +513,7 @@ class ExchangeScreen(Screen):
         if event.matches(QKeySequence.StandardKey.Copy):
             focus = QApplication.focusWidget()
             if not isinstance(focus, (QLineEdit, QPlainTextEdit)):
-                if onedrive_settings().folder:
-                    self._copy_link()
-                else:
-                    self._copy_file()
+                self._copy_file()
                 return
         super().keyPressEvent(event)
 
@@ -564,81 +546,26 @@ class ExchangeScreen(Screen):
 
     # ---- send side ----
 
-    def maybe_auto_link(self) -> None:
-        """FR-P2: publish and copy the link alone when a packet appears."""
-        if not load_ui_settings().get("auto_link", True):
-            return
-        if not onedrive_settings().folder:
-            self.send_status.set_state("plain", text("send.link.unset"))
-            return
-        self._copy_link()
+    def auto_copy(self) -> None:
+        """FR-P2: the packet is in the clipboard the moment it appears.
+        The region stays open — attachments and the scan focus are
+        still at hand; a copy by hand folds it (FR-F2)."""
+        if self._clipboard_packet():
+            self.send_status.set_state("ok", text("send.file.copied"))
 
     def _copy_file(self) -> None:
+        if self._clipboard_packet():
+            self.send_status.set_state("ok", text("send.file.copied"))
+            self._mark_sent()
+
+    def _clipboard_packet(self) -> bool:
         if self.handoff is None:
-            return
+            return False
         from PySide6.QtCore import QMimeData, QUrl
         mime = QMimeData()
         mime.setUrls([QUrl.fromLocalFile(str(self.card.packet_path))])
         QGuiApplication.clipboard().setMimeData(mime)
-        self.send_status.set_state("ok", text("send.file.copied"))
-        self._mark_sent()
-
-    def _copy_link(self) -> None:
-        if self.handoff is None:
-            return
-        settings = onedrive_settings()
-        packet = self.card.packet_path
-        self.link_button.setEnabled(False)
-        # The step list tells the progress story alone; the status line
-        # stays empty until it can state the one final outcome.
-        self.send_status.set_state("plain", "")
-        self.link_steps.setVisible(True)
-        self.link_steps.reset()
-        self.link_steps.begin(text("send.step.copy"))
-        expand = self.package_style == "folder"
-
-        def work() -> None:
-            try:
-                result = publish_packet(
-                    Path(packet), settings, expand_folder=expand,
-                    on_stage=lambda stage: self.link_stage.emit(stage))
-            except Exception as exc:  # noqa: BLE001 - shown to the person
-                self.link_state.emit("error", str(exc))
-                return
-            self.link_state.emit(result.sync_state, result.link)
-
-        threading.Thread(target=work, daemon=True, name="maintain-onedrive").start()
-
-    def _on_link_stage(self, stage: str) -> None:
-        if stage == "copied":
-            self.link_steps.complete()
-            self.link_steps.begin(text("send.step.sync"))
-
-    def _on_link_state(self, state: str, value: str) -> None:
-        self.link_button.setEnabled(True)
-        if state == "error":
-            self.link_steps.fail()
-            self.send_status.set_state("bad", value)
-            return
-        if value:
-            QGuiApplication.clipboard().setText(value)
-        if state == SYNCED:
-            self.link_steps.complete()
-            self.send_status.set_state(
-                "ok", f"{text('send.link.done')} {text('send.link.paste')}")
-        elif state == PENDING:
-            self.link_steps.fail()
-            # The link is composed and copied even before the sync
-            # confirms — lead with that, keep File Explorer for the
-            # case where Copilot cannot open it yet.
-            self.send_status.set_state(
-                "warn", text("send.link.pending") if value
-                else text("send.link.manual"))
-        else:
-            self.link_steps.complete()
-            self.send_status.set_state(
-                "plain", f"{text('send.link.paste')} {text('send.link.manual')}")
-        self._mark_sent()
+        return True
 
     def mark_exported(self, name: str) -> None:
         self.send_status.set_state("ok", text("send.exported", name=name))
@@ -2087,14 +2014,14 @@ class SettingsScreen(Screen):
     open_page = Signal(str)
     back = Signal()
 
-    ICON_NAMES = {"onedrive": "cloud", "tasks": "file-text", "global": "globe",
+    ICON_NAMES = {"tasks": "file-text", "global": "globe",
                   "package": "box", "checks": "check-circle",
-                  "explain": "film"}
+                  "downloads": "download", "explain": "film"}
 
     def __init__(self) -> None:
         super().__init__()
         self.add(label(text("settings.title"), "Title"))
-        for key in ("onedrive", "tasks", "global", "package", "checks",
+        for key in ("tasks", "global", "package", "checks", "downloads",
                     "explain"):
             card = ChoiceButton(self.ICON_NAMES[key], text("settings." + key),
                                 text("settings." + key + ".sub"))
@@ -2104,38 +2031,13 @@ class SettingsScreen(Screen):
         self.add_row(button(text("settings.back"), "Ghost", self.back.emit))
 
 
-class OneDrivePage(Screen):
+class DownloadsPage(Screen):
     saved = Signal()
     back = Signal()
-    browse = Signal()
 
     def __init__(self) -> None:
         super().__init__()
-        self.add(label(text("settings.onedrive"), "Title"))
-        self.add(label(text("onedrive.folder").upper(), "Eyebrow"))
-        self.folder_edit = QLineEdit()
-        self.add(self.folder_edit)
-        self.add(label(text("onedrive.folder.hint"), "Hint"))
-        self.add_row(button(text("onedrive.browse"), "Secondary",
-                            self.browse.emit))
-        self.add_gap(2)
-        self.add(label(text("onedrive.link").upper(), "Eyebrow"))
-        self.link_edit = QLineEdit()
-        self.link_edit.textChanged.connect(self._preview)
-        self.add(self.link_edit)
-        self.add(label(text("onedrive.link.hint"), "Hint"))
-        self.example = label("", "MonoHint")
-        self.add(self.example)
-        self.add_gap(2)
-        self.add(label(text("onedrive.timeout").upper(), "Eyebrow"))
-        self.timeout_edit = QSpinBox()
-        self.timeout_edit.setRange(10, 900)
-        self.timeout_edit.setFixedWidth(120)
-        self.add_row(self.timeout_edit)
-        self.add(label(text("onedrive.timeout.hint"), "Hint"))
-        self.add_gap(2)
-        self.autolink_box = QCheckBox(text("onedrive.autolink"))
-        self.add(self.autolink_box)
+        self.add(label(text("settings.downloads"), "Title"))
         self.add(label(text("exchange.downloads").upper(), "Eyebrow"))
         self.downloads_edit = QLineEdit()
         self.add(self.downloads_edit)
@@ -2146,27 +2048,12 @@ class OneDrivePage(Screen):
             button(text("settings.back"), "Ghost", self.back.emit))
 
     def load(self) -> None:
-        settings = onedrive_settings()
-        self.folder_edit.setText(settings.folder)
-        self.link_edit.setText(settings.link_base)
-        self.timeout_edit.setValue(settings.timeout_seconds)
         values = load_ui_settings()
-        self.autolink_box.setChecked(bool(values.get("auto_link", True)))
         self.downloads_edit.setText(
             str(values.get("downloads_path") or default_downloads()))
 
-    def _preview(self, value: str) -> None:
-        base = value.strip().rstrip("/")
-        self.example.setText(
-            text("onedrive.example", link=f"{base}/maintain-run-plan.zip") if base else "")
-
     def _save(self) -> None:
-        save_onedrive_settings(OneDriveSettings(
-            folder=self.folder_edit.text().strip(),
-            link_base=self.link_edit.text().strip(),
-            timeout_seconds=int(self.timeout_edit.value())))
         values = load_ui_settings()
-        values["auto_link"] = self.autolink_box.isChecked()
         values["downloads_path"] = self.downloads_edit.text().strip()
         save_ui_settings(values)
         self.saved.emit()
@@ -2327,16 +2214,12 @@ class PackagePage(Screen):
             text("package.markdown"), text("package.markdown.sub"))
         self.zip_radio, zip_card = self._option(
             text("package.zip"), text("package.zip.sub"))
-        self.folder_radio, folder_card = self._option(
-            text("package.folder"), text("package.folder.sub"))
         # The radios live in separate cards, so exclusivity needs a group.
         self._style_group = QButtonGroup(self)
         self._style_group.addButton(self.markdown_radio)
         self._style_group.addButton(self.zip_radio)
-        self._style_group.addButton(self.folder_radio)
         self.add(markdown_card)
         self.add(zip_card)
-        self.add(folder_card)
         self.add_gap()
         self.add_row(
             button(text("settings.save"), "Primary", self._save),
@@ -2359,17 +2242,14 @@ class PackagePage(Screen):
         return radio, card
 
     def load(self, style: str) -> None:
+        # A stored legacy "folder" style shows as ZIP; the folder
+        # expansion left with the OneDrive transport.
         self.markdown_radio.setChecked(style == "markdown")
-        self.zip_radio.setChecked(style == "zip")
-        self.folder_radio.setChecked(style == "folder")
+        self.zip_radio.setChecked(style != "markdown")
 
     def _save(self) -> None:
-        if self.markdown_radio.isChecked():
-            self.saved.emit("markdown")
-        elif self.folder_radio.isChecked():
-            self.saved.emit("folder")
-        else:
-            self.saved.emit("zip")
+        self.saved.emit(
+            "markdown" if self.markdown_radio.isChecked() else "zip")
 
 
 class ChecksPage(Screen):
