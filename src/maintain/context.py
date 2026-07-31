@@ -119,7 +119,27 @@ class ContextSelector:
             text=True, capture_output=True, check=False, **hidden(),
         )
         tree = result.stdout.strip() if result.returncode == 0 else "no-git-tree"
-        return (str(self.repository.resolve()), tree, self.roots, self.excludes, self.max_file_bytes)
+        # The committed tree alone misses uncommitted edits: a packet
+        # built after a save-without-commit would carry the cached old
+        # content. Dirty paths join the key with their stamp and size.
+        status = subprocess.run(
+            ["git", "-C", str(self.repository), "status", "--porcelain"],
+            text=True, capture_output=True, check=False, **hidden(),
+        )
+        dirty: list[tuple] = []
+        if status.returncode == 0:
+            for line in status.stdout.splitlines():
+                path = line[3:].strip()
+                if " -> " in path:
+                    path = path.split(" -> ", 1)[1]
+                path = path.strip('"')
+                try:
+                    stamp = (self.repository / path).stat()
+                    dirty.append((path, stamp.st_mtime_ns, stamp.st_size))
+                except OSError:
+                    dirty.append((path, 0, 0))
+        return (str(self.repository.resolve()), tree, tuple(sorted(dirty)),
+                self.roots, self.excludes, self.max_file_bytes)
 
     def exact(self, paths: set[str]) -> list[ContextFile]:
         """Return exact safe inventory entries for bounded context expansion."""

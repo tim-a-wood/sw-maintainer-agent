@@ -23,8 +23,9 @@ from maintain.explain_store import (DISCARDED as EXPLAIN_DISCARDED,
                                     FAILED as EXPLAIN_FAILED,
                                     PASSED as EXPLAIN_PASSED,
                                     WAITING as EXPLAIN_WAITING,
-                                    load_explain_states, restore_request,
-                                    resumable_explain, save_explain_state)
+                                    is_stale, load_explain_states,
+                                    restore_request, resumable_explain,
+                                    save_explain_state)
 from maintain.issue_packets import (SideExchange, build_side_packet,
                                     discuss_reply, discuss_request,
                                     explain_dir, explain_request,
@@ -319,6 +320,7 @@ class MainWindow(QMainWindow):
         self.explain.import_requested.connect(self._import_explain_files)
         self.explain.open_videos.connect(self._open_last_video_dir)
         self.explain.open_past.connect(self._open_past_explain)
+        self.explain.update_past.connect(self._update_explain)
         self.explain_result.open_video.connect(self._open_explain_video)
         self.explain_result.open_folder.connect(self._open_explain_folder)
         self.explain_result.repair.connect(self._repair_explain)
@@ -874,9 +876,13 @@ class MainWindow(QMainWindow):
         self.explain.reset()
         self.explain.audience_edit.setText(
             str(load_ui_settings().get("explain_audience", "")))
+        finished = [state for state in load_explain_states(self.store.config)
+                    if state.get("status") == EXPLAIN_PASSED
+                    and not state.get("superseded_by")][:6]
+        memo: dict = {}   # one hash per file across all the rows
         self.explain.set_history(
-            [state for state in load_explain_states(self.store.config)
-             if state.get("status") == EXPLAIN_PASSED][:6])
+            [dict(state, stale=is_stale(self.store.config, state, memo))
+             for state in finished])
         newest = self._newest_video()
         self._last_video_dir = newest.parent if newest else None
         from datetime import datetime
@@ -937,7 +943,8 @@ class MainWindow(QMainWindow):
     def _launch_explain(self, sources: list, goal: str, audience: str,
                         previous_scene: str = "",
                         render_error: str = "",
-                        findings: list | None = None) -> None:
+                        findings: list | None = None,
+                        updates: str = "") -> None:
         config = self.store.config
         try:
             request = explain_request(
@@ -954,7 +961,7 @@ class MainWindow(QMainWindow):
         self._explain = {"sources": sources, "goal": goal,
                          "audience": audience, "run_id": request.run_id,
                          "source": "", "tail": "", "video": None,
-                         "sheet": None, "findings": [],
+                         "sheet": None, "findings": [], "updates": updates,
                          "dir": explain_dir(config, request.run_id)}
         # FR-X2: the exchange survives the application; a restart shows
         # it on the home screen until a scene reply or a discard.
@@ -1048,6 +1055,10 @@ class MainWindow(QMainWindow):
                 video=str(result.video) if result.ok and result.video else "",
                 sheet=str(result.sheet) if result.ok and result.sheet else "",
                 finished_at=utc_now())
+            # FR-X4: a passed update retires the video it replaces.
+            if result.ok and state.get("updates"):
+                save_explain_state(self.store.config, state["updates"],
+                                   superseded_by=state["run_id"])
         self.explain_result.show_findings(findings)
         self._attention()
 
@@ -1098,6 +1109,21 @@ class MainWindow(QMainWindow):
         if directory.is_dir():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
 
+    def _update_explain(self, run_id: str) -> None:
+        """FR-X4: redo a stale explanation over the current files. The
+        goal and audience stay; the packet is built fresh."""
+        if self.controller.busy:
+            self.toast(text("issues.busy"))
+            return
+        state = next((item for item in load_explain_states(self.store.config)
+                      if item.get("run_id") == run_id), None)
+        if not state:
+            return
+        sources = [str(item) for item in state.get("sources", [])]
+        self._launch_explain(sources, str(state.get("goal", "")),
+                             str(state.get("audience", "")),
+                             updates=run_id)
+
     def _open_explain_video(self) -> None:
         state = self._explain or {}
         if state.get("video"):
@@ -1116,7 +1142,8 @@ class MainWindow(QMainWindow):
                              state["audience"],
                              previous_scene=state.get("source", ""),
                              render_error=state.get("tail", ""),
-                             findings=state.get("findings", []))
+                             findings=state.get("findings", []),
+                             updates=state.get("updates", ""))
 
     def _explain_settings_saved(self) -> None:
         values = load_ui_settings()

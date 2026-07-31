@@ -932,3 +932,30 @@ original run and task ids, so a reply Copilot already wrote for that
 packet still validates. Finished ones list on the Explain screen under
 "Finished explanations", each one click from its video (folder as the
 fallback). A discarded exchange stops offering itself.
+
+### 14.25 Stale videos know it, and update themselves (FR-X4)
+
+A video explains files as they stood at packet time; the files move
+on. The saved packet request already names every explained file with
+its sha256 — that manifest is the fingerprint set, so staleness costs
+no extra bookkeeping. When the Explain screen lists the finished
+explanations, it hashes each recorded file in the working tree
+(directly, never through the committed-tree cache, so an uncommitted
+edit counts): any changed or deleted file marks the row stale — a warn
+icon, "the files changed since this video", and an Update button. New
+files are outside the check by design: the video explained these
+files, and these files are what it tracks.
+
+Update redoes the original workflow over the current files: same goal,
+same audience, same source list, a fresh packet and run. When the
+update's render passes — through any repair rounds — the old run gains
+superseded_by and leaves the list; until then, the old video stays,
+still true to the files it explained. An update that is discarded or
+fails retires nothing.
+
+The build surfaced a latent fault worth its own line: the context
+inventory cache was keyed on the committed tree alone, so a packet
+built after a save-without-commit carried the cached old content — the
+"updated" packet would have shipped the stale text it was updating.
+Dirty paths now join the cache key with their stamp and size; every
+packet builder benefits, not only the update.

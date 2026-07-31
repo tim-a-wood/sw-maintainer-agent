@@ -1078,3 +1078,93 @@ def test_run_record_round_trips_the_name():
     old = {key: value for key, value in record.to_dict().items()
            if key != "name"}
     assert RunRecord.from_dict(old).name == ""
+
+
+def test_explain_staleness_tracks_the_recorded_files(tmp_path):
+    """FR-X4: the saved packet manifest is the fingerprint set; an
+    edit or a deletion of a recorded file makes the video stale."""
+    from maintain.explain_store import is_stale, save_explain_state
+    from maintain.issue_packets import explain_request
+    config = _project(tmp_path)
+    request = explain_request(config, ["app.py"], "Explain the value.", "")
+    state = save_explain_state(config, request.run_id, status="passed",
+                               sources=["app.py"], request=request,
+                               created_at="2026-07-31T00:00:00")
+    assert not is_stale(config, state)
+    (config.repository / "app.py").write_text('VALUE = "changed"\n',
+                                              encoding="utf-8")
+    assert is_stale(config, state)
+    (config.repository / "app.py").unlink()
+    assert is_stale(config, state)
+    # A state with no recorded request stays quiet, never a false alarm.
+    assert not is_stale(config, {"run_id": "x"})
+
+
+def test_stale_explanation_offers_update_and_retires_on_pass(
+        qt_app, tmp_path, monkeypatch):
+    """FR-X4: the changed file marks the video stale; Update redoes the
+    same goal over the current files, and the pass retires the old."""
+    from PySide6.QtWidgets import QPushButton
+    from maintain.explain_store import load_explain_states
+    from maintain.repository_memory import load_ui_settings, save_ui_settings
+    from maintain.ui.strings import text as ui_text
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.toast = lambda *args, **kwargs: None
+    errors: list[str] = []
+    window.show_error = errors.append
+    pass_stub = _shell_stub(
+        tmp_path / "pass-manim",
+        'mkdir -p media/videos/scene/1080p60\n'
+        'echo video > "media/videos/scene/1080p60/$3.mp4"\n')
+    values = load_ui_settings()
+    values["manim_command"] = pass_stub
+    save_ui_settings(values)
+
+    window.show_explain()
+    window.explain.goal_edit.setPlainText("Explain the value bound.")
+    window.explain.add_files([config.repository / "app.py"])
+    window.explain._start()
+    window.exchange.check(clipboard_text=SCENE_REPLY)
+    wait_until(qt_app, lambda: window.explain_result.render_chip.text() == "PASS",
+               message="first render")
+    old_id = window._explain["run_id"]
+
+    # Untouched files: the list shows the video fresh, no Update button.
+    window.show_explain()
+    updates = [item for item in
+               window.explain._past_holder.findChildren(QPushButton)
+               if item.text() == ui_text("explain.update")]
+    assert not updates
+
+    # The explained file changes; the row turns stale and offers Update.
+    (config.repository / "app.py").write_text('VALUE = "changed"\n',
+                                              encoding="utf-8")
+    window.show_explain()
+    updates = [item for item in
+               window.explain._past_holder.findChildren(QPushButton)
+               if item.text() == ui_text("explain.update")]
+    assert len(updates) == 1
+    updates[0].click()
+    assert _screen(window) == "exchange"
+    new_id = window._explain["run_id"]
+    assert new_id != old_id and window._explain["updates"] == old_id
+    packet_files = window._side["exchange"].request.payload["candidate_files"]
+    assert 'VALUE = "changed"' in packet_files[0]["content"]
+
+    # The pass retires the stale one; the list keeps only the new video.
+    window.exchange.check(clipboard_text=SCENE_REPLY)
+    wait_until(qt_app, lambda: window.explain_result.render_chip.text() == "PASS",
+               message="update render")
+    states = load_explain_states(config)
+    assert next(item for item in states
+                if item["run_id"] == old_id)["superseded_by"] == new_id
+    window.show_explain()
+    cards = window.explain._past_holder.findChildren(QPushButton)
+    assert not [item for item in cards
+                if item.text() == ui_text("explain.update")]
+    rows = [item for item in states
+            if item["status"] == "passed" and not item.get("superseded_by")]
+    assert [item["run_id"] for item in rows] == [new_id]
+    assert not errors, errors

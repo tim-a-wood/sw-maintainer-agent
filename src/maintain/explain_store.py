@@ -90,3 +90,35 @@ def restore_request(state: dict) -> ProviderRequest | None:
         return ProviderRequest(**data)
     except TypeError:
         return None
+
+
+def is_stale(config: ProjectConfig, state: dict,
+             memo: dict | None = None) -> bool:
+    """True when a file the video explains changed or left since the
+    packet was built (FR-X4).
+
+    The packet's own manifest is the fingerprint set: the saved request
+    carries every explained file with its sha256. The working files are
+    hashed directly — never through the committed-tree cache — so an
+    uncommitted edit counts. A state with no recorded request stays
+    quiet rather than crying wolf. New files are outside the check: the
+    video explained these files, and these files are what it tracks.
+    """
+    candidates = ((state.get("request") or {}).get("payload")
+                  or {}).get("candidate_files") or []
+    if not candidates:
+        return False
+    import hashlib
+    cache = memo if memo is not None else {}
+    for item in candidates:
+        relative = str(item.get("path", ""))
+        if relative not in cache:
+            path = Path(config.repository) / relative
+            try:
+                cache[relative] = hashlib.sha256(
+                    path.read_bytes()).hexdigest()
+            except OSError:
+                cache[relative] = ""
+        if cache[relative] != str(item.get("sha256", "")):
+            return True
+    return False

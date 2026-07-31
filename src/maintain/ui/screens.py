@@ -1580,6 +1580,7 @@ class ExplainScreen(Screen):
     import_requested = Signal()
     open_videos = Signal()
     open_past = Signal(str)          # explain run_id
+    update_past = Signal(str)        # stale explain run_id → redo
 
     def __init__(self) -> None:
         super().__init__()
@@ -1627,7 +1628,8 @@ class ExplainScreen(Screen):
 
     def set_history(self, states: list[dict]) -> None:
         """FR-X3: the finished explanations, each one click from its
-        video."""
+        video. FR-X4: a stale one — its files changed since the render —
+        says so and carries an Update button that redoes it."""
         while self._past_column.count():
             item = self._past_column.takeAt(0)
             widget = item.widget()
@@ -1638,12 +1640,26 @@ class ExplainScreen(Screen):
             goal = str(state.get("goal", "")).strip() or str(
                 state.get("run_id", ""))
             when = str(state.get("created_at", ""))[:16].replace("T", " ")
-            card = ChoiceButton("film", goal, text("explain.past.sub",
-                                                   when=when))
             run_id = str(state.get("run_id", ""))
+            stale = bool(state.get("stale"))
+            card = ChoiceButton("film", goal, text(
+                "explain.past.stale" if stale else "explain.past.sub",
+                when=when), accent_kind="warn" if stale else "accent")
             card.clicked.connect(
                 lambda rid=run_id: self.open_past.emit(rid))
-            self._past_column.addWidget(card)
+            if not stale:
+                self._past_column.addWidget(card)
+                continue
+            row = QWidget()
+            line = QHBoxLayout(row)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(6)
+            line.addWidget(card, 1)
+            redo = button(text("explain.update"), "Secondary")
+            redo.clicked.connect(
+                lambda checked=False, rid=run_id: self.update_past.emit(rid))
+            line.addWidget(redo, 0)
+            self._past_column.addWidget(row)
         self._past_head.setVisible(bool(states))
         self._past_holder.setVisible(bool(states))
 

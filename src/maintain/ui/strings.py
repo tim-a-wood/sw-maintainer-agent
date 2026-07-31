@@ -366,6 +366,8 @@ STR: dict[str, str] = {
     "explain.discarded": "The explanation is discarded.",
     "explain.past": "Finished explanations",
     "explain.past.sub": "{when} — select for the video.",
+    "explain.past.stale": "{when} — the files changed since this video.",
+    "explain.update": "Update",
     "explain.resume.gone": "The package for this explanation is gone. "
                            "Start a new one.",
     "explain.findings.head": "The local checks found faults. Repair sends "
