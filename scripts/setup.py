@@ -88,9 +88,11 @@ def list_interpreters(runner: Runner) -> list[Interpreter]:
 
 
 def main(runner: Runner | None = None,
-         current: tuple[int, int] | None = None) -> int:
+         current: tuple[int, int] | None = None,
+         platform: str | None = None) -> int:
     runner = runner or Runner()
     current = current or sys.version_info[:2]
+    platform = platform or sys.platform
     label = f"{current[0]}.{current[1]}"
     print("== Maintain setup ==")
 
@@ -153,7 +155,34 @@ def main(runner: Runner | None = None,
         print("   WARN: ffmpeg and winget are absent. The video feature "
               "needs ffmpeg.")
 
-    print("5. Verification")
+    print("5. Start Menu shortcut")
+    if platform != "win32":
+        print("   NOTE: Not Windows; no shortcut is made.")
+    else:
+        where = runner.run([*python, "-m", "pipx", "environment", "--value",
+                            "PIPX_BIN_DIR"], capture=True)
+        bin_dir = (where.stdout or "").strip()
+        if where.returncode != 0 or not bin_dir:
+            print("   WARN: The pipx app folder is unknown. Start the app "
+                  "with: maintain-ui")
+        else:
+            target = str(Path(bin_dir) / "maintain-ui.exe")
+            script = (
+                "$shell = New-Object -ComObject WScript.Shell; "
+                "$lnk = $shell.CreateShortcut([System.IO.Path]::Combine("
+                "$env:APPDATA, 'Microsoft', 'Windows', 'Start Menu', "
+                "'Programs', 'Maintain.lnk')); "
+                f"$lnk.TargetPath = '{target}'; "
+                "$lnk.Save()")
+            made = runner.run(["powershell", "-NoProfile", "-NonInteractive",
+                               "-Command", script])
+            if made.returncode == 0:
+                print("   PASS: Maintain is in the Start Menu")
+            else:
+                print("   WARN: The shortcut was not made. Start the app "
+                      "with: maintain-ui")
+
+    print("6. Verification")
     shown = runner.run([*python, "-m", "pipx", "runpip", "maintain",
                         "show", "manim"], capture=True)
     match = re.search(r"^Version:\s*(\S+)", shown.stdout or "",

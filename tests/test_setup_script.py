@@ -144,3 +144,25 @@ def test_render_message_names_the_python_314_cause():
     assert "Python 3.11 to 3.13" in newer and "3.14" in newer
     supported = _absent_message("manim", version=(3, 12))
     assert "pip install maintain[explain]" in supported
+
+
+def test_windows_setup_places_a_start_menu_shortcut(capsys):
+    runner = FakeRunner(outcomes={
+        "-0p": (0, PY_LIST_OLD),
+        "PIPX_BIN_DIR": (0, "C:\\Users\\tim\\.local\\bin\n"),
+        "show manim": (0, "Version: 0.20.1\n")})
+    assert setup.main(runner, current=(3, 12), platform="win32") == 0
+    out = capsys.readouterr().out
+    assert "PASS: Maintain is in the Start Menu" in out
+    shortcut = next(call for call in runner.calls if call[0] == "powershell")
+    command = shortcut[-1]
+    assert "maintain-ui.exe" in command and "Maintain.lnk" in command
+
+
+def test_setup_skips_the_shortcut_off_windows(capsys):
+    runner = FakeRunner(outcomes={"-0p": (0, PY_LIST_OLD),
+                                  "show manim": (1, "")})
+    assert setup.main(runner, current=(3, 12), platform="linux") == 0
+    out = capsys.readouterr().out
+    assert "no shortcut is made" in out
+    assert not any(call[0] == "powershell" for call in runner.calls)

@@ -388,6 +388,9 @@ def _proxy_app(qt_app):
         def setStyleSheet(self, sheet: str) -> None:
             qt_app.setStyleSheet(sheet)
 
+        def setWindowIcon(self, icon) -> None:
+            qt_app.setWindowIcon(icon)
+
         def exec(self) -> int:
             return 0
 
@@ -749,3 +752,86 @@ def test_save_diff_comes_from_the_recorded_artifact(qt_app, tmp_path,
         branch="maintain/x", worktree=str(tmp_path / "gone"),
         state="awaiting_acceptance")
     assert "after" in window.controller.diff_text(record)
+
+
+def test_project_switch_rebinds_without_rebuilding(qt_app, tmp_path,
+                                                   monkeypatch):
+    from maintain.repository_memory import remember_repository
+    from maintain.ui import projects as project_ops
+
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    remember_repository(window.store.config.repository)
+    second = tmp_path / "second"
+    second.mkdir()
+    _git(second, "init", "-b", "main")
+    project_ops.ensure_config(second)
+
+    kept = (window.exchange, window.home, window.page_tasks)
+    window._open_project(str(second))
+    assert (window.exchange, window.home, window.page_tasks) == kept
+    assert window.store.config.repository == second.resolve()
+    assert window.page_tasks.store is window.store
+    assert window.page_global.store is window.store
+    assert window.home._name.text() == "second"
+    assert "second" in window.foot_project.text()
+    assert _screen(window) == "home"
+    # The rebound stores drive the settings pages for the new project.
+    window._open_settings_page("tasks")
+    window.page_tasks.set_tab("plan")
+    overridden, _ = window.store.task_prompt("plan")
+    assert overridden is False
+    assert not errors, errors
+
+
+def test_paste_routes_a_copied_file_like_a_drop(qt_app, tmp_path, monkeypatch):
+    from PySide6.QtCore import QMimeData, QUrl
+    from PySide6.QtWidgets import QApplication
+
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               message="plan packet")
+
+    reply = tmp_path / "maintain-reply.md"
+    reply.write_text("```json\n" + _scope_reply(window.current_handoff)
+                     + "\n```\n", encoding="utf-8")
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(reply))])
+    QApplication.clipboard().setMimeData(mime)
+    window.show_history()          # the reply lands from any screen
+    window._paste_anywhere()
+    wait_until(qt_app, lambda: _screen(window) == "plan", message="plan gate")
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
+    assert not errors, errors
+
+
+def test_exchange_wait_timer_stops_with_the_screen(qt_app, tmp_path,
+                                                   monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               message="plan packet")
+    window.show()
+    qt_app.processEvents()
+    assert window.exchange._wait_timer.isActive()
+    window.show_history()
+    qt_app.processEvents()
+    assert not window.exchange._wait_timer.isActive()
+    window.show_screen("exchange")
+    qt_app.processEvents()
+    assert window.exchange._wait_timer.isActive()
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
+    window.close()
+
+
+def test_app_icon_paints_every_size(qt_app):
+    from maintain.ui.widgets import app_icon
+    icon = app_icon()
+    assert not icon.isNull()
+    assert len(icon.availableSizes()) >= 5

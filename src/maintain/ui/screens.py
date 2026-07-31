@@ -170,8 +170,10 @@ class HomeScreen(Screen):
 
     def __init__(self, project_name: str, project_path: str) -> None:
         super().__init__()
-        self.add(label(project_name, "Title"))
-        self.add(label(project_path, "MonoHint"))
+        self._name = label(project_name, "Title")
+        self.add(self._name)
+        self._path = label(project_path, "MonoHint")
+        self.add(self._path)
         self.momentum = label("", "Hint")
         self.momentum.setVisible(False)
         self.add(self.momentum)
@@ -216,6 +218,11 @@ class HomeScreen(Screen):
                else text("home.issues.sub.allclear", count=closed) if closed
                else text("home.issues.sub.none"))
         self._issues_card.set_texts(text("home.issues"), sub)
+
+    def set_project(self, name: str, path: str) -> None:
+        """A project switch rebinds the screen; nothing rebuilds."""
+        self._name.setText(name)
+        self._path.setText(path)
 
     def set_resumable(self, summary: RunSummary | None, stage_name: str = "") -> None:
         if summary is None:
@@ -611,9 +618,26 @@ class ExchangeScreen(Screen):
 
     # ---- receive side ----
 
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._wait_timer.stop()
+        super().hideEvent(event)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if self.reply_open:
+            self._wait_timer.start()
+        super().showEvent(event)
+
     def _paste(self) -> None:
         if self.handoff is None:
             return
+        # A file copied in the file manager pastes like a drop.
+        mime = QGuiApplication.clipboard().mimeData()
+        if mime is not None and mime.hasUrls():
+            paths = [Path(url.toLocalFile()) for url in mime.urls()
+                     if url.isLocalFile()]
+            if paths:
+                self.check(path=paths[0])
+                return
         self.check(clipboard_text=QGuiApplication.clipboard().text())
 
     def _dropped(self, paths: list[Path]) -> None:

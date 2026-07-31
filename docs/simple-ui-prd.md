@@ -753,3 +753,19 @@ it found, and what changed:
   files skipped, the size cap applied) into the packet without one
   hundred chips, and a toast counts what was added. Explain no longer
   demands a manual file when the choice is on.
+
+### 14.16 The second improvement pass
+
+- A project switch no longer rebuilds the screens. The stores, the
+  controller, and the project-bound texts rebind in place; the switch
+  fell from ~280 ms to ~75 ms on the profiling harness, and the
+  Windows multiplier applies to the removed part.
+- Paste accepts a copied file. A reply downloaded and copied in File
+  Explorer (Ctrl+C, Ctrl+V) now routes exactly like a drop — on the
+  exchange screen's Paste button and anywhere in the window.
+- The app has its own icon (painted at start, no shipped file) and a
+  Windows AppUserModelID, so the taskbar shows Maintain instead of a
+  generic Python entry. The setup script adds a Start Menu shortcut
+  on Windows, so the app starts like an app, not a terminal command.
+- The exchange waiting counter stops ticking when the screen is not
+  visible and resumes when it returns.

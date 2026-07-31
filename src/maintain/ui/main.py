@@ -43,9 +43,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", help="Project repository path")
     args = parser.parse_args(argv)
 
+    if sys.platform == "win32":
+        # Windows groups taskbar entries by this id; without it the app
+        # inherits the generic Python icon and identity.
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "Maintain.SimpleUI")
+        except (OSError, AttributeError):
+            pass
     from PySide6.QtWidgets import QApplication, QMessageBox
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Maintain")
+    from .widgets import app_icon
+    app.setWindowIcon(app_icon())
 
     from .app import saved_theme
     from .theme import palette_for, qt_palette, stylesheet

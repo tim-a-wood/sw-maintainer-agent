@@ -140,9 +140,18 @@ class MainWindow(QMainWindow):
         if isinstance(focus, (QLineEdit, QPlainTextEdit)):
             focus.paste()
             return
-        if self.exchange.reply_open:
-            self._route_reply(
-                clipboard_text=QGuiApplication.clipboard().text())
+        if not self.exchange.reply_open:
+            return
+        # A file copied in the file manager pastes like a drop (FR-G1).
+        mime = QGuiApplication.clipboard().mimeData()
+        if mime is not None and mime.hasUrls():
+            paths = [Path(url.toLocalFile()) for url in mime.urls()
+                     if url.isLocalFile()]
+            if paths:
+                self._route_reply(path=paths[0])
+                return
+        self._route_reply(
+            clipboard_text=QGuiApplication.clipboard().text())
 
     def _route_reply(self, path=None, clipboard_text: str = "") -> None:
         if self.stack.currentWidget() is not self.exchange:
@@ -479,27 +488,27 @@ class MainWindow(QMainWindow):
             self.show_home()
             return
         with busy_pointer():
-            self.setUpdatesEnabled(False)
-            try:
-                project_ops.add_existing(config.repository)
-                self.store = ConfigStore(config)
-                self.controller = Controller(config)
-                self.current_handoff = None
-                self.current_record = None
-                self._in_test = False
-                while self.stack.count():
-                    widget = self.stack.widget(0)
-                    self.stack.removeWidget(widget)
-                    widget.setParent(None)
-                    widget.deleteLater()
-                self.screens = {}
-                self._build_screens()
-                self._wire_controller()
-                self.setWindowTitle(f"{text('app.title')} — {config.name}")
-                self._set_project_chip(config.name)
-                self.show_home()
-            finally:
-                self.setUpdatesEnabled(True)
+            # The screens stay; only the stores, the controller, and the
+            # project-bound texts change. A switch costs milliseconds.
+            project_ops.add_existing(config.repository)
+            self.store = ConfigStore(config)
+            self.controller = Controller(config)
+            self.current_handoff = None
+            self.current_record = None
+            self._in_test = False
+            self._side = None
+            self._explain = None
+            self._open_run_id = ""
+            self._wire_controller()
+            self.home.set_project(config.name, str(config.repository))
+            self.page_tasks.store = self.store
+            self.page_global.store = self.store
+            self.exchange.package_style = config.package.style
+            self.exchange.reply_open = False
+            self.stage_header.setVisible(False)
+            self.setWindowTitle(f"{text('app.title')} — {config.name}")
+            self._set_project_chip(config.name)
+            self.show_home()
 
     def _set_project_chip(self, name: str) -> None:
         self.foot_project.setText(f"{chip_name(name)} ▾")
