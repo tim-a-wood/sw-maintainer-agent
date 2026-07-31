@@ -959,3 +959,24 @@ built after a save-without-commit carried the cached old content — the
 "updated" packet would have shipped the stale text it was updating.
 Dirty paths now join the cache key with their stamp and size; every
 packet builder benefits, not only the update.
+
+### 14.26 One question, editable ever after; updates in seconds
+
+Two frictions from daily use. The naming prompt asked on every stop
+and every close, named or not. The question now comes after the engine
+settles — when the record is in hand and knows whether a name exists —
+so named work stops and closes with no question, and unnamed work gets
+exactly one. The name is editable where it shows: a Rename button sits
+beside the home continue card, and the dialog opens prefilled with the
+current name.
+
+Setup reinstalled every dependency on every run: `pipx install
+--force` rebuilt the whole environment, PySide6 and Manim downloads
+included, to deliver a one-line code change. The script now probes
+`pipx list` for the existing install and updates through pip inside
+the app's own environment — Maintain rebuilds, satisfied dependencies
+stay in place, only missing or outdated ones download. The full
+--force chain remains the fallback for the first install and for a
+broken environment. The probe also fixed a wrong name: verification
+ran `pipx runpip maintain`, but the environment is named after the
+project — every runpip call now uses the detected name.

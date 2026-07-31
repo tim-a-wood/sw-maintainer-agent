@@ -42,7 +42,12 @@ decision lives in the Python script, where the test suite exercises it
    the app installs without the video feature and the script says how
    to enable it later (install Python 3.13, run the script again).
 3. Installs or updates pipx, the isolated app installer.
-4. Installs Maintain with the `ui` and `explain` extras:
+4. Installs or updates Maintain with the `ui` and `explain` extras.
+   On update day, the script finds the existing install and runs pip
+   inside the app's own environment: Maintain itself is rebuilt, and
+   only missing or outdated dependencies download — the satisfied ones
+   stay in place, so an update takes seconds, not minutes. The first
+   install (or a broken environment) gets the full
    `pipx install --force <repo>[ui,explain]`. The `ui` extra carries
    pypdf, so the one-file packet can extract text from PDF references.
    The `explain` extra carries Manim and the Qt video module, so the

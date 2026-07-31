@@ -163,6 +163,7 @@ class HomeScreen(Screen):
     open_explain = Signal()
     continue_run = Signal(str)   # run_id
     continue_explain = Signal(str)   # explain run_id
+    rename_run = Signal(str)     # run_id → edit the name
 
     def __init__(self, project_name: str, project_path: str) -> None:
         super().__init__()
@@ -175,10 +176,19 @@ class HomeScreen(Screen):
         self.add(self.momentum)
         self.add_gap(4)
         self._continue = ChoiceButton("play", "", "", accent_kind="warn")
-        self._continue.setVisible(False)
         self._continue.clicked.connect(self._emit_continue)
         self._continue_run_id = ""
-        self.add(self._continue)
+        self._continue_row = QWidget()
+        continue_line = QHBoxLayout(self._continue_row)
+        continue_line.setContentsMargins(0, 0, 0, 0)
+        continue_line.setSpacing(6)
+        continue_line.addWidget(self._continue, 1)
+        self.rename_button = button(text("home.rename"), "Ghost")
+        self.rename_button.clicked.connect(
+            lambda checked=False: self.rename_run.emit(self._continue_run_id))
+        continue_line.addWidget(self.rename_button, 0)
+        self._continue_row.setVisible(False)
+        self.add(self._continue_row)
         self._continue_explain = ChoiceButton("film", "", "",
                                               accent_kind="warn")
         self._continue_explain.setVisible(False)
@@ -228,7 +238,7 @@ class HomeScreen(Screen):
 
     def set_resumable(self, summary: RunSummary | None) -> None:
         if summary is None:
-            self._continue.setVisible(False)
+            self._continue_row.setVisible(False)
             return
         self._continue_run_id = summary.run_id
         # The person's own name first; the run id only when no name is
@@ -240,7 +250,7 @@ class HomeScreen(Screen):
         self._continue.set_texts(title, text(
             "home.continue.sub", activity=activity,
             phase=summary.phase or summary.display_state))
-        self._continue.setVisible(True)
+        self._continue_row.setVisible(True)
 
     def set_resumable_explain(self, state: dict | None) -> None:
         """The waiting explanation, back on the home screen (FR-X2)."""

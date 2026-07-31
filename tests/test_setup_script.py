@@ -206,3 +206,37 @@ def test_verification_respects_a_declined_offer(capsys):
     retries = [call for call in runner.calls
                if call[-1].endswith("[ui,explain]")]
     assert len(retries) == 1   # the declined offer adds no install
+
+
+def test_update_day_touches_only_missing_or_outdated_dependencies(capsys):
+    """An existing install updates through pip in its own environment;
+    satisfied dependencies stay, and nothing reinstalls with --force."""
+    runner = FakeRunner(outcomes={
+        "-0p": (0, PY_LIST_OLD),
+        "list --short": (0, "sw-maintainer-agent 0.9.1\n"),
+        "show manim": (0, "Version: 0.20.1\n")})
+    assert setup.main(runner, current=(3, 12), platform="linux") == 0
+    out = capsys.readouterr().out
+    assert "satisfied dependencies stayed in place" in out
+    assert "PASS: Manim 0.20.1" in out
+    update = next(call for call in runner.calls if "runpip" in call
+                  and "--upgrade" in call)
+    assert update[-1].endswith("[ui,explain]")
+    assert not any("--force" in call for call in runner.calls)
+    # The verification probes the environment under its real pipx name.
+    probe = next(call for call in runner.calls if "show" in call)
+    assert "sw-maintainer-agent" in probe
+
+
+def test_broken_quick_update_falls_back_to_a_clean_reinstall(capsys):
+    runner = FakeRunner(outcomes={
+        "-0p": (0, PY_LIST_OLD),
+        "list --short": (0, "maintain 0.9.0\n"),
+        "runpip maintain install": (1, ""),
+        "show manim": (1, "")})
+    assert setup.main(runner, current=(3, 12), platform="linux",
+                      ask=lambda prompt: "n") == 0
+    out = capsys.readouterr().out
+    assert "reinstalls from a clean state" in out
+    assert any("--force" in call and call[-1].endswith("[ui,explain]")
+               for call in runner.calls)

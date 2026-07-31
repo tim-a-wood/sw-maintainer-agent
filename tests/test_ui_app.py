@@ -705,7 +705,13 @@ def test_stop_pauses_names_the_run_and_home_offers_continue(
     window = MainWindow(config)
     window.ask_confirm = lambda *args, **kwargs: True
     # FR-N1: the stop prompt takes the person's own words for the run.
-    window.ask_line = lambda *args, **kwargs: "Wire the loader"
+    asked: list = []
+
+    def ask_line(*args, **kwargs):
+        asked.append(kwargs.get("value", ""))
+        return "Wire the loader"
+
+    window.ask_line = ask_line
 
     window.home.new_change.emit("feature")
     window.describe.request_edit.setPlainText("Change the value to after.")
@@ -714,6 +720,7 @@ def test_stop_pauses_names_the_run_and_home_offers_continue(
 
     window._stop_run()
     wait_until(qt_app, lambda: _screen(window) == "home", message="home after stop")
+    assert len(asked) == 1
     summary = window.controller.resumable_run()
     assert summary is not None
     assert summary.state == str(RunState.NEEDS_HUMAN)
@@ -730,6 +737,21 @@ def test_stop_pauses_names_the_run_and_home_offers_continue(
     window._continue_run(summary.run_id)
     wait_until(qt_app, lambda: _screen(window) == "exchange", message="resumed packet")
     assert window.current_handoff.task_key == "plan"
+
+    # FR-N1: a named run stops again without another question.
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="second stop")
+    assert len(asked) == 1
+    assert window.controller.resumable_run().name == "Wire the loader"
+
+    # FR-N2: Rename edits in place, with the old name in the dialog.
+    window.ask_line = lambda *args, **kwargs: (
+        asked.append(kwargs.get("value", "")) or "Rework the loader")
+    window.show_home()
+    window.home.rename_button.click()
+    assert asked[-1] == "Wire the loader"   # prefilled for the edit
+    assert window.controller.resumable_run().name == "Rework the loader"
+    assert "Rework the loader" in window.home._continue.title_label.text()
     window.controller.stop()
     wait_until(qt_app, lambda: not window.controller.busy, message="pause settled")
 
@@ -1168,3 +1190,32 @@ def test_stale_explanation_offers_update_and_retires_on_pass(
             if item["status"] == "passed" and not item.get("superseded_by")]
     assert [item["run_id"] for item in rows] == [new_id]
     assert not errors, errors
+
+
+def test_close_asks_a_name_only_for_unnamed_work(qt_app, tmp_path,
+                                                 monkeypatch):
+    """FR-N1: closing mid-run names unnamed work once; named work
+    closes with no question."""
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    asked: list = []
+    window.ask_line = lambda *args, **kwargs: asked.append(1) or "Night work"
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="packet")
+    window.close()
+    assert asked == [1]
+    summary = window.controller.resumable_run()
+    assert summary is not None and summary.name == "Night work"
+
+    # A fresh window resumes the named run; closing asks nothing.
+    window2 = MainWindow(config)
+    window2.ask_line = lambda *args, **kwargs: asked.append(2) or "X"
+    window2._continue_run(summary.run_id)
+    wait_until(qt_app, lambda: _screen(window2) == "exchange",
+               message="resumed packet")
+    window2.close()
+    assert asked == [1]
+    assert window2.controller.resumable_run().name == "Night work"

@@ -196,16 +196,17 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         """A running engine pauses and settles before the window dies.
-        FR-N1: the person can name the paused work on the way out."""
+        FR-N1: unnamed work gets one naming question on the way out;
+        named work closes without one."""
         if self.controller.busy:
-            name = self.ask_line(text("stop.name.title"),
-                                 text("stop.name.body"))
             self.controller.stop()
             self.controller.wait_settled()
-            if name:
-                summary = self.controller.resumable_run()
-                if summary is not None:
-                    self.controller.set_run_name(summary.run_id, name)
+            summary = self.controller.resumable_run()
+            if summary is not None and not summary.name:
+                value = self.ask_line(text("stop.name.title"),
+                                      text("stop.name.body"))
+                if value:
+                    self.controller.set_run_name(summary.run_id, value)
         super().closeEvent(event)
 
     # ----- construction -----
@@ -297,6 +298,7 @@ class MainWindow(QMainWindow):
         self.home.open_explain.connect(self.show_explain)
         self.home.continue_run.connect(self._continue_run)
         self.home.continue_explain.connect(self._resume_explain)
+        self.home.rename_run.connect(self._rename_run)
 
         self.issues_list.open_issue.connect(self._open_issue)
         self.issues_list.add_issue.connect(self._new_issue)
@@ -1450,13 +1452,17 @@ class MainWindow(QMainWindow):
     def _run_settled(self, record: RunRecord) -> None:
         self.current_record = record
         self._in_test = False
-        pending = getattr(self, "_pending_run_name", None)
-        if pending:
-            # The engine wrote its final state before this signal, so
-            # the name lands on settled ground.
-            self.controller.set_run_name(record.run_id, pending)
-            record.name = pending
-        self._pending_run_name = None
+        if getattr(self, "_name_after_stop", False):
+            self._name_after_stop = False
+            # FR-N1: named work stays named without a question; only an
+            # unnamed run asks. The engine wrote its final state before
+            # this signal, so the name lands on settled ground.
+            if not record.name:
+                value = self.ask_line(text("stop.name.title"),
+                                      text("stop.name.body"))
+                if value:
+                    self.controller.set_run_name(record.run_id, value)
+                    record.name = value
         state = RunState(record.state)
         if state in {RunState.AWAITING_ACCEPTANCE, RunState.DELIVERED}:
             self._attention()
@@ -1652,10 +1658,9 @@ class MainWindow(QMainWindow):
         if not self.ask_confirm(text("stop.title"), text("stop.body"),
                                 text("stop.yes"), text("stop.no")):
             return
-        # FR-N1: the run pauses with the person's own words on it, so
-        # the home screen says what the work was, not only its id.
-        self._pending_run_name = self.ask_line(text("stop.name.title"),
-                                               text("stop.name.body"))
+        # FR-N1: the settled record knows whether a name exists, so the
+        # prompt comes after the stop — and only for unnamed work.
+        self._name_after_stop = True
         self.controller.stop()
 
     # ----- settings -----
@@ -1754,11 +1759,28 @@ class MainWindow(QMainWindow):
             return None
         return value if value or allow_empty else None
 
-    def ask_line(self, title: str, body: str) -> str | None:
+    def ask_line(self, title: str, body: str,
+                 value: str = "") -> str | None:
         """One short line of text, or None for cancel and empty alike."""
-        value, accepted = QInputDialog.getText(self, title, body)
-        value = value.strip()
-        return value if accepted and value else None
+        entered, accepted = QInputDialog.getText(self, title, body,
+                                                 text=value)
+        entered = entered.strip()
+        return entered if accepted and entered else None
+
+    def _rename_run(self, run_id: str) -> None:
+        """FR-N2: the name is editable right where it shows."""
+        if self.controller.busy:
+            self.toast(text("issues.busy"))
+            return
+        summary = next((item for item in self.controller.runs()
+                        if item.run_id == run_id), None)
+        if summary is None:
+            return
+        value = self.ask_line(text("stop.name.title"),
+                              text("stop.name.body"), value=summary.name)
+        if value and value != summary.name:
+            self.controller.set_run_name(run_id, value)
+            self.show_home()
 
     def ask_choice(self, title: str, body: str,
                    options: list[str]) -> str | None:

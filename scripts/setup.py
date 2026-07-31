@@ -87,6 +87,21 @@ def list_interpreters(runner: Runner) -> list[Interpreter]:
     return parse_py_list(listing.stdout or "")
 
 
+def installed_package(runner: Runner, python: list[str]) -> str:
+    """The pipx name of an existing Maintain install, or an empty
+    string. The name keys every runpip call, so a probe against the
+    wrong name can never hide an installed video feature again."""
+    listing = runner.run([*python, "-m", "pipx", "list", "--short"],
+                         capture=True)
+    if listing.returncode != 0:
+        return ""
+    for line in (listing.stdout or "").splitlines():
+        parts = line.split()
+        if parts and parts[0] in {"sw-maintainer-agent", "maintain"}:
+            return parts[0]
+    return ""
+
+
 def default_ask(prompt: str) -> str:
     if not sys.stdin.isatty():
         return "n"
@@ -132,20 +147,38 @@ def main(runner: Runner | None = None,
     print("   PASS: pipx is ready")
 
     print("3. Maintain install or update (ui + explain)")
-    install = runner.run([*python, "-m", "pipx", "install", "--force",
-                          f"{REPOSITORY}[ui,explain]"])
-    if install.returncode != 0:
-        print("   The full install did not finish. The script tries the "
-              "app without the video feature.")
-        retry = runner.run([*python, "-m", "pipx", "install", "--force",
-                            f"{REPOSITORY}[ui]"])
-        if retry.returncode != 0:
-            print("   FAIL: The Maintain install failed. Read the pipx "
-                  "output above.")
-            return 1
-        print("   PASS: Maintain is installed without the video feature")
-    else:
-        print("   PASS: Maintain is installed")
+    package = installed_package(runner, python)
+    updated = False
+    if package:
+        # Update day: pip in the app environment rebuilds Maintain and
+        # touches only missing or outdated dependencies — no fresh
+        # download of the satisfied ones.
+        update = runner.run([*python, "-m", "pipx", "runpip", package,
+                             "install", "--upgrade",
+                             f"{REPOSITORY}[ui,explain]"])
+        if update.returncode == 0:
+            updated = True
+            print("   PASS: Maintain is updated; satisfied dependencies "
+                  "stayed in place")
+        else:
+            print("   The quick update did not finish. The script "
+                  "reinstalls from a clean state.")
+    if not updated:
+        install = runner.run([*python, "-m", "pipx", "install", "--force",
+                              f"{REPOSITORY}[ui,explain]"])
+        if install.returncode != 0:
+            print("   The full install did not finish. The script tries "
+                  "the app without the video feature.")
+            retry = runner.run([*python, "-m", "pipx", "install", "--force",
+                                f"{REPOSITORY}[ui]"])
+            if retry.returncode != 0:
+                print("   FAIL: The Maintain install failed. Read the pipx "
+                      "output above.")
+                return 1
+            print("   PASS: Maintain is installed without the video feature")
+        else:
+            print("   PASS: Maintain is installed")
+    package = installed_package(runner, python) or "sw-maintainer-agent"
 
     print("4. ffmpeg check")
     if runner.which("ffmpeg"):
@@ -192,7 +225,7 @@ def main(runner: Runner | None = None,
     print("6. Verification")
 
     def manim_version() -> str:
-        shown = runner.run([*python, "-m", "pipx", "runpip", "maintain",
+        shown = runner.run([*python, "-m", "pipx", "runpip", package,
                             "show", "manim"], capture=True)
         match = re.search(r"^Version:\s*(\S+)", shown.stdout or "",
                           re.MULTILINE)
@@ -207,7 +240,10 @@ def main(runner: Runner | None = None,
             answer = ask("   The video feature is off. Install it now? "
                          "[Y/n] ").strip().lower()
             if answer in ("", "y", "yes"):
-                runner.run([*python, "-m", "pipx", "install", "--force",
+                # Only the video dependencies are missing; pip adds
+                # them into the existing environment.
+                runner.run([*python, "-m", "pipx", "runpip", package,
+                            "install", "--upgrade",
                             f"{REPOSITORY}[ui,explain]"])
                 version = manim_version()
         if version:
