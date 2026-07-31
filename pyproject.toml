@@ -38,3 +38,19 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 maintain = ["data/explain/*.md"]
+
+# Coverage measures the maintain-ui application. The omitted modules are
+# surfaces the desktop app never imports or constructs: the legacy CLI
+# front end, the browser-automation providers and their copilot client,
+# and retired subpackages with no importers.
+[tool.coverage.run]
+omit = [
+  "*/maintain/cli.py",
+  "*/maintain/__main__.py",
+  "*/maintain/migration.py",
+  "*/maintain/copilot/*",
+  "*/maintain/repository/*",
+  "*/maintain/providers/browser.py",
+  "*/maintain/providers/codex.py",
+  "*/maintain/providers/openai.py",
+]
