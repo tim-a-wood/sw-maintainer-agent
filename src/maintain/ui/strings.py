@@ -98,9 +98,10 @@ STR: dict[str, str] = {
     # Receive
     "exchange.send.head": "Send to Copilot",
     "exchange.receive.head": "Receive from Copilot",
-    "receive.lead.zip": "Copilot makes one file: maintain-output.zip. "
-                        "Download it in Copilot, then select Open the "
-                        "newest download.",
+    "receive.lead.zip": "Copilot replies with one Markdown file, or with "
+                        "maintain-output.zip. Download it in Copilot, then "
+                        "select Open the newest download. Or paste the "
+                        "reply.",
     "receive.lead.json": "Copilot replies with one reply file. Download "
                          "it in Copilot, then select Open the newest "
                          "download.",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -9,6 +10,60 @@ from typing import Any
 
 from maintain.errors import ProviderError
 from maintain.models import ProviderRequest
+
+
+def inline_implementation_zip(content: dict[str, Any],
+                              request: ProviderRequest,
+                              directory: Path) -> Path:
+    """Build maintain-output.zip from a Markdown reply's JSON content.
+
+    Copilot often cannot attach a real ZIP; the Markdown reply carries
+    the same implementation as `content.files` and
+    `content.deleted_files`. This synthesizes the ZIP the rest of the
+    pipeline already validates and applies, so both reply shapes walk
+    one code path. JSON string escapes are valid TOML basic strings,
+    so json.dumps renders every manifest value.
+    """
+    files = content.get("files")
+    if (not isinstance(files, list) or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("path"), str)
+            or not isinstance(item.get("content"), str)
+            for item in files)):
+        raise ProviderError(
+            "The Markdown reply needs content.files with a path and the "
+            "complete content for every file.")
+    deleted = content.get("deleted_files", [])
+    if not isinstance(deleted, list) or any(
+            not isinstance(item, str) for item in deleted):
+        raise ProviderError(
+            "The Markdown reply deleted_files must be a path list.")
+    manifest = [
+        "schema_version = 1",
+        f"run_id = {json.dumps(request.run_id)}",
+        f"task_id = {json.dumps(request.task_id)}",
+        f"role = {json.dumps(request.role)}",
+        "files = [" + ", ".join(
+            json.dumps(str(item["path"])) for item in files) + "]",
+        "deleted_files = [" + ", ".join(
+            json.dumps(item) for item in deleted) + "]",
+    ]
+    root_cause = content.get("root_cause")
+    if isinstance(root_cause, dict):
+        statement = root_cause.get("statement")
+        evidence = root_cause.get("evidence_paths")
+        if isinstance(statement, str) and isinstance(evidence, list):
+            manifest.append(
+                f"root_cause_statement = {json.dumps(statement)}")
+            manifest.append(
+                "root_cause_evidence_paths = [" + ", ".join(
+                    json.dumps(str(item)) for item in evidence) + "]")
+    target = Path(directory) / "maintain-output.zip"
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr("IMPLEMENTATION.toml", "\n".join(manifest) + "\n")
+        for item in files:
+            bundle.writestr(f"files/{item['path']}", item["content"])
+    return target
 
 
 def zip_artifact_content(archive: Path, request: ProviderRequest) -> dict[str, Any]:

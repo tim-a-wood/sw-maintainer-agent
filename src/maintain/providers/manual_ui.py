@@ -5,11 +5,13 @@ from __future__ import annotations
 import dataclasses
 import secrets
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
-from maintain.artifacts.output_zip import zip_artifact_content
+from maintain.artifacts.output_zip import (inline_implementation_zip,
+                                           zip_artifact_content)
 from maintain.config import PackagePolicy
 from maintain.errors import ProviderError
 from maintain.models import ProviderCapabilities, ProviderRequest, ProviderResponse
@@ -103,10 +105,31 @@ class ManualUiProvider(Provider):
     def _validated(self, request: ProviderRequest, reply: ManualReply,
                    reply_kind: str) -> ProviderResponse:
         conversation = f"manual-{request.role}-{request.task_id}-{secrets.token_hex(4)}"
-        if reply.kind != reply_kind:
-            expected = ("the file maintain-output.zip" if reply_kind == "zip"
-                        else "the JSON reply text")
+        if reply.kind != reply_kind and not (
+                reply_kind == "zip" and reply.kind == "json"):
+            expected = ("the Markdown reply or the file maintain-output.zip"
+                        if reply_kind == "zip" else "the JSON reply text")
             raise ProviderError(f"This step expects {expected}.")
+        if reply.kind == "json" and reply_kind == "zip":
+            # The Markdown reply carries the same implementation as the
+            # ZIP; synthesize one so both shapes walk one code path.
+            response = parse_response(reply.text, request, self.name)
+            with tempfile.TemporaryDirectory(
+                    prefix="maintain-inline-") as staging:
+                synthesized = inline_implementation_zip(
+                    response.content, request, Path(staging))
+                content = zip_artifact_content(synthesized, request)
+                stored = self._store_output_zip(synthesized, request)
+            content["_maintain_output_zip"] = stored.name
+            return ProviderResponse(
+                schema_version=request.schema_version,
+                run_id=request.run_id,
+                task_id=request.task_id,
+                role=request.role,
+                content=content,
+                provider=self.name,
+                conversation_id=conversation,
+            )
         if reply.kind == "json":
             response = parse_response(reply.text, request, self.name)
             return dataclasses.replace(response, conversation_id=conversation)

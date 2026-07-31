@@ -98,6 +98,20 @@ def _build_zip(handoff, directory: Path) -> Path:
     return reply
 
 
+def _build_markdown(handoff) -> str:
+    """The Markdown build reply: the same implementation as the ZIP,
+    carried in the JSON envelope (FR-V4)."""
+    request = handoff.request
+    envelope = json.dumps({
+        "schema_version": 1, "run_id": request.run_id,
+        "task_id": request.task_id, "role": "implement",
+        "conversation_id": "chat-build",
+        "content": {"files": [
+            {"path": "app.py", "content": 'VALUE = "after"\n'}],
+            "deleted_files": []}})
+    return "Here is the implementation.\n\n```json\n" + envelope + "\n```\n"
+
+
 def _review_reply(handoff) -> str:
     request = handoff.request
     return json.dumps({
@@ -184,7 +198,9 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
                and window.current_handoff.task_key == "build",
                message="build packet")
     build_handoff = window.current_handoff
-    window.exchange.check(path=_build_zip(build_handoff, tmp_path))
+    # The main route: the build reply is one pasted Markdown reply; the
+    # ZIP shape stays covered by the repair journey (FR-V4).
+    window.exchange.check(clipboard_text=_build_markdown(build_handoff))
 
     # Review packet: the reply arrives while the person is on another
     # screen; the window catches it (FR-G1).
@@ -1267,3 +1283,53 @@ def test_foot_home_and_the_theme_symbol(qt_app, tmp_path, monkeypatch):
     assert window.foot_stop.isVisibleTo(window)
     window._stop_run()
     wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
+
+
+def test_build_reply_accepts_markdown_and_text_named_zip(tmp_path):
+    """FR-V4: the build step takes the Markdown reply, a text file
+    misnamed .zip, or the real ZIP; junk is refused with plain words."""
+    from maintain.models import ProviderRequest
+    from maintain.providers.manual_ui import PacketHandoff
+    from maintain.ui.bridge import check_reply
+    from maintain.zip_package import PacketBuild
+
+    request = ProviderRequest(
+        1, "r-1", "change-value", "implement", "Do it.",
+        {"mode": "feature", "task": {"allowed_files": ["app.py"]}})
+    handoff = PacketHandoff(
+        request=request,
+        packet=PacketBuild(zip_path=tmp_path / "packet.zip", sha256="",
+                           bytes=0, task_key="build", members=()),
+        reply_kind="zip")
+    envelope = json.dumps({
+        "schema_version": 1, "run_id": "r-1", "task_id": "change-value",
+        "role": "implement", "conversation_id": "chat",
+        "content": {"files": [{"path": "app.py",
+                               "content": 'VALUE = "after"\n'}],
+                    "deleted_files": []}})
+    markdown = "The implementation.\n\n```json\n" + envelope + "\n```\n"
+
+    pasted = check_reply(handoff, text=markdown)
+    assert pasted.valid and pasted.reply.kind == "json"
+
+    # Copilot sometimes writes text under a ZIP name; the text wins.
+    misnamed = tmp_path / "maintain-output.zip"
+    misnamed.write_text(markdown, encoding="utf-8")
+    from_file = check_reply(handoff, path=misnamed)
+    assert from_file.valid and from_file.reply.kind == "json"
+
+    junk = tmp_path / "junk.zip"
+    junk.write_bytes(b"\x00\x01 not a zip, not text \xff\xfe")
+    refused = check_reply(handoff, path=junk)
+    assert not refused.valid
+    assert "cannot read this ZIP" in refused.message
+
+    # The dry-run synthesis still enforces the authorized paths.
+    off_scope = json.loads(envelope)
+    off_scope["content"]["files"][0]["path"] = "secrets.py"
+    outside = check_reply(
+        handoff, text="```json\n" + json.dumps(off_scope) + "\n```")
+    assert not outside.valid and "unapproved path" in outside.message
+
+    prose = check_reply(handoff, text="hello there")
+    assert not prose.valid and "Markdown reply" in prose.message

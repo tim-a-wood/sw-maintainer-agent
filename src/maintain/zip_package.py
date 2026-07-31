@@ -149,7 +149,10 @@ def build_packet(request: ProviderRequest, directory: Path, *,
     prepared = dataclasses.replace(
         request,
         instructions=effective_instructions(request, policy, repository, config_dir))
-    transport = "zip" if request.role == "implement" else "inline"
+    # Implement replies ask for the inline Markdown shape first —
+    # Copilot writes one Markdown file far more reliably than a real
+    # ZIP — and the receive side accepts either shape (FR-V4).
+    transport = "inline"
 
     task_policy = policy.task(task_key)
     document_paths = [

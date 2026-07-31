@@ -87,7 +87,13 @@ def test_check_reply_zip_branches(tmp_path):
 
     handoff = _handoff("zip")
     refused = check_reply(handoff)
-    assert not refused.valid and "maintain-output.zip" in refused.message
+    assert not refused.valid and "copy the reply" in refused.message
+
+    # Prose that carries no envelope names both accepted shapes (FR-V4).
+    prose = check_reply(handoff, text="just words")
+    assert not prose.valid
+    assert "Markdown reply" in prose.message
+    assert "maintain-output.zip" in prose.message
 
     # A real ZIP with the wrong content is refused with the reason.
     bad = tmp_path / "maintain-output.zip"

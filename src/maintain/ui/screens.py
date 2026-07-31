@@ -516,12 +516,12 @@ class ExchangeScreen(Screen):
         self.title.setText(text(TASK_TITLES[handoff.task_key]))
         self._focus_holder.setVisible(scan)
         self.update_packet(handoff.zip_path, attachment_names, document_count)
-        zip_reply = handoff.reply_kind == "zip"
-        lead_key = ("receive.lead.zip" if zip_reply
+        lead_key = ("receive.lead.zip" if handoff.reply_kind == "zip"
                     else "receive.lead.scene" if handoff.reply_kind == "scene"
                     else "receive.lead.json")
         self.lead.setText(text(lead_key))
-        self.paste_button.setVisible(not zip_reply)
+        # FR-V4: the build step takes a pasted Markdown reply too.
+        self.paste_button.setVisible(True)
         self.reply_open = True
         self._unfold()
         self.send_status.set_state("plain", "")

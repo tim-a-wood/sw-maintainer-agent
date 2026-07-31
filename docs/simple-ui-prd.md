@@ -1036,3 +1036,25 @@ is one symbol (☀ in the dark theme, ☾ in the light; the words moved
 to the tooltip), and a Home button joined — one click back from any
 screen, pairing with the Continue card that returns to the exact
 waiting screen with the head, the stage header, and Stop restored.
+
+### 14.29 The build reply: Markdown or ZIP, both roads home (FR-V4)
+
+The real machine hit the wall the ZIP contract was built over:
+Copilot's "maintain-output.zip" would not open — "The tool cannot
+read this ZIP file" — because Copilot writes one Markdown file far
+more reliably than a real binary ZIP. The build step now accepts two
+shapes of the same implementation. The Markdown reply carries the
+JSON envelope with `content.files` (every added or modified file,
+complete) and `content.deleted_files`; the ZIP stays as before. The
+packet asks for the Markdown shape first.
+
+One code path validates and applies both: a Markdown reply is
+synthesized into the same maintain-output.zip — manifest and members —
+that a real ZIP would be, then walks the existing validation
+(authorized paths, layout, issue root cause) and the engine's
+apply-and-diff unchanged. The receive screen takes the reply as a
+paste, a downloaded Markdown file, or a file — and a text reply that
+Copilot misnames ".zip" is read as text before it is refused. The
+paste button now shows at the build step, the lead names both shapes,
+and the main-journey test drives the Markdown route while the repair
+journey keeps the ZIP route covered.

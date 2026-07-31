@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import queue
 import re
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +18,8 @@ from typing import Any
 
 from PySide6.QtCore import QObject, Signal
 
-from maintain.artifacts.output_zip import zip_artifact_content
+from maintain.artifacts.output_zip import (inline_implementation_zip,
+                                           zip_artifact_content)
 from maintain.errors import ProviderError
 from maintain.gates import GateDecision, GateStop, WorkflowGates
 from maintain.models import RunRecord
@@ -43,23 +45,31 @@ class ReplyCheck:
 
 def check_reply(handoff: PacketHandoff, *, text: str = "",
                 path: Path | None = None) -> ReplyCheck:
-    """Validate a candidate reply without touching the run. FR-V1..FR-V3."""
+    """Validate a candidate reply without touching the run. FR-V1..FR-V3.
+
+    The build step accepts two shapes (FR-V4): the file
+    maintain-output.zip, or a Markdown reply whose JSON envelope
+    carries the same implementation in content.files. Copilot often
+    cannot attach a real ZIP — and sometimes writes text under a .zip
+    name, which is read as text before it is refused.
+    """
     request = handoff.request
-    if handoff.reply_kind == "zip":
-        if path is None:
-            return ReplyCheck(None, "This step expects the file maintain-output.zip.")
+    if handoff.reply_kind == "zip" and path is not None and (
+            Path(path).suffix.lower() == ".zip"):
         try:
             zip_artifact_content(Path(path), request)
+            return ReplyCheck(ManualReply(kind="zip", path=Path(path)), "")
         except ProviderError as exc:
-            if Path(path).suffix.lower() != ".zip":
-                return ReplyCheck(None, "", keep_as_attachment=True)
             return ReplyCheck(None, str(exc))
         except (OSError, ValueError, zipfile.BadZipFile):
             # BadZipFile subclasses Exception alone, so it is named here.
-            if Path(path).suffix.lower() == ".zip":
+            try:
+                text = Path(path).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
                 return ReplyCheck(None, "The tool cannot read this ZIP file.")
-            return ReplyCheck(None, "", keep_as_attachment=True)
-        return ReplyCheck(ManualReply(kind="zip", path=Path(path)), "")
+            if _envelope_text(text) is None:
+                return ReplyCheck(None, "The tool cannot read this ZIP file.")
+            path = None   # a text reply under a ZIP name
     source = text
     if path is not None:
         try:
@@ -79,9 +89,19 @@ def check_reply(handoff: PacketHandoff, *, text: str = "",
     if candidate is None:
         if path is not None:
             return ReplyCheck(None, "", keep_as_attachment=True)
-        return ReplyCheck(None, "This is not the reply. The tool expects the JSON reply.")
+        expected = ("the Markdown reply or the file maintain-output.zip"
+                    if handoff.reply_kind == "zip" else "the JSON reply")
+        return ReplyCheck(
+            None, f"This is not the reply. The tool expects {expected}.")
     try:
-        parse_response(candidate, request, "manual")
+        response = parse_response(candidate, request, "manual")
+        if handoff.reply_kind == "zip":
+            # A dry run of the synthesis validates paths and layout
+            # here, so a bad reply is refused on this screen.
+            with tempfile.TemporaryDirectory(
+                    prefix="maintain-check-") as staging:
+                zip_artifact_content(inline_implementation_zip(
+                    response.content, request, Path(staging)), request)
     except ProviderError as exc:
         return ReplyCheck(None, str(exc))
     return ReplyCheck(ManualReply(kind="json", text=candidate), "")
