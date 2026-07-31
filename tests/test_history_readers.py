@@ -1,0 +1,100 @@
+"""The read-only history surface and the transition guards behind it."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from maintain.errors import PolicyError
+from maintain.history import list_runs, run_timeline
+from maintain.models import RunRecord, RunState
+from maintain.policy import transition
+
+
+def _record_dir(root: Path, run_id: str, record: dict) -> Path:
+    run_dir = root / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    return run_dir
+
+
+def test_list_runs_skips_what_it_cannot_read(tmp_path):
+    root = tmp_path / "runtime"
+    assert list_runs(root) == []
+    root.mkdir()
+    (root / "stray.txt").write_text("x", encoding="utf-8")
+    (root / "empty-dir").mkdir()
+    broken = root / "broken"
+    broken.mkdir()
+    (broken / "run.json").write_text("{not json", encoding="utf-8")
+    _record_dir(root, "mine", {
+        "run_id": "mine", "state": "delivered", "repository": str(tmp_path),
+        "updated_at": "2026-07-30T10:00:00+00:00",
+        "evidence": {"changed_files": ["a.py", "b.py"]}})
+    _record_dir(root, "other", {
+        "run_id": "other", "state": "delivered",
+        "repository": str(tmp_path / "elsewhere"),
+        "updated_at": "2026-07-31T10:00:00+00:00"})
+
+    everything = list_runs(root)
+    assert [item.run_id for item in everything] == ["other", "mine"]
+    scoped = list_runs(root, repository=tmp_path)
+    assert [item.run_id for item in scoped] == ["mine"]
+    assert scoped[0].changed_files == 2
+    assert scoped[0].display_state == "Saved"
+    assert scoped[0].closed is True
+
+
+def test_run_timeline_survives_missing_and_bad_ledgers(tmp_path):
+    assert run_timeline(tmp_path, "absent") == []
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    events = [
+        "not json at all",
+        json.dumps({"type": "other", "sequence": 1}),
+        json.dumps({"type": "iteration", "sequence": 2,
+                    "payload": {"label": "Build applied", "kind": "build_applied",
+                                "resume_state": "implemented"}}),
+    ]
+    (run_dir / "audit.jsonl").write_text("\n".join(events) + "\n",
+                                        encoding="utf-8")
+    timeline = run_timeline(tmp_path, "run-1")
+    assert len(timeline) == 1
+    assert timeline[0].label == "Build applied"
+    assert timeline[0].can_go_back is True
+
+
+def _record(state: str, evidence: dict | None = None,
+            tree_hash: str = "") -> RunRecord:
+    return RunRecord(
+        run_id="f-20260731-120000-abcd", mode="feature", request="Change it",
+        repository="/project", base_commit="base", branch="maintain/x",
+        worktree="/worktree", state=state, evidence=evidence or {},
+        tree_hash=tree_hash)
+
+
+def test_transition_guards_refuse_unproven_promotions():
+    with pytest.raises(PolicyError, match="Invalid workflow transition"):
+        transition(_record("created"), RunState.DELIVERED)
+
+    unreviewed = _record("testing")
+    with pytest.raises(PolicyError, match="review"):
+        transition(unreviewed, RunState.VERIFIED, tree_hash="t1")
+
+    untested = _record("testing", evidence={
+        "review": {"decision": "approve", "tree_hash": "t1"}})
+    with pytest.raises(PolicyError, match="verification"):
+        transition(untested, RunState.VERIFIED, tree_hash="t1")
+
+    proven = _record("testing", evidence={
+        "review": {"decision": "approve", "tree_hash": "t1"},
+        "tests": {"passed": True, "tree_hash": "t1"}})
+    transition(proven, RunState.VERIFIED, tree_hash="t1")
+    assert RunState(proven.state) is RunState.VERIFIED
+
+    drifted = _record("awaiting_acceptance", tree_hash="t2",
+                      evidence={"verified_tree_hash": "t1"})
+    with pytest.raises(PolicyError, match="unchanged verified tree"):
+        transition(drifted, RunState.ACCEPTED)

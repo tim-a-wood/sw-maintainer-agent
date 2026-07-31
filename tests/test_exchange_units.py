@@ -61,3 +61,77 @@ def test_notifying_store_reports_engine_captures_and_closes(tmp_path):
     assert len(closed) == 1
     assert events == [("captured", 1, ""),
                       ("closed", 1, "The check failed")]
+
+
+def test_default_downloads_points_at_the_home_folder():
+    from maintain.downloads import default_downloads
+    assert default_downloads().name == "Downloads"
+
+
+def _handoff(reply_kind: str):
+    import types
+
+    from maintain.models import ProviderRequest
+    request = ProviderRequest(
+        1, "f-20260731-120000-abcd", "change-value",
+        "implement" if reply_kind == "zip" else "review",
+        "Do the thing.", {})
+    return types.SimpleNamespace(request=request, reply_kind=reply_kind)
+
+
+def test_check_reply_zip_branches(tmp_path):
+    import json
+    import zipfile
+
+    from maintain.ui.bridge import check_reply
+
+    handoff = _handoff("zip")
+    refused = check_reply(handoff)
+    assert not refused.valid and "maintain-output.zip" in refused.message
+
+    # A real ZIP with the wrong content is refused with the reason.
+    bad = tmp_path / "maintain-output.zip"
+    with zipfile.ZipFile(bad, "w") as archive:
+        archive.writestr("README.txt", "not an implementation")
+    result = check_reply(handoff, path=bad)
+    assert not result.valid and result.message
+    assert not result.keep_as_attachment
+
+    # Anything that is not a ZIP at all becomes an attachment instead.
+    note = tmp_path / "notes.md"
+    note.write_text("# Notes\n", encoding="utf-8")
+    kept = check_reply(handoff, path=note)
+    assert not kept.valid and kept.keep_as_attachment
+
+    # A corrupt file that claims to be a ZIP is refused, never kept.
+    corrupt = tmp_path / "corrupt.zip"
+    corrupt.write_bytes(b"PK\x03\x04 but truncated")
+    broken = check_reply(handoff, path=corrupt)
+    assert not broken.valid and "ZIP" in broken.message
+    assert not broken.keep_as_attachment
+
+    # A JSON reply for a different run is named as the mismatch it is.
+    envelope = json.dumps({
+        "schema_version": 1, "run_id": "f-00000000-000000-else",
+        "task_id": "change-value", "role": "review",
+        "conversation_id": "c", "content": {"decision": "approve"}})
+    other = check_reply(_handoff("json"), text=envelope)
+    assert not other.valid and "different task" in other.message
+
+
+def test_check_reply_text_branches(tmp_path):
+    from maintain.ui.bridge import check_reply
+
+    handoff = _handoff("json")
+    empty = check_reply(handoff, text="   ")
+    assert not empty.valid and "copy the reply" in empty.message
+
+    binary = tmp_path / "image.png"
+    binary.write_bytes(b"\x89PNG\r\n\x1a\n\x00\xff\xfe")
+    kept = check_reply(handoff, path=binary)
+    assert not kept.valid and kept.keep_as_attachment
+
+    prose = tmp_path / "reading.md"
+    prose.write_text("Just prose, no envelope.", encoding="utf-8")
+    also_kept = check_reply(handoff, path=prose)
+    assert not also_kept.valid and also_kept.keep_as_attachment

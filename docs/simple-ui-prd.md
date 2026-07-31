@@ -674,3 +674,16 @@ labeled. One more click switches through the same guarded path as the
 Projects screen (busy runs refuse with a toast; setup and missing
 states keep their prompts). The last entry, "All projects…", opens the
 full Projects screen for create, add, and remove.
+
+### 14.12 The coverage pass
+
+End-to-end journeys now cover the settings round-trip through every
+page, the long way home (repair round, failed checks, stop and
+continue, run checks again, feedback, discard), the launch entry
+point, and a paint pass over every screen. Unit tests fill the gaps
+the journeys cannot reach: audit export and retention, tamper
+detection, OneDrive sync probing, and reply validation. The journeys
+caught two real defects, both fixed: the package-style radios were
+not exclusive (after a switch to folder, zip could never be selected
+again), and a corrupt or non-ZIP file dropped during a build step
+raised an unhandled error instead of a message or an attachment.

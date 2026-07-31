@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import queue
 import re
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -53,7 +54,10 @@ def check_reply(handoff: PacketHandoff, *, text: str = "",
             if Path(path).suffix.lower() != ".zip":
                 return ReplyCheck(None, "", keep_as_attachment=True)
             return ReplyCheck(None, str(exc))
-        except (OSError, ValueError):
+        except (OSError, ValueError, zipfile.BadZipFile):
+            # BadZipFile subclasses Exception alone, so it is named here.
+            if Path(path).suffix.lower() == ".zip":
+                return ReplyCheck(None, "The tool cannot read this ZIP file.")
             return ReplyCheck(None, "", keep_as_attachment=True)
         return ReplyCheck(ManualReply(kind="zip", path=Path(path)), "")
     source = text

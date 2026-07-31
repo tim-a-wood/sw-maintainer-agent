@@ -8,10 +8,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QKeySequence, QPixmap
-from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGridLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-                               QPushButton, QRadioButton, QScrollArea,
-                               QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QFrame,
+                               QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+                               QPlainTextEdit, QPushButton, QRadioButton,
+                               QScrollArea, QSizePolicy, QSpinBox,
+                               QVBoxLayout, QWidget)
 
 from maintain.downloads import default_downloads
 from maintain.issues import REASONS
@@ -2165,6 +2166,10 @@ class PackagePage(Screen):
             text("package.zip"), text("package.zip.sub"))
         self.folder_radio, folder_card = self._option(
             text("package.folder"), text("package.folder.sub"))
+        # The radios live in separate cards, so exclusivity needs a group.
+        self._style_group = QButtonGroup(self)
+        self._style_group.addButton(self.zip_radio)
+        self._style_group.addButton(self.folder_radio)
         self.add(zip_card)
         self.add(folder_card)
         self.add_gap()
