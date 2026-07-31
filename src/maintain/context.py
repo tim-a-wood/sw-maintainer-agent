@@ -132,3 +132,17 @@ class ContextSelector:
         """Return a content-free path index so the assistant can request precise expansion."""
         return [{"path": item.path, "bytes": item.bytes, "sha256": item.sha256}
                 for item in self._inventory()]
+
+
+def project_code_paths(repository: Path, roots: tuple[str, ...],
+                       excludes: tuple[str, ...],
+                       max_file_bytes: int) -> list[Path]:
+    """Every readable source and test file, for one-click packet loading.
+
+    The same walk the context selector uses: the configured roots, the
+    exclude patterns, secret and binary files skipped, the per-file
+    size cap applied.
+    """
+    selector = ContextSelector(Path(repository), tuple(roots),
+                               tuple(excludes), max_file_bytes)
+    return [Path(repository) / item.path for item in selector._inventory()]

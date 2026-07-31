@@ -723,3 +723,33 @@ feature. Three fixes, all testable now:
   every branch with a fake command runner.
 - The render step's "Manim is absent" message names the Python 3.14
   cause when that is the reason.
+
+### 14.15 The performance pass
+
+The first manual test on the real computer read as sluggish; the
+earlier passes had audited flow and logic, never perceived latency, so
+a profiling harness now times every UI-thread operation against an
+aged project (sixty runs, thirty issues, a 120-file repository). What
+it found, and what changed:
+
+- The Home screen scanned the run list twice on every visit; it now
+  scans once and feeds the continue card and the momentum line from
+  the same read.
+- The Save screen ran `git diff` on the UI thread at the exact moment
+  the person waits for it; it now reads the diff from the newest
+  recorded `actual.diff` audit artifact (git stays as the fallback),
+  and the diff also outlives workspace cleanup.
+- Switching to the already-open project rebuilt every screen for
+  nothing; it now just navigates home.
+- The two inherently heavy actions — the theme change (~0.5 s: the
+  whole widget tree re-polishes) and a real project switch (screen
+  rebuild) — now freeze repaints and show the wait cursor, so the
+  person sees processing instead of a hang. The wait cursor also
+  covers packet rebuilds, exports, the projects and history lists,
+  and the scan packet build.
+- Describe and Explain gained one checkbox: "Include the project code
+  and tests." It loads every source and test file (the context
+  selector's own walk: configured roots, excludes, secret and binary
+  files skipped, the size cap applied) into the packet without one
+  hundred chips, and a toast counts what was added. Explain no longer
+  demands a manual file when the choice is on.

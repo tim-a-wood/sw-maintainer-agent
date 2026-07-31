@@ -227,6 +227,8 @@ STR: dict[str, str] = {
     "projects.opened": "Opened {name}.",
     "projects.busy": "First stop the run. Then change the project.",
     "projects.all": "All projects…",
+    "include.code": "Include the project code and tests",
+    "code.added": "Added {count} code files to the package.",
     "foot.project.tip": "This is the open project. Select it to open a "
                         "different project.",
 

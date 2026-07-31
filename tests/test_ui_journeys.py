@@ -356,7 +356,14 @@ def test_repair_failed_checks_stop_continue_and_discard(
     assert window.controller.diff_text(window.current_record) != ""
     window.controller.engine.cleanup_workspace(record.run_id)
     assert not worktree.exists()
-    assert window.controller.diff_text(window.current_record) == ""
+    # The recorded diff outlives the worktree; without any record the
+    # answer is empty, never an error.
+    assert "after" in window.controller.diff_text(window.current_record)
+    import dataclasses
+    ghost = dataclasses.replace(window.current_record,
+                                run_id="f-00000000-000000-none",
+                                worktree=str(tmp_path / "void"))
+    assert window.controller.diff_text(ghost) == ""
 
     # A late action on the closed run surfaces as an error, not a crash.
     window.controller.feedback(record.run_id, "too late")
@@ -635,3 +642,110 @@ def test_issue_mode_refuses_a_fault_that_does_not_reproduce(
     assert any("did not reproduce" in item for item in toasts)
     paused = window.controller.resumable_run()
     assert paused is not None and paused.display_state == "Waiting"
+
+
+# ---------- the perf pass: fast paths and the include-code choice ----------
+
+def test_project_code_paths_walks_roots_with_the_caps(tmp_path):
+    from maintain.context import project_code_paths
+    repository = tmp_path / "repo"
+    (repository / "src").mkdir(parents=True)
+    (repository / "tests").mkdir()
+    (repository / "src" / "small.py").write_text("A = 1\n", encoding="utf-8")
+    (repository / "src" / "big.py").write_text("B" * 5000, encoding="utf-8")
+    (repository / "src" / "binary.bin").write_bytes(b"\x00\x01")
+    (repository / "tests" / "test_small.py").write_text(
+        "def test(): pass\n", encoding="utf-8")
+    (repository / "elsewhere.py").write_text("C = 3\n", encoding="utf-8")
+    found = project_code_paths(repository, ("src", "tests"), (), 4000)
+    names = sorted(path.name for path in found)
+    assert names == ["small.py", "test_small.py"]
+
+
+def test_include_code_ships_the_project_in_the_first_packet(
+        qt_app, tmp_path, monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    repository = window.store.config.repository
+    (repository / "src").mkdir()
+    (repository / "src" / "helper.py").write_text("H = 1\n", encoding="utf-8")
+    (repository / "tests").mkdir()
+    (repository / "tests" / "test_helper.py").write_text(
+        "def test(): pass\n", encoding="utf-8")
+    _git(repository, "add", "-A")
+    _git(repository, "commit", "-m", "add source folders")
+
+    window.home.new_change.emit("feature")
+    assert not window.describe.include_code.isChecked()   # reset each time
+    window.describe.include_code.setChecked(True)
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               message="plan packet")
+    assert any("code files" in item for item in toasts)
+    with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
+        names = set(archive.namelist())
+    assert "attachments/helper.py" in names
+    assert "attachments/test_helper.py" in names
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
+    assert not errors, errors
+
+
+def test_explain_include_code_needs_no_manual_files(
+        qt_app, tmp_path, monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    window.show_explain()
+    window.explain.goal_edit.setPlainText("Explain the module layout.")
+    # Without files and without the choice, start refuses.
+    window.explain._start()
+    assert window.explain.message.text()
+    window.explain.include_code.setChecked(True)
+    window.explain._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               message="explain packet")
+    carried = [item["path"] for item in
+               window.current_handoff.request.payload["candidate_files"]]
+    assert "app.py" in carried
+    window._stop_run()
+    assert not errors, errors
+
+
+def test_switching_to_the_open_project_never_rebuilds(qt_app, tmp_path,
+                                                      monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    before = window.exchange
+    window._open_project(str(window.store.config.repository))
+    assert window.exchange is before          # no teardown, no rebuild
+    assert _screen(window) == "home"
+    assert not errors, errors
+
+
+def test_home_reads_the_run_list_once(qt_app, tmp_path, monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    calls = {"count": 0}
+    original = window.controller.runs
+
+    def counted():
+        calls["count"] += 1
+        return original()
+
+    window.controller.runs = counted
+    window.show_home()
+    assert calls["count"] == 1
+
+
+def test_save_diff_comes_from_the_recorded_artifact(qt_app, tmp_path,
+                                                    monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    from maintain.models import RunRecord
+    runtime = window.store.config.runtime_root
+    deep = runtime / "f-20260731-140000-diff" / "artifacts" / "t1-attempt-1"
+    deep.mkdir(parents=True)
+    (deep / "actual.diff").write_text("diff --git a/x b/x\n+after\n",
+                                     encoding="utf-8")
+    record = RunRecord(
+        run_id="f-20260731-140000-diff", mode="feature", request="x",
+        repository=str(window.store.config.repository), base_commit="b",
+        branch="maintain/x", worktree=str(tmp_path / "gone"),
+        state="awaiting_acceptance")
+    assert "after" in window.controller.diff_text(record)

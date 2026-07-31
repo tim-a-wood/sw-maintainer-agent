@@ -207,8 +207,8 @@ class Controller(QObject):
     def timeline(self, run_id: str) -> list[IterationEvent]:
         return run_timeline(self.config.runtime_root, run_id)
 
-    def resumable_run(self) -> RunSummary | None:
-        for summary in self.runs():
+    def resumable_run(self, runs: list[RunSummary] | None = None) -> RunSummary | None:
+        for summary in (runs if runs is not None else self.runs()):
             if not summary.closed and summary.state != str(RunState.AWAITING_ACCEPTANCE):
                 return summary
             if summary.state == str(RunState.AWAITING_ACCEPTANCE):
@@ -216,6 +216,17 @@ class Controller(QObject):
         return None
 
     def diff_text(self, record: RunRecord) -> str:
+        """The verified diff, read from the newest recorded artifact so the
+        UI thread never waits on a git subprocess; git is the fallback."""
+        try:
+            artifacts = (Path(self.config.runtime_root).expanduser()
+                         / record.run_id / "artifacts")
+            candidates = sorted(artifacts.rglob("actual.diff"),
+                                key=lambda path: path.stat().st_mtime)
+            if candidates:
+                return candidates[-1].read_text(encoding="utf-8")
+        except OSError:
+            pass
         try:
             return self.engine.workspaces.diff(Path(record.worktree)).text
         except Exception:  # noqa: BLE001 - display-only

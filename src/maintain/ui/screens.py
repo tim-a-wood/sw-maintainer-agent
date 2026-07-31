@@ -260,6 +260,8 @@ class DescribeScreen(Screen):
         self.chips = FileChips()
         self.chips.removed.connect(self._remove)
         self.add(self.chips)
+        self.include_code = QCheckBox(text("include.code"))
+        self.add(self.include_code)
         self.message = StatusLine()
         self.add(self.message)
         self.checks_hint = button(text("describe.checks.hint"), "Ghost",
@@ -280,6 +282,7 @@ class DescribeScreen(Screen):
         self.request_edit.setPlainText("")
         self.attachments = []
         self.chips.set_files([])
+        self.include_code.setChecked(False)
         self.message.set_state("plain", "")
 
     def set_checks_hint(self, visible: bool) -> None:
@@ -1590,6 +1593,8 @@ class ExplainScreen(Screen):
         self.chips = FileChips()
         self.chips.removed.connect(self._remove)
         self.add(self.chips)
+        self.include_code = QCheckBox(text("include.code"))
+        self.add(self.include_code)
         self.message = StatusLine()
         self.add(self.message)
         self.last_video = button("", "Ghost", self.open_videos.emit)
@@ -1607,6 +1612,7 @@ class ExplainScreen(Screen):
         self.audience_edit.setText("")
         self.files = []
         self.chips.set_files([])
+        self.include_code.setChecked(False)
         self.message.set_state("plain", "")
 
     def set_last_video(self, when: str) -> None:
@@ -1628,7 +1634,7 @@ class ExplainScreen(Screen):
         if not goal:
             self.message.set_state("bad", text("explain.goal.empty"))
             return
-        if not self.files:
+        if not self.files and not self.include_code.isChecked():
             self.message.set_state("bad", text("explain.files.empty"))
             return
         self.message.set_state("plain", "")

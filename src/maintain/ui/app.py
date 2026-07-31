@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import threading
 from pathlib import Path
@@ -56,6 +57,16 @@ STAGE_FOR_TASK = {"plan": 0, "build": 1, "repair": 1, "review": 2}
 def chip_name(name: str) -> str:
     """The foot chip keeps its width; long project names elide hard."""
     return name if len(name) <= 24 else name[:23] + "…"
+
+
+@contextlib.contextmanager
+def busy_pointer():
+    """The wait cursor for any handler that can take a visible moment."""
+    QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+    try:
+        yield
+    finally:
+        QGuiApplication.restoreOverrideCursor()
 
 
 def saved_theme() -> str:
@@ -362,8 +373,18 @@ class MainWindow(QMainWindow):
         palette = theme_module.palette_for(name == "dark")
         application = QApplication.instance()
         if application is not None:
-            application.setPalette(theme_module.qt_palette(palette))
-            application.setStyleSheet(theme_module.stylesheet(palette))
+            # Re-polishing every widget takes a visible moment; freeze
+            # repaints and show the wait cursor while it happens.
+            built = self.centralWidget() is not None
+            with busy_pointer():
+                if built:
+                    self.setUpdatesEnabled(False)
+                try:
+                    application.setPalette(theme_module.qt_palette(palette))
+                    application.setStyleSheet(theme_module.stylesheet(palette))
+                finally:
+                    if built:
+                        self.setUpdatesEnabled(True)
         self._theme = name
         if persist:
             values = load_ui_settings()
@@ -409,17 +430,18 @@ class MainWindow(QMainWindow):
     def show_home(self) -> None:
         self._set_run_footer(False)
         self._pending_issue_link = ""
-        summary = self.controller.resumable_run()
-        self.home.set_resumable(summary)
+        runs = self.controller.runs()   # one scan feeds the whole screen
+        self.home.set_resumable(self.controller.resumable_run(runs))
         issues = self.controller.issues.load()
         self.home.set_issue_count(
             sum(1 for issue in issues if issue.status != CLOSED),
             sum(1 for issue in issues if issue.status == CLOSED))
-        self.home.set_momentum(self._momentum_line())
+        self.home.set_momentum(self._momentum_line(runs))
         self.show_screen("home")
 
-    def _momentum_line(self) -> str:
-        saved = [item for item in self.controller.runs()
+    def _momentum_line(self, runs: list | None = None) -> str:
+        saved = [item for item in
+                 (runs if runs is not None else self.controller.runs())
                  if item.state == "delivered"]
         if not saved:
             return ""
@@ -434,11 +456,13 @@ class MainWindow(QMainWindow):
         return text("home.momentum", count=len(saved), when=when)
 
     def show_history(self) -> None:
-        self.history.show_runs(self.controller.runs())
+        with busy_pointer():
+            self.history.show_runs(self.controller.runs())
         self.show_screen("history")
 
     def show_projects(self) -> None:
-        self.projects.show_rows(project_ops.project_rows())
+        with busy_pointer():
+            self.projects.show_rows(project_ops.project_rows())
         self.show_screen("projects")
 
     # ----- projects -----
@@ -448,23 +472,34 @@ class MainWindow(QMainWindow):
         if self.controller.busy:
             self.toast(text("projects.busy"))
             return
-        project_ops.add_existing(config.repository)
-        self.store = ConfigStore(config)
-        self.controller = Controller(config)
-        self.current_handoff = None
-        self.current_record = None
-        self._in_test = False
-        while self.stack.count():
-            widget = self.stack.widget(0)
-            self.stack.removeWidget(widget)
-            widget.setParent(None)
-            widget.deleteLater()
-        self.screens = {}
-        self._build_screens()
-        self._wire_controller()
-        self.setWindowTitle(f"{text('app.title')} — {config.name}")
-        self._set_project_chip(config.name)
-        self.show_home()
+        same = (Path(config.repository).resolve()
+                == Path(self.store.config.repository).resolve())
+        if same:
+            # The open project again: navigate, never rebuild.
+            self.show_home()
+            return
+        with busy_pointer():
+            self.setUpdatesEnabled(False)
+            try:
+                project_ops.add_existing(config.repository)
+                self.store = ConfigStore(config)
+                self.controller = Controller(config)
+                self.current_handoff = None
+                self.current_record = None
+                self._in_test = False
+                while self.stack.count():
+                    widget = self.stack.widget(0)
+                    self.stack.removeWidget(widget)
+                    widget.setParent(None)
+                    widget.deleteLater()
+                self.screens = {}
+                self._build_screens()
+                self._wire_controller()
+                self.setWindowTitle(f"{text('app.title')} — {config.name}")
+                self._set_project_chip(config.name)
+                self.show_home()
+            finally:
+                self.setUpdatesEnabled(True)
 
     def _set_project_chip(self, name: str) -> None:
         self.foot_project.setText(f"{chip_name(name)} ▾")
@@ -661,11 +696,12 @@ class MainWindow(QMainWindow):
         known = [issue for issue in self.controller.issues.load()
                  if issue.status != CLOSED]
         try:
-            request = scan_request(config, focus, known)
-            exchange = SideExchange(
-                kind="scan", request=request,
-                directory=side_packet_dir(config, request.run_id))
-            packet = build_side_packet(exchange, config, [])
+            with busy_pointer():
+                request = scan_request(config, focus, known)
+                exchange = SideExchange(
+                    kind="scan", request=request,
+                    directory=side_packet_dir(config, request.run_id))
+                packet = build_side_packet(exchange, config, [])
         except MaintainError as exc:
             self.show_error(str(exc))
             return
@@ -830,6 +866,8 @@ class MainWindow(QMainWindow):
         if self.controller.busy:
             self.toast(text("issues.busy"))
             return
+        if self.explain.include_code.isChecked():
+            files = self._with_project_code(files)
         sources = self._relative_sources(files)
         if sources is None:
             return
@@ -948,7 +986,26 @@ class MainWindow(QMainWindow):
             name != "diff-check" for name, _ in self.store.checks()))
         self.show_screen("describe")
 
+    def _project_code_files(self) -> list[Path]:
+        """Every source and test file, for the include-code choice."""
+        from maintain.context import project_code_paths
+        config = self.store.config
+        with busy_pointer():
+            return project_code_paths(
+                config.repository, config.source_roots + config.test_roots,
+                config.exclude_paths, config.max_file_bytes)
+
+    def _with_project_code(self, attachments: list) -> list:
+        code = self._project_code_files()
+        known = {Path(item).resolve() for item in attachments}
+        fresh = [item for item in code if item.resolve() not in known]
+        if fresh:
+            self.toast(text("code.added", count=len(fresh)))
+        return [*attachments, *fresh]
+
     def _start_run(self, mode: str, request: str, attachments: list) -> None:
+        if self.describe.include_code.isChecked():
+            attachments = self._with_project_code(attachments)
         if self.controller.start_run(mode, request, attachments):
             self._remember_request(request)
             self._set_stage(0)
@@ -1033,6 +1090,10 @@ class MainWindow(QMainWindow):
     def _rebuild_packet(self) -> None:
         if self.current_handoff is None:
             return
+        with busy_pointer():
+            self._rebuild_packet_now()
+
+    def _rebuild_packet_now(self) -> None:
         try:
             if self._side is not None:
                 exchange: SideExchange = self._side["exchange"]
@@ -1058,7 +1119,8 @@ class MainWindow(QMainWindow):
             return
         destination = self.pick_save(self.current_handoff.zip_path.name)
         if destination:
-            shutil.copyfile(self.current_handoff.zip_path, destination)
+            with busy_pointer():
+                shutil.copyfile(self.current_handoff.zip_path, destination)
             self.exchange.mark_exported(Path(destination).name)
 
     def _import_reply(self) -> None:
@@ -1214,14 +1276,15 @@ class MainWindow(QMainWindow):
             self.exchange.reply_open = False
             delivered = sum(1 for item in self.controller.runs()
                             if item.state == "delivered")
+            iterations = len(self.controller.timeline(record.run_id))
             self.done.show_record(
                 record, files=self.controller.changed_files(record),
                 checks=len(record.evidence.get("tests", {})
                            .get("commands", [])),
-                iterations=len(self.controller.timeline(record.run_id)),
+                iterations=iterations,
                 duration=self._run_duration(record),
                 first=delivered == 1,
-                note=self._change_note(record))
+                note=self._change_note(record, iterations=iterations))
             self._set_run_footer(False)
             self._set_stage(5)
             self.stage_header.setVisible(False)
@@ -1235,11 +1298,13 @@ class MainWindow(QMainWindow):
         else:
             self.show_home()
 
-    def _change_note(self, record: RunRecord) -> str:
+    def _change_note(self, record: RunRecord,
+                     iterations: int | None = None) -> str:
         """FR-G3: a paste-ready status line for one saved change."""
         files = self.controller.changed_files(record)
         checks = len(record.evidence.get("tests", {}).get("commands", []))
-        iterations = len(self.controller.timeline(record.run_id))
+        if iterations is None:
+            iterations = len(self.controller.timeline(record.run_id))
         request = " ".join(record.request.split())
         return (
             f"Saved: {request}\n"
