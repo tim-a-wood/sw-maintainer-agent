@@ -74,7 +74,7 @@ def test_package_config_defaults_and_overrides(tmp_path):
                   "review": {"prompt": None, "documents": []}},
     })
     config = ProjectConfig.load(path)
-    assert config.package.style == "zip"
+    assert config.package.style == "markdown"   # the default since 14.18
     assert config.package.documents == ("docs/standards.md",)
     assert config.package.task("build").prompt == "prompts/build.md"
     assert config.package.task("plan").prompt == ""

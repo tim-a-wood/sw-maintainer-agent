@@ -94,8 +94,9 @@ class PackagePolicy:
 def _package_policy(data: dict[str, Any]) -> PackagePolicy:
     _reject_unknown(data, {"style", "global_prompt", "documents", "tasks"}, "package")
     style = str(data.get("style", "zip")).strip().casefold() or "zip"
-    if style not in {"zip", "folder"}:
-        raise ConfigurationError("package.style must be zip or folder.")
+    if style not in {"zip", "folder", "markdown"}:
+        raise ConfigurationError(
+            "package.style must be zip, folder, or markdown.")
     global_prompt = str(data.get("global_prompt", "GLOBAL.md")).strip() or "GLOBAL.md"
     documents = tuple(_strings(data.get("documents")))
     tasks_data = _object(data.get("tasks", {}), "package.tasks")
@@ -553,7 +554,7 @@ def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
                    "allow_dependency_changes": "approval"},
         "audit": {"runtime_root": "~/.maintain/runs"},
         "ui": {"color": "auto", "animation": True, "max_width": 100},
-        "package": {"style": "zip", "global_prompt": "GLOBAL.md", "documents": [],
+        "package": {"style": "markdown", "global_prompt": "GLOBAL.md", "documents": [],
                     "tasks": {key: {"prompt": None, "documents": []}
                               for key in PACKET_TASK_KEYS}},
     }

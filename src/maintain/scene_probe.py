@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .proc import hidden
+
 PROBE_TIMEOUT_SECONDS = 240
 
 PROBE_SOURCE = '''"""Standalone geometry probe for one Manim scene file."""
@@ -132,7 +134,8 @@ def probe_scene(source: str, work_dir: Path, scene_class: str, *,
     try:
         completed = subprocess.run(
             [python_command, "probe.py", scene_class], cwd=work_dir,
-            capture_output=True, text=True, timeout=PROBE_TIMEOUT_SECONDS, check=False)
+            capture_output=True, text=True, timeout=PROBE_TIMEOUT_SECONDS,
+            check=False, **hidden())
     except (OSError, subprocess.TimeoutExpired):
         return []
     if completed.returncode != 0:

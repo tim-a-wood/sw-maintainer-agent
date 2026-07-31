@@ -56,6 +56,7 @@ class CommandProvider(Provider):
     def exchange(self, request: ProviderRequest) -> ProviderResponse:
         plan = self._launch_plan()
         try:
+            from maintain.proc import hidden
             result = subprocess.run(
                 plan.popen_args,
                 executable=plan.executable,
@@ -65,6 +66,7 @@ class CommandProvider(Provider):
                 timeout=self.timeout_seconds,
                 shell=False,
                 check=False,
+                **hidden(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ProviderError(f"{self.name} could not run: {exc}") from exc

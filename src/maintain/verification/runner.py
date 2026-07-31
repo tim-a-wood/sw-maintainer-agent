@@ -4,13 +4,14 @@ import os, subprocess, time
 from datetime import datetime, timezone
 from pathlib import Path
 from .models import CommandResult, VerificationCommand
+from ..proc import hidden
 
 def run_command(spec:VerificationCommand, repository:Path)->CommandResult:
     root=Path(repository).resolve(); cwd=(root/spec.working_directory).resolve(); cwd.relative_to(root)
     env=os.environ.copy(); env.update(dict(spec.environment)); start=datetime.now(timezone.utc); tick=time.monotonic()
     timed_out=False
     try:
-        p=subprocess.run(list(spec.command),cwd=cwd,env=env,text=False,capture_output=True,timeout=spec.timeout_seconds,check=False)
+        p=subprocess.run(list(spec.command),cwd=cwd,env=env,text=False,capture_output=True,timeout=spec.timeout_seconds,check=False,**hidden())
         code=p.returncode; out=p.stdout; err=p.stderr
     except subprocess.TimeoutExpired as exc:
         timed_out=True; code=None; out=exc.stdout or b""; err=exc.stderr or b""

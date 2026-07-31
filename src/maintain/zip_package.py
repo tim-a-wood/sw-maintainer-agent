@@ -236,3 +236,83 @@ def build_packet(request: ProviderRequest, directory: Path, *,
         task_key=task_key,
         members=tuple(name for name, _ in ordered),
     )
+
+
+MARKDOWN_BINARY_NOTE = "Attach this file with the packet; it is not embedded."
+
+MARKDOWN_HEADER = """\
+# Maintain work packet (one file)
+
+This one Markdown file is the whole work packet. Each section below
+starts with a line `## FILE: <name>`; treat every section as the file
+it names. Read the section for TASK.md first and follow it exactly —
+it carries the task and the reply contract. Files listed under
+"Attached separately" arrive as their own attachments in this chat;
+read them with the packet.
+"""
+
+
+def markdown_packet(zip_path: Path) -> Path:
+    """Render the packet as one readable Markdown file beside the ZIP.
+
+    Text members become `## FILE:` sections in packet order; the JSON
+    manifest keeps a four-backtick fence so inner fences survive; binary
+    or oversized members are listed as separate attachments instead of
+    being embedded, because the assistant reads text, not encoded bytes.
+    """
+    sections: list[str] = []
+    sidecars: list[str] = []
+    names: list[str] = []
+    with zipfile.ZipFile(zip_path) as archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            name = info.filename
+            raw = archive.read(info)
+            try:
+                content = raw.decode("utf-8")
+                if "\x00" in content:
+                    raise UnicodeDecodeError("utf-8", raw, 0, 1, "binary")
+            except UnicodeDecodeError:
+                sidecars.append(name)
+                continue
+            names.append(name)
+            if name.endswith(".json"):
+                body = f"````json\n{content.rstrip()}\n````"
+            else:
+                body = content.rstrip()
+            sections.append(f"## FILE: {name}\n\n{body}")
+    index = "\n".join(f"- {name}" for name in names)
+    extra = ""
+    if sidecars:
+        listed = "\n".join(f"- {name} — {MARKDOWN_BINARY_NOTE}"
+                           for name in sidecars)
+        extra = f"\n### Attached separately\n\n{listed}\n"
+    document = (f"{MARKDOWN_HEADER}\n## INDEX\n\n{index}\n{extra}\n"
+                + "\n\n".join(sections) + "\n")
+    target = zip_path.with_suffix(".md")
+    target.write_text(document, encoding="utf-8")
+    return target
+
+
+def packet_for_style(zip_path: Path, style: str) -> Path:
+    """The file the person actually moves to Copilot for this style."""
+    if style == "markdown":
+        return markdown_packet(Path(zip_path))
+    return Path(zip_path)
+
+
+def packet_sidecars(zip_path: Path) -> list[str]:
+    """Names of packet members that ride as separate attachments."""
+    sidecars: list[str] = []
+    with zipfile.ZipFile(zip_path) as archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            raw = archive.read(info)
+            try:
+                if "\x00" in raw.decode("utf-8"):
+                    raise UnicodeDecodeError("utf-8", raw, 0, 1, "binary")
+            except UnicodeDecodeError:
+                sidecars.append(info.filename)
+    return sidecars

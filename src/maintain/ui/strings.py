@@ -229,6 +229,12 @@ STR: dict[str, str] = {
     "projects.all": "All projects…",
     "include.code": "Include the project code and tests",
     "code.added": "Added {count} code files to the package.",
+    "send.step.copy": "Copy the package to OneDrive",
+    "send.step.sync": "Wait for the synchronization",
+    "package.markdown": "One Markdown file",
+    "package.markdown.sub": "The whole packet in one readable file. "
+                            "Copilot reads it directly. Files that are "
+                            "not text ride as separate attachments.",
     "step.scene.check": "Check the scene",
     "step.render.probe": "Check the geometry",
     "step.render.video": "Render the video",

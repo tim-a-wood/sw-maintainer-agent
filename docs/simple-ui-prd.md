@@ -787,3 +787,30 @@ Two observations from the real computer:
   column are tighter, and the default window grew to 640×830. A
   regression test pins the content height under 700 px so it cannot
   quietly grow past the window again.
+
+### 14.18 The one-file packet and the visible OneDrive stages
+
+Findings from the real computer's OneDrive attempt:
+
+- Command windows flashed for every child process: the sync probe every
+  two seconds, and every git call behind a run. A windowed app on
+  Windows opens a console per subprocess unless told otherwise; every
+  subprocess call now passes shared no-window flags (`maintain.proc`).
+- The link flow gave no location: publish now shows its stages in the
+  send region — "Copy the package to OneDrive" then "Wait for the
+  synchronization", dots while running, a check when done — and the
+  link button re-enables only at the final state, with the link
+  already in the clipboard on success and an honest fallback line on
+  timeout.
+- New package style, the default for new projects: one Markdown file.
+  The whole packet renders as one readable file — `## FILE: <name>`
+  sections in packet order, the JSON manifest in a four-backtick fence
+  so inner fences survive, an index up front, and reading instructions
+  in the header. Copilot ingests it directly; nothing needs unpacking.
+  Binary attachments are never embedded (an assistant reads text, not
+  encoded bytes): they are declared under "Attached separately" and
+  ride as their own attachments, where Copilot reads formats like PDF
+  natively. The ZIP is still built underneath — the audit trail and
+  the reply contract (maintain-output.zip for build steps) are
+  unchanged; the Markdown is how the packet travels. The Package
+  settings page offers all three styles.

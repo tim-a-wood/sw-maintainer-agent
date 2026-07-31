@@ -13,6 +13,7 @@ from typing import Any, Callable
 from urllib.parse import quote
 
 from .errors import ConfigurationError
+from .proc import hidden
 from .repository_memory import load_ui_settings, save_ui_settings
 
 SYNCED = "synced"
@@ -85,7 +86,8 @@ def probe_sync_state(path: Path) -> str:
     try:
         completed = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-            capture_output=True, text=True, timeout=20, check=False)
+            capture_output=True, text=True, timeout=20, check=False,
+            **hidden())
     except (OSError, subprocess.TimeoutExpired):
         return UNKNOWN
     if completed.returncode != 0:
@@ -122,7 +124,8 @@ def publish_packet(zip_path: Path, settings: OneDriveSettings, *,
                    expand_folder: bool = False,
                    prober: Callable[[Path], str] = probe_sync_state,
                    sleeper: Callable[[float], Any] = time.sleep,
-                   clock: Callable[[], float] = time.monotonic) -> PublishResult:
+                   clock: Callable[[], float] = time.monotonic,
+                   on_stage: Callable[[str], Any] | None = None) -> PublishResult:
     """Copy the packet into the OneDrive folder, wait for sync, compose the link."""
     if not settings.configured:
         raise ConfigurationError(
@@ -137,6 +140,8 @@ def publish_packet(zip_path: Path, settings: OneDriveSettings, *,
     shutil.copyfile(zip_path, destination)
     if expand_folder:
         expand_packet_folder(destination, folder)
+    if on_stage is not None:
+        on_stage("copied")
     started = clock()
     state = prober(destination)
     while state == PENDING and clock() - started < settings.timeout_seconds:

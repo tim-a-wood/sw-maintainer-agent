@@ -12,11 +12,12 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from .errors import PolicyError, RecoveryError
+from .proc import hidden
 
 
 def git(repository: Path, *args: str, check: bool = True) -> str:
     result = subprocess.run(["git", "-C", str(repository), *args], text=True,
-                            capture_output=True, check=False)
+                            capture_output=True, check=False, **hidden())
     if check and result.returncode:
         raise RecoveryError((result.stderr or result.stdout).strip() or "Git command failed.")
     return result.stdout.strip()
@@ -66,7 +67,7 @@ class WorkspaceManager:
             raise RecoveryError(f"Worktree already exists with unexpected state: {worktree}")
         result = subprocess.run(["git", "-C", str(self.repository), "worktree", "add", "-b",
                                  branch, str(worktree), base_commit], text=True,
-                                capture_output=True, check=False)
+                                capture_output=True, check=False, **hidden())
         if result.returncode:
             raise RecoveryError((result.stderr or result.stdout).strip())
         return branch, worktree
@@ -87,9 +88,9 @@ class WorkspaceManager:
         with tempfile.TemporaryDirectory(prefix="maintain-restore-") as directory:
             env["GIT_INDEX_FILE"] = str(Path(directory) / "index")
             subprocess.run(["git", "-C", str(worktree), "read-tree", tree_hash],
-                           env=env, check=True, capture_output=True)
+                           env=env, check=True, capture_output=True, **hidden())
             subprocess.run(["git", "-C", str(worktree), "checkout-index", "-f", "-a"],
-                           env=env, check=True, capture_output=True)
+                           env=env, check=True, capture_output=True, **hidden())
         for line in removed.splitlines():
             name = line.strip()
             target = worktree / name
@@ -111,16 +112,18 @@ class WorkspaceManager:
         with tempfile.TemporaryDirectory(prefix="maintain-index-") as directory:
             env["GIT_INDEX_FILE"] = str(Path(directory) / "index")
             subprocess.run(["git", "-C", str(worktree), "read-tree", "HEAD"], env=env,
-                           check=True, capture_output=True)
+                           check=True, capture_output=True, **hidden())
             subprocess.run(["git", "-C", str(worktree), "add", "-A"], env=env,
-                           check=True, capture_output=True)
+                           check=True, capture_output=True, **hidden())
             tree = subprocess.run(["git", "-C", str(worktree), "write-tree"], env=env,
-                                  text=True, check=True, capture_output=True).stdout.strip()
+                                  text=True, check=True, capture_output=True,
+                                  **hidden()).stdout.strip()
             text = subprocess.run(["git", "-C", str(worktree), "diff", "--cached", "--binary", "HEAD"],
-                                  env=env, text=True, check=True, capture_output=True).stdout
+                                  env=env, text=True, check=True, capture_output=True,
+                                  **hidden()).stdout
             raw_status = subprocess.run(
                 ["git", "-C", str(worktree), "diff", "--cached", "--name-status", "HEAD"],
-                env=env, text=True, check=True, capture_output=True).stdout
+                env=env, text=True, check=True, capture_output=True, **hidden()).stdout
             statuses = []
             names = []
             for line in raw_status.splitlines():
@@ -167,23 +170,27 @@ class WorkspaceManager:
         if not patch.strip():
             raise PolicyError("The provider returned an empty patch.")
         checked = subprocess.run(["git", "-C", str(worktree), "apply", "--check", "-"],
-                                 input=patch, text=True, capture_output=True, check=False)
+                                 input=patch, text=True, capture_output=True,
+                                 check=False, **hidden())
         if checked.returncode:
             raise PolicyError(f"The patch is invalid: {checked.stderr.strip()}")
         applied = subprocess.run(["git", "-C", str(worktree), "apply", "-"], input=patch,
-                                 text=True, capture_output=True, check=False)
+                                 text=True, capture_output=True, check=False,
+                                 **hidden())
         if applied.returncode:
             raise PolicyError(f"The patch could not be applied: {applied.stderr.strip()}")
 
     def apply_patch_idempotent(self, worktree: Path, patch: str) -> bool:
         """Apply a patch once. Return False when the exact patch is already present."""
         checked = subprocess.run(["git", "-C", str(worktree), "apply", "--check", "-"],
-                                 input=patch, text=True, capture_output=True, check=False)
+                                 input=patch, text=True, capture_output=True,
+                                 check=False, **hidden())
         if checked.returncode == 0:
             self.apply_patch(worktree, patch)
             return True
         reverse = subprocess.run(["git", "-C", str(worktree), "apply", "--reverse", "--check", "-"],
-                                 input=patch, text=True, capture_output=True, check=False)
+                                 input=patch, text=True, capture_output=True,
+                                 check=False, **hidden())
         if reverse.returncode == 0:
             return False
         raise PolicyError(f"The patch does not apply to the current workspace: {checked.stderr.strip()}")
@@ -337,7 +344,7 @@ class WorkspaceManager:
             raise RecoveryError("The target branch changed after the maintenance run started.")
         result = subprocess.run(
             ["git", "-C", str(self.repository), "merge", "--ff-only", commit],
-            text=True, capture_output=True, check=False,
+            text=True, capture_output=True, check=False, **hidden(),
         )
         if result.returncode:
             raise RecoveryError((result.stderr or result.stdout).strip() or

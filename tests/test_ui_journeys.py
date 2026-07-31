@@ -891,3 +891,115 @@ def test_explain_render_steps_reach_the_result_screen(qt_app, tmp_path,
     qt_app.processEvents()
     assert window.explain_result.steps._active is None
     assert window.explain_result.steps._column.count() == 3
+
+
+def test_markdown_packet_carries_everything_readable(tmp_path):
+    import zipfile as zip_module
+
+    from maintain.zip_package import markdown_packet, packet_sidecars
+
+    packet = tmp_path / "maintain-run-plan.zip"
+    with zip_module.ZipFile(packet, "w") as archive:
+        archive.writestr("TASK.md", "# Task\n\n```json\n{\"a\": 1}\n```\n")
+        archive.writestr("GLOBAL.md", "# Rules\n")
+        archive.writestr("MANIFEST.json", '{"run": "r-1"}')
+        archive.writestr("documents/standards.md", "# Standards\n")
+        archive.writestr("attachments/spec.pdf", b"%PDF-1.4\x00binary")
+    rendered = markdown_packet(packet)
+    content = rendered.read_text(encoding="utf-8")
+    assert rendered.suffix == ".md"
+    assert "## FILE: TASK.md" in content
+    assert "## FILE: GLOBAL.md" in content
+    assert '````json\n{"run": "r-1"}\n````' in content
+    # The inner fence of TASK.md survives intact.
+    assert '```json\n{"a": 1}\n```' in content
+    # The binary attachment is declared, never embedded.
+    assert "attachments/spec.pdf" in content
+    assert "Attach this file with the packet" in content
+    assert "%PDF" not in content.replace("attachments/spec.pdf", "")
+    assert packet_sidecars(packet) == ["attachments/spec.pdf"]
+
+
+def test_markdown_style_shows_the_md_as_the_package(qt_app, tmp_path,
+                                                    monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    assert window.store.config.package.style == "markdown"   # the default
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               message="plan packet")
+    shown = window.exchange.card.packet_path
+    assert str(shown).endswith(".md")
+    body = Path(shown).read_text(encoding="utf-8")
+    assert "## FILE: TASK.md" in body and "## FILE: CODEBASE.md" in body
+    # The reply contract is unchanged: the run still validates and moves.
+    window.exchange.check(clipboard_text=_scope_reply(window.current_handoff))
+    wait_until(qt_app, lambda: _screen(window) == "plan", message="plan gate")
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
+    assert not errors, errors
+
+
+def test_package_page_offers_and_saves_all_three_styles(qt_app, tmp_path,
+                                                        monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    window._open_settings_page("package")
+    assert window.page_package.markdown_radio.isChecked()
+    window.page_package.zip_radio.setChecked(True)
+    window.page_package._save()
+    assert window.store.config.package.style == "zip"
+    window._open_settings_page("package")
+    window.page_package.markdown_radio.setChecked(True)
+    window.page_package._save()
+    assert window.store.config.package.style == "markdown"
+
+
+def test_link_publish_shows_stages_and_gates_the_ready_state(
+        qt_app, tmp_path, monkeypatch):
+    from maintain import onedrive as onedrive_module
+    from maintain.onedrive import PublishResult
+
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    from maintain.repository_memory import load_ui_settings, save_ui_settings
+    values = load_ui_settings()
+    values["onedrive"] = {"folder": str(tmp_path / "cloud"),
+                          "link_base": "https://1drv.example/m/"}
+    save_ui_settings(values)
+
+    holds = {"stage": None, "finish": None}
+
+    def fake_publish(path, settings, *, expand_folder=False, on_stage=None,
+                     **kwargs):
+        holds["stage"] = on_stage
+        import time as time_module
+        while holds["finish"] is None:
+            time_module.sleep(0.01)
+        return holds["finish"]
+
+    monkeypatch.setattr("maintain.ui.screens.publish_packet", fake_publish)
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               message="plan packet")
+    wait_until(qt_app, lambda: holds["stage"] is not None,
+               message="publish start")   # auto-link fired
+    assert not window.exchange.link_button.isEnabled()
+    assert window.exchange.link_steps._active is not None   # copying row spins
+
+    holds["stage"]("copied")
+    wait_until(qt_app, lambda: window.exchange.link_steps._column.count() == 2,
+               message="sync row")
+    holds["finish"] = PublishResult(
+        copied_path=tmp_path / "cloud" / "x.md",
+        link="https://1drv.example/m/x.md", sync_state=onedrive_module.SYNCED,
+        waited_seconds=1.0)
+    wait_until(qt_app, lambda: window.exchange.link_button.isEnabled(),
+               message="ready state")
+    assert window.exchange.link_steps._active is None       # both rows ✓
+    from PySide6.QtWidgets import QApplication
+    assert QApplication.clipboard().text() == "https://1drv.example/m/x.md"
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
+    assert not errors, errors

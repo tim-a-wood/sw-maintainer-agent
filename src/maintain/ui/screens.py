@@ -345,6 +345,7 @@ class ExchangeScreen(Screen):
     export_requested = Signal()
     scan_focus = Signal(str)
     link_state = Signal(str, str)        # state, message (internal, thread-safe)
+    link_stage = Signal(str)             # publish stage (internal, thread-safe)
 
     def __init__(self) -> None:
         super().__init__()
@@ -427,6 +428,9 @@ class ExchangeScreen(Screen):
         buttons_holder = QWidget()
         buttons_holder.setLayout(buttons_row)
         send_column.addWidget(buttons_holder)
+        self.link_steps = StepTicker()
+        self.link_steps.setVisible(False)
+        send_column.addWidget(self.link_steps)
         outer_send = self._send_full.parentWidget().layout()
         summary_row = QHBoxLayout()
         summary_row.setSpacing(10)
@@ -481,6 +485,7 @@ class ExchangeScreen(Screen):
         self.add(receive_frame)
         self.add(label(text("exchange.copy.key"), "Hint"))
         self.link_state.connect(self._on_link_state)
+        self.link_stage.connect(self._on_link_stage)
         self._wait_start = 0.0
         self._wait_timer = QTimer(self)
         self._wait_timer.setInterval(1000)
@@ -532,8 +537,10 @@ class ExchangeScreen(Screen):
 
     def update_packet(self, zip_path: Path, attachment_names: list[str],
                       document_count: int) -> None:
-        size = zip_path.stat().st_size if zip_path.is_file() else 0
-        self.card.set_packet(zip_path, size)
+        from maintain.zip_package import packet_for_style
+        shown = packet_for_style(zip_path, self.package_style)
+        size = shown.stat().st_size if shown.is_file() else 0
+        self.card.set_packet(shown, size)
         documents = (f"documents/ — {document_count} · " if document_count else "")
         self.contents.setText(
             "TASK.md · GLOBAL.md · CODEBASE.md · MANIFEST.json · "
@@ -583,11 +590,16 @@ class ExchangeScreen(Screen):
         packet = self.card.packet_path
         self.link_button.setEnabled(False)
         self.send_status.set_state("busy", text("send.link.copying"))
+        self.link_steps.setVisible(True)
+        self.link_steps.reset()
+        self.link_steps.begin(text("send.step.copy"))
         expand = self.package_style == "folder"
 
         def work() -> None:
             try:
-                result = publish_packet(Path(packet), settings, expand_folder=expand)
+                result = publish_packet(
+                    Path(packet), settings, expand_folder=expand,
+                    on_stage=lambda stage: self.link_stage.emit(stage))
             except Exception as exc:  # noqa: BLE001 - shown to the person
                 self.link_state.emit("error", str(exc))
                 return
@@ -595,19 +607,28 @@ class ExchangeScreen(Screen):
 
         threading.Thread(target=work, daemon=True, name="maintain-onedrive").start()
 
+    def _on_link_stage(self, stage: str) -> None:
+        if stage == "copied":
+            self.link_steps.complete()
+            self.link_steps.begin(text("send.step.sync"))
+
     def _on_link_state(self, state: str, value: str) -> None:
         self.link_button.setEnabled(True)
         if state == "error":
+            self.link_steps.fail()
             self.send_status.set_state("bad", value)
             return
         if value:
             QGuiApplication.clipboard().setText(value)
         if state == SYNCED:
+            self.link_steps.complete()
             self.send_status.set_state(
                 "ok", f"{text('send.link.done')} {text('send.link.paste')}")
         elif state == PENDING:
+            self.link_steps.fail()
             self.send_status.set_state("warn", text("send.link.manual"))
         else:
+            self.link_steps.complete()
             self.send_status.set_state(
                 "plain", f"{text('send.link.paste')} {text('send.link.manual')}")
         self._mark_sent()
@@ -2223,14 +2244,18 @@ class PackagePage(Screen):
     def __init__(self) -> None:
         super().__init__()
         self.add(label(text("settings.package"), "Title"))
+        self.markdown_radio, markdown_card = self._option(
+            text("package.markdown"), text("package.markdown.sub"))
         self.zip_radio, zip_card = self._option(
             text("package.zip"), text("package.zip.sub"))
         self.folder_radio, folder_card = self._option(
             text("package.folder"), text("package.folder.sub"))
         # The radios live in separate cards, so exclusivity needs a group.
         self._style_group = QButtonGroup(self)
+        self._style_group.addButton(self.markdown_radio)
         self._style_group.addButton(self.zip_radio)
         self._style_group.addButton(self.folder_radio)
+        self.add(markdown_card)
         self.add(zip_card)
         self.add(folder_card)
         self.add_gap()
@@ -2255,11 +2280,17 @@ class PackagePage(Screen):
         return radio, card
 
     def load(self, style: str) -> None:
+        self.markdown_radio.setChecked(style == "markdown")
         self.zip_radio.setChecked(style == "zip")
         self.folder_radio.setChecked(style == "folder")
 
     def _save(self) -> None:
-        self.saved.emit("folder" if self.folder_radio.isChecked() else "zip")
+        if self.markdown_radio.isChecked():
+            self.saved.emit("markdown")
+        elif self.folder_radio.isChecked():
+            self.saved.emit("folder")
+        else:
+            self.saved.emit("zip")
 
 
 class ChecksPage(Screen):

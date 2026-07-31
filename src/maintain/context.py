@@ -113,9 +113,10 @@ class ContextSelector:
         return result
 
     def _cache_key(self) -> tuple:
+        from .proc import hidden
         result = subprocess.run(
             ["git", "-C", str(self.repository), "rev-parse", "HEAD^{tree}"],
-            text=True, capture_output=True, check=False,
+            text=True, capture_output=True, check=False, **hidden(),
         )
         tree = result.stdout.strip() if result.returncode == 0 else "no-git-tree"
         return (str(self.repository.resolve()), tree, self.roots, self.excludes, self.max_file_bytes)
