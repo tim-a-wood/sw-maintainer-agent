@@ -850,3 +850,13 @@ never by byte-sniffing, so an all-ASCII PDF still extracts as a PDF.
 Only files with nothing to extract — images, scanned documents — stay
 under "Attached separately", each with its reason. One request, one
 file, whatever the number of references.
+
+### 14.21 One progress story at a time
+
+The staged OneDrive view briefly told two stories: the step list ticked
+"Copy the package to OneDrive" complete while the old status line still
+said "Copy the package to OneDrive…" — is it copied, or still copying?
+During a publish only the step list speaks now; the status line stays
+empty and returns with a single final outcome (link ready, look in File
+Explorer, or the error). Rule of the pattern: when a step list narrates
+the progress, no second widget repeats it.

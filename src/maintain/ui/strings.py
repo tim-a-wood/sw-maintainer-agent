@@ -80,8 +80,6 @@ STR: dict[str, str] = {
     "send.attach.drop": "Drop files here, or click to select them.",
     "send.contents": "What is in the package?",
     "send.link.unset": "Set the OneDrive folder in Settings for the automatic link.",
-    "send.link.copying": "Copy the package to OneDrive…",
-    "send.link.syncing": "OneDrive synchronizes…",
     "send.link.done": "In sync. The link is in the clipboard.",
     "send.link.paste": "Paste the link into Copilot. Then send the message.",
     "send.link.manual": "Look at the file in File Explorer. When you see the check mark, "

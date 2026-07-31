@@ -589,7 +589,9 @@ class ExchangeScreen(Screen):
         settings = onedrive_settings()
         packet = self.card.packet_path
         self.link_button.setEnabled(False)
-        self.send_status.set_state("busy", text("send.link.copying"))
+        # The step list tells the progress story alone; the status line
+        # stays empty until it can state the one final outcome.
+        self.send_status.set_state("plain", "")
         self.link_steps.setVisible(True)
         self.link_steps.reset()
         self.link_steps.begin(text("send.step.copy"))

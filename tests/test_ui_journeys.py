@@ -987,10 +987,14 @@ def test_link_publish_shows_stages_and_gates_the_ready_state(
                message="publish start")   # auto-link fired
     assert not window.exchange.link_button.isEnabled()
     assert window.exchange.link_steps._active is not None   # copying row spins
+    # One story at a time: while the steps tick, the status line says
+    # nothing — a busy line here once contradicted the completed step.
+    assert window.exchange.send_status.text() == ""
 
     holds["stage"]("copied")
     wait_until(qt_app, lambda: window.exchange.link_steps._column.count() == 2,
                message="sync row")
+    assert window.exchange.send_status.text() == ""
     holds["finish"] = PublishResult(
         copied_path=tmp_path / "cloud" / "x.md",
         link="https://1drv.example/m/x.md", sync_state=onedrive_module.SYNCED,
@@ -998,6 +1002,8 @@ def test_link_publish_shows_stages_and_gates_the_ready_state(
     wait_until(qt_app, lambda: window.exchange.link_button.isEnabled(),
                message="ready state")
     assert window.exchange.link_steps._active is None       # both rows ✓
+    from maintain.ui.strings import text as ui_text
+    assert ui_text("send.link.done") in window.exchange.send_status.text()
     from PySide6.QtWidgets import QApplication
     assert QApplication.clipboard().text() == "https://1drv.example/m/x.md"
     window._stop_run()
