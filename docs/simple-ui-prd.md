@@ -704,3 +704,22 @@ Four verification activities beyond coverage, recorded in full in
 - A live assistant (a Claude agent standing in for Copilot, which this
   environment cannot reach) completed a real two-task run end to end
   from the packets alone; the delivered branch passes its own tests.
+
+### 14.14 The Windows shakedown, first finding
+
+The first run of `setup.ps1` on the real computer failed: the machine
+runs Python 3.14, Manim's native dependencies (moderngl, glcontext)
+publish no wheels for it, and pip tried to compile them without the
+C++ build tools — so the whole install died for the sake of the video
+feature. Three fixes, all testable now:
+
+- The `explain` extra carries a `python_version < '3.14'` marker, so
+  an install on 3.14 succeeds without Manim instead of failing.
+- The setup logic moved from PowerShell into `scripts/setup.py`
+  (the .ps1 is a thin bootstrap): it picks the newest installed
+  Python 3.11–3.13 for the app when the default is newer, falls back
+  to a ui-only install when the full one fails, and explains how to
+  enable the video feature later. `tests/test_setup_script.py` drives
+  every branch with a fake command runner.
+- The render step's "Manim is absent" message names the Python 3.14
+  cause when that is the reason.

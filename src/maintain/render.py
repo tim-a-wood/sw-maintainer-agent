@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +24,20 @@ class RenderResult:
 
 def manim_available(command: str) -> bool:
     return shutil.which(command) is not None
+
+
+def _absent_message(manim_command: str,
+                    version: tuple[int, int] | None = None) -> str:
+    """Why Manim is absent, with the Python 3.14 cause named when it applies."""
+    version = version or sys.version_info[:2]
+    message = (f"Manim is absent. The command is not found: {manim_command}. ")
+    if version >= (3, 14):
+        return message + (
+            f"Manim needs Python 3.11 to 3.13; this computer runs "
+            f"{version[0]}.{version[1]}. Install Python 3.13, then run "
+            "scripts/setup.ps1 again.")
+    return message + ("Install it with: pip install maintain[explain], "
+                      "and: winget install ffmpeg")
 
 
 def contact_sheet(video: Path, work_dir: Path) -> Path | None:
@@ -52,11 +67,7 @@ def render_scene(source: str, work_dir: Path, *, manim_command: str,
     scene_path = work_dir / "scene.py"
     scene_path.write_text(source, encoding="utf-8")
     if not manim_available(manim_command):
-        return RenderResult(
-            ok=False,
-            message=f"Manim is absent. The command is not found: "
-                    f"{manim_command}. Install it with: "
-                    "pip install maintain[explain], and: winget install ffmpeg")
+        return RenderResult(ok=False, message=_absent_message(manim_command))
     try:
         completed = subprocess.run(
             [manim_command, quality, "scene.py", scene_class],

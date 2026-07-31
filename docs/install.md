@@ -30,14 +30,24 @@ updates both together.
 
 ## What the script does
 
+`setup.ps1` only finds Python and starts `scripts/setup.py`; every
+decision lives in the Python script, where the test suite exercises it
+(`tests/test_setup_script.py`).
+
 1. Confirms Python 3.11 or later.
-2. Installs or updates pipx, the isolated app installer.
-3. Installs Maintain with the `ui` and `explain` extras:
-   `pipx install --force <repo>[ui,explain]`. The `explain` extra
-   carries Manim Community 0.20.1, pinned.
-4. Installs ffmpeg with winget when it is absent. Manim needs it for
+2. Picks the Python for the app. The video feature (Manim) needs
+   Python 3.11 to 3.13 — its native dependencies have no wheels for
+   3.14 yet. When the default Python is 3.14 but an older supported
+   one is installed, the script uses that one. When only 3.14 exists,
+   the app installs without the video feature and the script says how
+   to enable it later (install Python 3.13, run the script again).
+3. Installs or updates pipx, the isolated app installer.
+4. Installs Maintain with the `ui` and `explain` extras:
+   `pipx install --force <repo>[ui,explain]`. If the full install
+   fails, the script retries with `ui` alone so the app still lands.
+5. Installs ffmpeg with winget when it is absent. Manim needs it for
    the video files; it can never come from pip.
-5. Verifies the result and prints one PASS line for each step.
+6. Verifies the result and prints one PASS line for each step.
 
 ## Manual fallback
 

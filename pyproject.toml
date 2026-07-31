@@ -22,7 +22,11 @@ classifiers = [
 [project.optional-dependencies]
 browser = ["playwright>=1.52,<2"]
 ui = ["PySide6-Essentials>=6.6,<7"]
-explain = ["manim==0.20.1"]
+# Manim's native dependencies (moderngl, glcontext) publish no wheels for
+# Python 3.14 yet; without this marker the whole install fails on 3.14
+# trying to compile them. With it, the app installs and the render step
+# explains how to enable the video feature.
+explain = ["manim==0.20.1; python_version < '3.14'"]
 
 [project.scripts]
 maintain = "maintain.cli:main"
