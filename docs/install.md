@@ -43,8 +43,10 @@ decision lives in the Python script, where the test suite exercises it
    to enable it later (install Python 3.13, run the script again).
 3. Installs or updates pipx, the isolated app installer.
 4. Installs Maintain with the `ui` and `explain` extras:
-   `pipx install --force <repo>[ui,explain]`. If the full install
-   fails, the script retries with `ui` alone so the app still lands.
+   `pipx install --force <repo>[ui,explain]`. The `ui` extra carries
+   pypdf, so the one-file packet can extract text from PDF references.
+   If the full install fails, the script retries with `ui` alone so
+   the app still lands.
 5. Installs ffmpeg with winget when it is absent. Manim needs it for
    the video files; it can never come from pip.
 6. Verifies the result and prints one PASS line for each step.

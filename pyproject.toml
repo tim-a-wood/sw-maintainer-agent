@@ -21,7 +21,7 @@ classifiers = [
 
 [project.optional-dependencies]
 browser = ["playwright>=1.52,<2"]
-ui = ["PySide6-Essentials>=6.6,<7"]
+ui = ["PySide6-Essentials>=6.6,<7", "pypdf>=4,<6"]
 # Manim's native dependencies (moderngl, glcontext) publish no wheels for
 # Python 3.14 yet; without this marker the whole install fails on 3.14
 # trying to compile them. With it, the app installs and the render step

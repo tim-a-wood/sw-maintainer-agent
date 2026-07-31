@@ -835,3 +835,18 @@ changes:
   interactively ("Install it now? [Y/n]") when the app environment
   supports the video feature; a non-interactive run keeps the plain
   note.
+
+### 14.20 The one-file handoff, complete
+
+Copilot accepts few attachments per message, so several binary
+references would break the single-handoff promise. Embedding encoded
+bytes does not solve it — an assistant reads text and cannot decode
+base64 into a document — so the tool now extracts the text on this
+computer at packet-build time: PDF through pypdf (now part of the ui
+extra), Word, PowerPoint, and Excel through their own XML with the
+standard library. Extracted text joins the one Markdown packet as
+"FILE: name (extracted text)" sections; extraction routes by format,
+never by byte-sniffing, so an all-ASCII PDF still extracts as a PDF.
+Only files with nothing to extract — images, scanned documents — stay
+under "Attached separately", each with its reason. One request, one
+file, whatever the number of references.

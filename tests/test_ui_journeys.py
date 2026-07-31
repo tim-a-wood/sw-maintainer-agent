@@ -1063,3 +1063,81 @@ def test_explain_offers_the_manim_install_and_resumes(qt_app, tmp_path,
     assert any("video feature is ready" in item for item in toasts)
     window._stop_run()
     assert not errors, errors
+
+
+def _tiny_pdf(content: str) -> bytes:
+    """A minimal, valid one-page PDF with real text, byte-exact xref."""
+    stream = f"BT /F1 12 Tf 50 700 Td ({content}) Tj ET".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n"
+        + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    head = b"%PDF-1.4\n"
+    body = b""
+    offsets = []
+    for number, obj in enumerate(objects, 1):
+        offsets.append(len(head) + len(body))
+        body += f"{number} 0 obj\n".encode() + obj + b"\nendobj\n"
+    xref_at = len(head) + len(body)
+    xref = b"xref\n0 6\n0000000000 65535 f \n" + b"".join(
+        f"{offset:010d} 00000 n \n".encode() for offset in offsets)
+    trailer = (b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n"
+               + str(xref_at).encode() + b"\n%%EOF\n")
+    return head + body + xref + trailer
+
+
+def _tiny_docx(paragraphs: list[str]) -> bytes:
+    import io
+    buffer = io.BytesIO()
+    body = "".join(f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
+                   for text in paragraphs)
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("word/document.xml",
+                         f'<?xml version="1.0"?><w:document><w:body>{body}'
+                         "</w:body></w:document>")
+    return buffer.getvalue()
+
+
+def test_extract_text_reads_pdf_docx_and_refuses_images():
+    from maintain.extract import extract_text
+
+    pdf = extract_text("spec.pdf", _tiny_pdf("Wind limits apply above FL100"))
+    assert pdf.ok and "Wind limits apply above FL100" in pdf.text
+
+    docx = extract_text("notes.docx", _tiny_docx(
+        ["Reference notes", "Use metres per second"]))
+    assert docx.ok
+    assert "Reference notes\nUse metres per second" in docx.text
+
+    image = extract_text("diagram.png", b"\x89PNG\r\n\x1a\n\x00")
+    assert not image.ok and "not a text-carrying" in image.note
+
+    broken = extract_text("broken.pdf", b"%PDF-1.4 not really")
+    assert not broken.ok
+
+
+def test_markdown_packet_embeds_extracted_reference_text(tmp_path):
+    from maintain.zip_package import markdown_packet, packet_sidecars
+
+    packet = tmp_path / "maintain-run-plan.zip"
+    with zipfile.ZipFile(packet, "w") as archive:
+        archive.writestr("TASK.md", "# Task\n")
+        archive.writestr("attachments/limits.pdf",
+                         _tiny_pdf("Never exceed 250 knots below FL100"))
+        archive.writestr("attachments/notes.docx",
+                         _tiny_docx(["The reference values are final."]))
+        archive.writestr("attachments/photo.png", b"\x89PNG\r\n\x1a\n\x00")
+    content = markdown_packet(packet).read_text(encoding="utf-8")
+    assert "## FILE: attachments/limits.pdf (extracted text)" in content
+    assert "Never exceed 250 knots below FL100" in content
+    assert "## FILE: attachments/notes.docx (extracted text)" in content
+    assert "The reference values are final." in content
+    # Only the image stays a separate attachment, with its reason.
+    assert "attachments/photo.png" in content
+    assert "not a text-carrying" in content
+    assert packet_sidecars(packet) == ["attachments/photo.png"]

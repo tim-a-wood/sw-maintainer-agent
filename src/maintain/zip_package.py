@@ -9,7 +9,7 @@ import re
 import tempfile
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Sequence
 
 from .config import PackagePolicy
@@ -245,7 +245,9 @@ MARKDOWN_HEADER = """\
 
 This one Markdown file is the whole work packet. Each section below
 starts with a line `## FILE: <name>`; treat every section as the file
-it names. Read the section for TASK.md first and follow it exactly —
+it names. Sections marked "extracted text" carry the readable text of
+a binary reference file (for example a PDF), extracted on the user's
+computer. Read the section for TASK.md first and follow it exactly —
 it carries the task and the reply contract. Files listed under
 "Attached separately" arrive as their own attachments in this chat;
 read them with the packet.
@@ -256,12 +258,15 @@ def markdown_packet(zip_path: Path) -> Path:
     """Render the packet as one readable Markdown file beside the ZIP.
 
     Text members become `## FILE:` sections in packet order; the JSON
-    manifest keeps a four-backtick fence so inner fences survive; binary
-    or oversized members are listed as separate attachments instead of
-    being embedded, because the assistant reads text, not encoded bytes.
+    manifest keeps a four-backtick fence so inner fences survive.
+    Binary reference files carry their extracted text — the assistant
+    reads words, not encoded bytes — and only files with nothing to
+    extract (images, scanned documents) ride as separate attachments.
     """
+    from maintain.extract import EXTRACTORS, extract_text
+
     sections: list[str] = []
-    sidecars: list[str] = []
+    sidecars: list[tuple[str, str]] = []
     names: list[str] = []
     with zipfile.ZipFile(zip_path) as archive:
         for info in archive.infolist():
@@ -269,12 +274,31 @@ def markdown_packet(zip_path: Path) -> Path:
                 continue
             name = info.filename
             raw = archive.read(info)
+            # Extractable formats extract by format, never by byte-sniff:
+            # an all-ASCII PDF is still a PDF, not prose.
+            if PurePosixPath(name).suffix.lower() in EXTRACTORS:
+                extracted = extract_text(name, raw)
+                if extracted.ok:
+                    names.append(f"{name} (extracted text)")
+                    sections.append(
+                        f"## FILE: {name} (extracted text)\n\n"
+                        f"{extracted.text}")
+                else:
+                    sidecars.append((name, extracted.note))
+                continue
             try:
                 content = raw.decode("utf-8")
                 if "\x00" in content:
                     raise UnicodeDecodeError("utf-8", raw, 0, 1, "binary")
             except UnicodeDecodeError:
-                sidecars.append(name)
+                extracted = extract_text(name, raw)
+                if extracted.ok:
+                    names.append(f"{name} (extracted text)")
+                    sections.append(
+                        f"## FILE: {name} (extracted text)\n\n"
+                        f"{extracted.text}")
+                else:
+                    sidecars.append((name, extracted.note))
                 continue
             names.append(name)
             if name.endswith(".json"):
@@ -285,8 +309,9 @@ def markdown_packet(zip_path: Path) -> Path:
     index = "\n".join(f"- {name}" for name in names)
     extra = ""
     if sidecars:
-        listed = "\n".join(f"- {name} — {MARKDOWN_BINARY_NOTE}"
-                           for name in sidecars)
+        listed = "\n".join(
+            f"- {name} — {MARKDOWN_BINARY_NOTE} ({note})"
+            for name, note in sidecars)
         extra = f"\n### Attached separately\n\n{listed}\n"
     document = (f"{MARKDOWN_HEADER}\n## INDEX\n\n{index}\n{extra}\n"
                 + "\n\n".join(sections) + "\n")
@@ -303,16 +328,25 @@ def packet_for_style(zip_path: Path, style: str) -> Path:
 
 
 def packet_sidecars(zip_path: Path) -> list[str]:
-    """Names of packet members that ride as separate attachments."""
+    """Members that must ride as separate attachments: binary files
+    whose text the extractor cannot recover."""
+    from maintain.extract import EXTRACTORS, extract_text
+
     sidecars: list[str] = []
     with zipfile.ZipFile(zip_path) as archive:
         for info in archive.infolist():
             if info.is_dir():
                 continue
+            name = info.filename
             raw = archive.read(info)
+            if PurePosixPath(name).suffix.lower() in EXTRACTORS:
+                if not extract_text(name, raw).ok:
+                    sidecars.append(name)
+                continue
             try:
                 if "\x00" in raw.decode("utf-8"):
                     raise UnicodeDecodeError("utf-8", raw, 0, 1, "binary")
             except UnicodeDecodeError:
-                sidecars.append(info.filename)
+                if not extract_text(name, raw).ok:
+                    sidecars.append(name)
     return sidecars

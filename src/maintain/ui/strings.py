@@ -233,8 +233,8 @@ STR: dict[str, str] = {
     "send.step.sync": "Wait for the synchronization",
     "package.markdown": "One Markdown file",
     "package.markdown.sub": "The whole packet in one readable file. "
-                            "Copilot reads it directly. Files that are "
-                            "not text ride as separate attachments.",
+                            "The tool extracts the text from PDF and "
+                            "Office files into it.",
     "explain.install.title": "Install the video feature?",
     "explain.install.body": "Manim is not installed. The tool installs "
                             "it into its own environment. This can "
