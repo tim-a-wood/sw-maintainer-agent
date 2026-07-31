@@ -57,7 +57,9 @@ STR: dict[str, str] = {
     "activity.issue": "Repair",
     "home.explain.continue": "Continue the explanation",
     "home.explain.continue.sub": "The tool waits for the scene reply.",
-    "home.rename": "Rename",
+    "foot.name.unset": "Add a name…",
+    "foot.name.tip": "This is the name of this work. Select it to change "
+                     "the name.",
     "stop.name.title": "Name this work",
     "stop.name.body": "The name shows on the home screen. An empty name "
                       "changes nothing.",

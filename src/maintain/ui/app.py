@@ -201,6 +201,10 @@ class MainWindow(QMainWindow):
         if self.controller.busy:
             self.controller.stop()
             self.controller.wait_settled()
+            pending = getattr(self, "_rename_pending", None)
+            if pending:
+                self.controller.set_run_name(pending[0], pending[1])
+                self._rename_pending = None
             summary = self.controller.resumable_run()
             if summary is not None and not summary.name:
                 value = self.ask_line(text("stop.name.title"),
@@ -222,6 +226,14 @@ class MainWindow(QMainWindow):
         self.foot_project.clicked.connect(self._pick_project)
         row.addWidget(self.foot_project)
         self._set_project_chip(self.store.config.name)
+        self.foot_name = QPushButton("")
+        self.foot_name.setObjectName("Ghost")
+        self.foot_name.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.foot_name.setToolTip(text("foot.name.tip"))
+        self.foot_name.clicked.connect(
+            lambda checked=False: self._rename_run(
+                getattr(self, "_foot_run_id", "")))
+        row.addWidget(self.foot_name)
         self.foot_label = QLabel("")
         self.foot_label.setObjectName("FootLabel")
         row.addWidget(self.foot_label)
@@ -298,7 +310,6 @@ class MainWindow(QMainWindow):
         self.home.open_explain.connect(self.show_explain)
         self.home.continue_run.connect(self._continue_run)
         self.home.continue_explain.connect(self._resume_explain)
-        self.home.rename_run.connect(self._rename_run)
 
         self.issues_list.open_issue.connect(self._open_issue)
         self.issues_list.add_issue.connect(self._new_issue)
@@ -1158,12 +1169,33 @@ class MainWindow(QMainWindow):
         self.stage_header.setVisible(True)
         self.stage_header.set_stage(index)
 
+    def _run_name_on_disk(self, run_id: str) -> str | None:
+        """The stored name — or None when no run record exists, as for
+        the run-less side flows (scan, discuss, explain)."""
+        import json
+        path = self.store.config.runtime_root / run_id / "run.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return str(data.get("name", ""))
+
     def _set_run_footer(self, active: bool, run_id: str = "") -> None:
         self.foot_history.setVisible(active)
         self.foot_stop.setVisible(active)
         self.foot_label.setText(
             text("app.footer", run=run_id) if active and run_id
             else "Maintain")
+        # FR-N2: the open workflow labels its name in the foot bar; a
+        # click edits it. Side flows have no run record and no name.
+        name = self._run_name_on_disk(run_id) if active and run_id else None
+        pending = getattr(self, "_rename_pending", None)
+        if pending and pending[0] == run_id:
+            name = pending[1]
+        self._foot_run_id = run_id if name is not None else ""
+        self.foot_name.setVisible(name is not None)
+        self.foot_name.setText(
+            chip_name(name) if name else text("foot.name.unset"))
 
     # ----- run start and resume -----
 
@@ -1452,6 +1484,12 @@ class MainWindow(QMainWindow):
     def _run_settled(self, record: RunRecord) -> None:
         self.current_record = record
         self._in_test = False
+        pending = getattr(self, "_rename_pending", None)
+        if pending and pending[0] == record.run_id:
+            # The mid-run rename lands now, on settled ground.
+            self.controller.set_run_name(record.run_id, pending[1])
+            record.name = pending[1]
+            self._rename_pending = None
         if getattr(self, "_name_after_stop", False):
             self._name_after_stop = False
             # FR-N1: named work stays named without a question; only an
@@ -1768,19 +1806,26 @@ class MainWindow(QMainWindow):
         return entered if accepted and entered else None
 
     def _rename_run(self, run_id: str) -> None:
-        """FR-N2: the name is editable right where it shows."""
-        if self.controller.busy:
-            self.toast(text("issues.busy"))
+        """FR-N2: the name is editable right where it shows, on the open
+        workflow. While the engine is busy the write waits for the
+        settle, so it never races the engine's own run.json writes."""
+        if not run_id:
             return
-        summary = next((item for item in self.controller.runs()
-                        if item.run_id == run_id), None)
-        if summary is None:
+        stored = self._run_name_on_disk(run_id)
+        if stored is None:
             return
+        pending = getattr(self, "_rename_pending", None)
+        current = (pending[1] if pending and pending[0] == run_id
+                   else stored)
         value = self.ask_line(text("stop.name.title"),
-                              text("stop.name.body"), value=summary.name)
-        if value and value != summary.name:
+                              text("stop.name.body"), value=current)
+        if not value or value == current:
+            return
+        if self.controller.busy:
+            self._rename_pending = (run_id, value)
+        else:
             self.controller.set_run_name(run_id, value)
-            self.show_home()
+        self._set_run_footer(True, run_id)
 
     def ask_choice(self, title: str, body: str,
                    options: list[str]) -> str | None:

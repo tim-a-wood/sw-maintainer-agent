@@ -966,9 +966,17 @@ Two frictions from daily use. The naming prompt asked on every stop
 and every close, named or not. The question now comes after the engine
 settles — when the record is in hand and knows whether a name exists —
 so named work stops and closes with no question, and unnamed work gets
-exactly one. The name is editable where it shows: a Rename button sits
-beside the home continue card, and the dialog opens prefilled with the
-current name.
+exactly one.
+
+The name lives on the open workflow, not the home screen. The foot
+bar — visible on every screen of a run — labels the run's name beside
+its id ("Add a name…" until one exists), and a click edits it,
+prefilled. A rename made while the engine is busy shows at once but
+writes only at the next settle, so it never races the engine's own
+run.json writes; closing first applies it on the way out. Run-less
+side flows (scan, discuss, explain) carry no name chip. The home
+continue card still leads with the name; its Rename button — one
+review round old — is gone.
 
 Setup reinstalled every dependency on every run: `pipx install
 --force` rebuilt the whole environment, PySide6 and Manim downloads

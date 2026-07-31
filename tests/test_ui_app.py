@@ -524,6 +524,8 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     assert _screen(window) == "exchange"
     assert window._side is not None
     assert window.current_handoff.task_key == "scan"
+    # A run-less side flow carries no name chip in the foot bar.
+    assert not window.foot_name.isVisibleTo(window)
     with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
         assert {"TASK.md", "GLOBAL.md", "CODEBASE.md"} <= set(archive.namelist())
 
@@ -717,6 +719,8 @@ def test_stop_pauses_names_the_run_and_home_offers_continue(
     window.describe.request_edit.setPlainText("Change the value to after.")
     window.describe._start()
     wait_until(qt_app, lambda: _screen(window) == "exchange", message="plan packet")
+    from maintain.ui.strings import text as ui_text
+    assert window.foot_name.text() == ui_text("foot.name.unset")
 
     window._stop_run()
     wait_until(qt_app, lambda: _screen(window) == "home", message="home after stop")
@@ -738,19 +742,23 @@ def test_stop_pauses_names_the_run_and_home_offers_continue(
     wait_until(qt_app, lambda: _screen(window) == "exchange", message="resumed packet")
     assert window.current_handoff.task_key == "plan"
 
-    # FR-N1: a named run stops again without another question.
-    window._stop_run()
-    wait_until(qt_app, lambda: not window.controller.busy, message="second stop")
-    assert len(asked) == 1
-    assert window.controller.resumable_run().name == "Wire the loader"
-
-    # FR-N2: Rename edits in place, with the old name in the dialog.
+    # FR-N2: the open workflow labels its name in the foot bar; a click
+    # edits it, prefilled, and the write lands when the engine settles.
+    assert window.foot_name.text() == "Wire the loader"
     window.ask_line = lambda *args, **kwargs: (
         asked.append(kwargs.get("value", "")) or "Rework the loader")
-    window.show_home()
-    window.home.rename_button.click()
+    window.foot_name.click()
     assert asked[-1] == "Wire the loader"   # prefilled for the edit
+    assert window.foot_name.text() == "Rework the loader"   # shown at once
+
+    # FR-N1: the named run stops with no further question, and the
+    # queued rename lands at the settle.
+    before = len(asked)
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="second stop")
+    assert len(asked) == before
     assert window.controller.resumable_run().name == "Rework the loader"
+    window.show_home()
     assert "Rework the loader" in window.home._continue.title_label.text()
     window.controller.stop()
     wait_until(qt_app, lambda: not window.controller.busy, message="pause settled")
