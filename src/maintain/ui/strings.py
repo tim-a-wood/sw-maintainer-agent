@@ -57,6 +57,9 @@ STR: dict[str, str] = {
     "activity.issue": "Repair",
     "home.explain.continue": "Continue the explanation",
     "home.explain.continue.sub": "The tool waits for the scene reply.",
+    "foot.home": "Home",
+    "theme.symbol.light": "☀",
+    "theme.symbol.dark": "☾",
     "foot.name.unset": "Add a name…",
     "foot.name.tip": "This is the name of this work. Select it to change "
                      "the name.",

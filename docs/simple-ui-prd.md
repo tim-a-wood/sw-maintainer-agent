@@ -1020,3 +1020,19 @@ plain message and carries a Browse button. The Explain page saved any
 command with no feedback; it now says at open and after save whether
 the render command resolves. And the project-documents explanation no
 longer vanishes behind the "No documents yet" note.
+
+### 14.28 The name heads the run; the foot bar breathes
+
+The real machine showed the run name squashed to "esting a workflov"
+in a foot bar carrying six things. The name now heads the workflow
+screens: a slim row above the stage header, full width, elided at 42
+characters instead of 24, still one click from the rename dialog, and
+"Add a name…" until a name exists. It appears on the run screens
+alone — side flows and the home screen carry no head — and the window
+grew 36 pixels so the exchange content keeps its guaranteed fit.
+
+The foot bar slimmed to match: the name chip left, the theme toggle
+is one symbol (☀ in the dark theme, ☾ in the light; the words moved
+to the tooltip), and a Home button joined — one click back from any
+screen, pairing with the Continue card that returns to the exact
+waiting screen with the head, the stage header, and Stop restored.

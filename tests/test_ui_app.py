@@ -316,10 +316,12 @@ def test_theme_defaults_dark_toggles_and_persists(qt_app, tmp_path, monkeypatch)
     config = _project(tmp_path)
     window = MainWindow(config)
     assert window._theme == "dark"
-    assert window.foot_theme.text() == "Light mode"
+    assert window.foot_theme.text() == "☀"
+    assert window.foot_theme.toolTip() == "Light mode"
     window.toggle_theme()
     assert window._theme == "light"
-    assert window.foot_theme.text() == "Dark mode"
+    assert window.foot_theme.text() == "☾"
+    assert window.foot_theme.toolTip() == "Dark mode"
     from maintain.repository_memory import load_ui_settings
     assert load_ui_settings()["theme"] == "light"
     second = MainWindow(config)
@@ -525,7 +527,7 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     assert window._side is not None
     assert window.current_handoff.task_key == "scan"
     # A run-less side flow carries no name chip in the foot bar.
-    assert not window.foot_name.isVisibleTo(window)
+    assert not window._run_head.isVisibleTo(window)
     with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
         assert {"TASK.md", "GLOBAL.md", "CODEBASE.md"} <= set(archive.namelist())
 
@@ -720,7 +722,7 @@ def test_stop_pauses_names_the_run_and_home_offers_continue(
     window.describe._start()
     wait_until(qt_app, lambda: _screen(window) == "exchange", message="plan packet")
     from maintain.ui.strings import text as ui_text
-    assert window.foot_name.text() == ui_text("foot.name.unset")
+    assert window.run_name.text() == ui_text("foot.name.unset")
 
     window._stop_run()
     wait_until(qt_app, lambda: _screen(window) == "home", message="home after stop")
@@ -744,12 +746,12 @@ def test_stop_pauses_names_the_run_and_home_offers_continue(
 
     # FR-N2: the open workflow labels its name in the foot bar; a click
     # edits it, prefilled, and the write lands when the engine settles.
-    assert window.foot_name.text() == "Wire the loader"
+    assert window.run_name.text() == "Wire the loader"
     window.ask_line = lambda *args, **kwargs: (
         asked.append(kwargs.get("value", "")) or "Rework the loader")
-    window.foot_name.click()
+    window.run_name.click()
     assert asked[-1] == "Wire the loader"   # prefilled for the edit
-    assert window.foot_name.text() == "Rework the loader"   # shown at once
+    assert window.run_name.text() == "Rework the loader"   # shown at once
 
     # FR-N1: the named run stops with no further question, and the
     # queued rename lands at the settle.
@@ -1227,3 +1229,41 @@ def test_close_asks_a_name_only_for_unnamed_work(qt_app, tmp_path,
     window2.close()
     assert asked == [1]
     assert window2.controller.resumable_run().name == "Night work"
+
+
+def test_foot_home_and_the_theme_symbol(qt_app, tmp_path, monkeypatch):
+    """The foot bar: Home returns from anywhere, the theme toggle is
+    one symbol, and the run name heads the run screens instead of
+    squashing into the foot."""
+    from maintain.ui.strings import text as ui_text
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.ask_confirm = lambda *args, **kwargs: True
+    window.ask_line = lambda *args, **kwargs: None
+
+    # Dark by default: the symbol offers the light mode, with words in
+    # the tooltip.
+    assert window.foot_theme.text() == ui_text("theme.symbol.light")
+    assert window.foot_theme.toolTip() == ui_text("theme.to_light")
+    window.toggle_theme()
+    assert window.foot_theme.text() == ui_text("theme.symbol.dark")
+    window.toggle_theme()
+
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="packet")
+    assert window._run_head.isVisibleTo(window)
+    assert window.run_name.text() == ui_text("foot.name.unset")
+
+    # Home leaves the run; Continue returns with the head restored.
+    window.foot_home.click()
+    assert _screen(window) == "home"
+    assert not window._run_head.isVisibleTo(window)
+    window.home.continue_run.emit(window.current_handoff.request.run_id)
+    assert _screen(window) == "exchange"
+    assert window._run_head.isVisibleTo(window)
+    assert window.foot_stop.isVisibleTo(window)
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stopped")

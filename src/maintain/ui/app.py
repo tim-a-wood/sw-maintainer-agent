@@ -62,9 +62,9 @@ from .widgets import StageHeader, ToastStack
 STAGE_FOR_TASK = {"plan": 0, "build": 1, "repair": 1, "review": 2}
 
 
-def chip_name(name: str) -> str:
+def chip_name(name: str, limit: int = 24) -> str:
     """The foot chip keeps its width; long project names elide hard."""
-    return name if len(name) <= 24 else name[:23] + "…"
+    return name if len(name) <= limit else name[:limit - 1] + "…"
 
 
 @contextlib.contextmanager
@@ -110,7 +110,9 @@ class MainWindow(QMainWindow):
     def __init__(self, config: ProjectConfig) -> None:
         super().__init__()
         self.setWindowTitle(f"{text('app.title')} — {config.name}")
-        self.resize(640, 830)
+        # Height covers the run-name head, the tallest screen content
+        # (700px, pinned by test), and the foot bar.
+        self.resize(640, 866)
         self.setMinimumSize(520, 620)
         self._theme = saved_theme()
         self.apply_theme(self._theme, persist=False)
@@ -134,6 +136,25 @@ class MainWindow(QMainWindow):
         column = QVBoxLayout(central)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(0)
+        # FR-N2: the run's name heads the workflow screens — full
+        # width, never squashed — and a click still edits it.
+        self._run_head = QWidget()
+        head_row = QHBoxLayout(self._run_head)
+        head_row.setContentsMargins(12, 6, 12, 0)
+        head_row.setSpacing(0)
+        self.run_name = QPushButton("")
+        self.run_name.setObjectName("Ghost")
+        self.run_name.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.run_name.setToolTip(text("foot.name.tip"))
+        self.run_name.clicked.connect(
+            lambda checked=False: self._rename_run(
+                getattr(self, "_foot_run_id", "")))
+        head_row.addWidget(self.run_name)
+        head_row.addStretch(1)
+        self._run_head.setVisible(False)
+        self._run_head_on = False
+        self._current_screen = ""
+        column.addWidget(self._run_head)
         self.stage_header = StageHeader()
         self.stage_header.setVisible(False)
         column.addWidget(self.stage_header)
@@ -226,23 +247,22 @@ class MainWindow(QMainWindow):
         self.foot_project.clicked.connect(self._pick_project)
         row.addWidget(self.foot_project)
         self._set_project_chip(self.store.config.name)
-        self.foot_name = QPushButton("")
-        self.foot_name.setObjectName("Ghost")
-        self.foot_name.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.foot_name.setToolTip(text("foot.name.tip"))
-        self.foot_name.clicked.connect(
-            lambda checked=False: self._rename_run(
-                getattr(self, "_foot_run_id", "")))
-        row.addWidget(self.foot_name)
         self.foot_label = QLabel("")
         self.foot_label.setObjectName("FootLabel")
         row.addWidget(self.foot_label)
         row.addStretch(1)
-        self.foot_theme = QPushButton(
-            text("theme.to_light" if self._theme == "dark" else "theme.to_dark"))
+        self.foot_home = QPushButton(text("foot.home"))
+        self.foot_home.setObjectName("Ghost")
+        self.foot_home.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.foot_home.clicked.connect(self.show_home)
+        row.addWidget(self.foot_home)
+        # The theme toggle is one symbol: the mode a click switches to.
+        self.foot_theme = QPushButton("")
         self.foot_theme.setObjectName("Ghost")
         self.foot_theme.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.foot_theme.setFixedWidth(34)
         self.foot_theme.clicked.connect(self.toggle_theme)
+        self._set_theme_symbol(self._theme)
         row.addWidget(self.foot_theme)
         self.foot_history = QPushButton(text("home.history"))
         self.foot_history.setObjectName("Ghost")
@@ -456,11 +476,17 @@ class MainWindow(QMainWindow):
             values["theme"] = name
             save_ui_settings(values)
         if hasattr(self, "foot_theme"):
-            self.foot_theme.setText(
-                text("theme.to_light" if name == "dark" else "theme.to_dark"))
+            self._set_theme_symbol(name)
         if hasattr(self, "stage_header"):
             self.stage_header.update()
         self.update()
+
+    def _set_theme_symbol(self, name: str) -> None:
+        dark = name == "dark"
+        self.foot_theme.setText(text(
+            "theme.symbol.light" if dark else "theme.symbol.dark"))
+        self.foot_theme.setToolTip(text(
+            "theme.to_light" if dark else "theme.to_dark"))
 
     def toggle_theme(self) -> None:
         self.apply_theme("light" if self._theme == "dark" else "dark")
@@ -471,10 +497,13 @@ class MainWindow(QMainWindow):
         {"exchange", "plan", "findings", "test", "save", "done", "busy"})
 
     def show_screen(self, name: str) -> None:
+        self._current_screen = name
         if name != "busy":
             self._busy_timer.stop()
         if name not in self.RUN_FLOW_SCREENS:
             self.stage_header.setVisible(False)
+        self._run_head.setVisible(
+            self._run_head_on and name in self.RUN_FLOW_SCREENS)
         if name == "exchange" and self.current_handoff is not None:
             step = text("wait.step." + self.current_handoff.task_key)
             self.setWindowTitle(text("app.waiting", step=step))
@@ -1188,16 +1217,19 @@ class MainWindow(QMainWindow):
         self.foot_label.setText(
             text("app.footer", run=run_id) if active and run_id
             else "Maintain")
-        # FR-N2: the open workflow labels its name in the foot bar; a
-        # click edits it. Side flows have no run record and no name.
+        # FR-N2: the open workflow heads its screens with the run's
+        # name; a click edits it. Side flows have no record and no name.
         name = self._run_name_on_disk(run_id) if active and run_id else None
         pending = getattr(self, "_rename_pending", None)
         if pending and pending[0] == run_id:
             name = pending[1]
         self._foot_run_id = run_id if name is not None else ""
-        self.foot_name.setVisible(name is not None)
-        self.foot_name.setText(
-            chip_name(name) if name else text("foot.name.unset"))
+        self._run_head_on = name is not None
+        self.run_name.setText(
+            chip_name(name, 42) if name else text("foot.name.unset"))
+        self._run_head.setVisible(
+            self._run_head_on
+            and self._current_screen in self.RUN_FLOW_SCREENS)
 
     # ----- run start and resume -----
 
@@ -1237,9 +1269,13 @@ class MainWindow(QMainWindow):
     def _continue_run(self, run_id: str) -> None:
         # The run may already be open and waiting in this window — a
         # walk to Settings and back must not turn Continue into a dead
-        # click. Return to the screen the run waits on.
+        # click. Return to the screen the run waits on, with the name
+        # head, the stage header, and the Stop button restored.
         if (self.controller.busy and self.current_handoff is not None
                 and self.current_handoff.request.run_id == run_id):
+            self._set_run_footer(True, run_id)
+            self._set_stage(STAGE_FOR_TASK.get(
+                self.current_handoff.task_key, 0))
             self.show_screen(getattr(self, "_wait_screen", "exchange"))
             return
         summary = next((item for item in self.controller.runs()
