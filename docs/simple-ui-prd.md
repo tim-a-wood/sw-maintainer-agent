@@ -769,3 +769,21 @@ it found, and what changed:
   on Windows, so the app starts like an app, not a terminal command.
 - The exchange waiting counter stops ticking when the screen is not
   visible and resumes when it returns.
+
+### 14.17 The step checklist and the fitted exchange
+
+Two observations from the real computer:
+
+- Long waits showed one spinner and one status line. The Busy screen
+  and the Explain render screen now carry a step checklist in the CLI
+  style: braille-dots animation on the running step, a green check
+  when it completes, a red cross when it fails. The engine's own
+  progress events drive the run checklist; the render worker reports
+  its stages (check the scene, check the geometry, render the video).
+- The exchange screen's reply zone was cut off at the bottom: its
+  content wanted 846 px against a 720 px viewport, hidden on Linux by
+  smaller fonts. The content now measures 682 px: the reply zone is
+  slim, the two receive actions share one row, the regions and the
+  column are tighter, and the default window grew to 640×830. A
+  regression test pins the content height under 700 px so it cannot
+  quietly grow past the window again.

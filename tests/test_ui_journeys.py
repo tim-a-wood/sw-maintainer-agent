@@ -835,3 +835,59 @@ def test_app_icon_paints_every_size(qt_app):
     icon = app_icon()
     assert not icon.isNull()
     assert len(icon.availableSizes()) >= 5
+
+
+def test_exchange_screen_fits_the_default_window(qt_app, tmp_path,
+                                                 monkeypatch):
+    """The screenshot from the real computer showed the reply zone cut
+    off; the content must fit the default window with slack to spare."""
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    window.show()
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               message="plan packet")
+    scroll = window.exchange.layout().itemAt(0).widget()
+    content = scroll.widget().sizeHint().height()
+    assert content <= 700, f"exchange content grew to {content}px"
+    assert content <= scroll.viewport().height(), "the reply zone is cut off"
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
+    window.close()
+    assert not errors, errors
+
+
+def test_busy_steps_animate_and_check_off(qt_app, tmp_path, monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    window.busy.show_message("The tool builds the plan package.")
+    assert window.busy.steps._column.count() == 0
+    window.busy.on_progress("start", "FILES", "Find the project files")
+    assert window.busy.steps._active is not None
+    window.busy.on_progress("complete", "FILES", "Selected the files")
+    assert window.busy.steps._active is None
+    window.busy.on_progress("start", "PACKET", "Build the plan package")
+    window.busy.on_progress("failed", "PACKET", "The build stopped")
+    marks = []
+    for index in range(window.busy.steps._column.count()):
+        holder = window.busy.steps._column.itemAt(index).widget()
+        marks.append(holder.layout().itemAt(0).widget().text())
+    assert marks == ["✓", "✗"]
+    window.busy.show_message("Again")
+    assert window.busy.steps._column.count() == 0
+
+
+def test_explain_render_steps_reach_the_result_screen(qt_app, tmp_path,
+                                                      monkeypatch):
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    window.explain_result.show_running("/tmp/render")
+    assert window.explain_result.steps._column.count() == 1   # scene check ✓
+    window.explain_render_step.emit("start", "Check the geometry")
+    qt_app.processEvents()
+    assert window.explain_result.steps._active is not None
+    window.explain_render_step.emit("complete", "")
+    window.explain_render_step.emit("start", "Render the video")
+    window.explain_render_step.emit("failed", "")
+    qt_app.processEvents()
+    assert window.explain_result.steps._active is None
+    assert window.explain_result.steps._column.count() == 3

@@ -30,8 +30,8 @@ from .config_store import BUILTIN_PROMPTS, ConfigStore
 from .strings import text
 from .widgets import (ChoiceButton, DiffHighlighter, DropZone, ElidedLabel,
                       FileChips, IconSquare, NumberBadge, PacketCard, Spinner,
-                      StateChip, StatusLine, TimelineDot, button, label,
-                      palette, run_state_chip)
+                      StateChip, StatusLine, StepTicker, TimelineDot, button,
+                      label, palette, run_state_chip)
 
 TASK_TITLES = {"plan": "send.plan.title", "build": "send.build.title",
                "repair": "send.repair.title", "review": "send.review.title",
@@ -351,6 +351,8 @@ class ExchangeScreen(Screen):
         self.handoff: PacketHandoff | None = None
         self.reply_open = False
         self.package_style = "zip"
+        self.column.setContentsMargins(26, 14, 26, 16)
+        self.column.setSpacing(8)
         self.eyebrow = label("", "Eyebrow")
         self.add(self.eyebrow)
         self.title = label("", "Title")
@@ -360,15 +362,15 @@ class ExchangeScreen(Screen):
         send_frame = QFrame()
         send_frame.setObjectName("SendRegion")
         send_column = QVBoxLayout(send_frame)
-        send_column.setContentsMargins(14, 12, 14, 12)
-        send_column.setSpacing(9)
+        send_column.setContentsMargins(14, 10, 14, 10)
+        send_column.setSpacing(7)
         send_head = QLabel(text("exchange.send.head").upper())
         send_head.setObjectName("SendHead")
         send_column.addWidget(send_head)
         self._send_full = QWidget()
         full_column = QVBoxLayout(self._send_full)
         full_column.setContentsMargins(0, 0, 0, 0)
-        full_column.setSpacing(9)
+        full_column.setSpacing(7)
         send_column.addWidget(self._send_full)
         send_column = full_column
         self.send_lead = label(text("send.lead"), "Lead")
@@ -440,14 +442,14 @@ class ExchangeScreen(Screen):
         self.send_status = StatusLine()
         outer_send.addWidget(self.send_status)
         self.add(send_frame)
-        self.add_gap(2)
+        self.add_gap(1)
 
         # ---- the receive region ----
         receive_frame = QFrame()
         receive_frame.setObjectName("ReceiveRegion")
         receive_column = QVBoxLayout(receive_frame)
-        receive_column.setContentsMargins(14, 12, 14, 12)
-        receive_column.setSpacing(9)
+        receive_column.setContentsMargins(14, 10, 14, 10)
+        receive_column.setSpacing(7)
         receive_head = QLabel(text("exchange.receive.head").upper())
         receive_head.setObjectName("ReceiveHead")
         receive_column.addWidget(receive_head)
@@ -455,27 +457,25 @@ class ExchangeScreen(Screen):
         receive_column.addWidget(self.waiting_label)
         self.lead = label("", "Lead")
         receive_column.addWidget(self.lead)
+        # One row holds both receive actions; the screen fits the window.
         self.newest_button = button(text("exchange.newest"), "Primary",
                                     self.newest_download.emit)
-        newest_row = QHBoxLayout()
-        newest_row.addWidget(self.newest_button)
-        newest_row.addStretch(1)
-        newest_holder = QWidget()
-        newest_holder.setLayout(newest_row)
-        receive_column.addWidget(newest_holder)
-        reply_zone = DropZone(text("receive.drop"), text("exchange.drop.sub"))
-        reply_zone.setMinimumHeight(84)
+        self.paste_button = button(text("receive.paste"), "Secondary",
+                                   self._paste)
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(10)
+        actions_row.addWidget(self.newest_button)
+        actions_row.addWidget(self.paste_button)
+        actions_row.addStretch(1)
+        actions_holder = QWidget()
+        actions_holder.setLayout(actions_row)
+        receive_column.addWidget(actions_holder)
+        reply_zone = DropZone(text("receive.drop"), text("exchange.drop.sub"),
+                              slim=True)
+        reply_zone.setMinimumHeight(64)
         reply_zone.files_dropped.connect(self._dropped)
         reply_zone.clicked.connect(self.import_reply.emit)
         receive_column.addWidget(reply_zone)
-        self.paste_button = button(text("receive.paste"), "Secondary",
-                                   self._paste)
-        paste_row = QHBoxLayout()
-        paste_row.addWidget(self.paste_button)
-        paste_row.addStretch(1)
-        paste_holder = QWidget()
-        paste_holder.setLayout(paste_row)
-        receive_column.addWidget(paste_holder)
         self.status = StatusLine()
         receive_column.addWidget(self.status)
         self.add(receive_frame)
@@ -1693,6 +1693,8 @@ class ExplainResultScreen(Screen):
             self.add(card)
         self.status = StatusLine()
         self.add(self.status)
+        self.steps = StepTicker()
+        self.add(self.steps)
         self.folder_label = ElidedLabel("", "MonoHint")
         self.add(self.folder_label)
         self.sheet_view = QLabel()
@@ -1732,6 +1734,18 @@ class ExplainResultScreen(Screen):
         self.video_button.setVisible(False)
         self.repair_button.setVisible(False)
         self.repair_hint.setVisible(False)
+        self.steps.reset()
+        self.steps.begin(text("step.scene.check"))
+        self.steps.complete()
+
+    def on_render_step(self, phase: str, step: str) -> None:
+        """The render worker reports each stage; the list shows it."""
+        if phase == "start":
+            self.steps.begin(step)
+        elif phase == "complete":
+            self.steps.complete()
+        else:
+            self.steps.fail()
 
     def show_passed(self, sheet=None) -> None:
         self.render_chip.set_state("PASS", "pass")
@@ -1928,6 +1942,15 @@ class BusyScreen(Screen):
         self.elapsed = label("", "Hint")
         self.elapsed.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.add(self.elapsed)
+        self.add_gap(2)
+        steps_row = QHBoxLayout()
+        steps_row.addStretch(2)
+        self.steps = StepTicker()
+        steps_row.addWidget(self.steps, 3)
+        steps_row.addStretch(2)
+        steps_holder = QWidget()
+        steps_holder.setLayout(steps_row)
+        self.add(steps_holder)
         self._started = time.monotonic()
         self._tick_timer = QTimer(self)
         self._tick_timer.setInterval(1000)
@@ -1946,10 +1969,18 @@ class BusyScreen(Screen):
         self.status.setText("")
         self._started = time.monotonic()
         self.elapsed.setText("")
+        self.steps.reset()
 
     def on_progress(self, phase: str, label_key: str, message: str) -> None:
-        if phase in {"start", "complete"}:
+        """Each engine step becomes one checklist row (FR-D5 dopamine)."""
+        if phase == "start":
             self.status.setText(message)
+            self.steps.begin(message)
+        elif phase == "complete":
+            self.status.setText(message)
+            self.steps.complete(message)
+        elif phase == "failed":
+            self.steps.fail(message)
 
 
 class SettingsScreen(Screen):

@@ -76,11 +76,12 @@ def saved_theme() -> str:
 
 class MainWindow(QMainWindow):
     explain_render_done = Signal(object)   # RenderResult, from the worker
+    explain_render_step = Signal(str, str)  # phase, step text
 
     def __init__(self, config: ProjectConfig) -> None:
         super().__init__()
         self.setWindowTitle(f"{text('app.title')} — {config.name}")
-        self.resize(640, 760)
+        self.resize(640, 830)
         self.setMinimumSize(520, 620)
         self._theme = saved_theme()
         self.apply_theme(self._theme, persist=False)
@@ -93,6 +94,8 @@ class MainWindow(QMainWindow):
         self._pending_issue_link = ""
         self._explain: dict | None = None
         self.explain_render_done.connect(self._explain_render_done)
+        self.explain_render_step.connect(
+            lambda phase, step: self.explain_result.on_render_step(phase, step))
         self._busy_timer = QTimer(self)
         self._busy_timer.setSingleShot(True)
         self._busy_timer.timeout.connect(self._busy_now)
@@ -924,9 +927,14 @@ class MainWindow(QMainWindow):
         class_name = scene_class_name(source)
 
         def work_thread() -> None:
+            self.explain_render_step.emit("start", text("step.render.probe"))
             geometry = probe_scene(source, probe_dir, class_name)
+            self.explain_render_step.emit("complete", "")
+            self.explain_render_step.emit("start", text("step.render.video"))
             result = render_scene(source, work, manim_command=command,
                                   scene_class=class_name)
+            self.explain_render_step.emit(
+                "complete" if result.ok else "failed", "")
             self.explain_render_done.emit((geometry, result))
 
         threading.Thread(target=work_thread, daemon=True,

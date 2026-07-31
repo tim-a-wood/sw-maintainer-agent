@@ -229,6 +229,9 @@ STR: dict[str, str] = {
     "projects.all": "All projects…",
     "include.code": "Include the project code and tests",
     "code.added": "Added {count} code files to the package.",
+    "step.scene.check": "Check the scene",
+    "step.render.probe": "Check the geometry",
+    "step.render.video": "Render the video",
     "foot.project.tip": "This is the open project. Select it to open a "
                         "different project.",
 

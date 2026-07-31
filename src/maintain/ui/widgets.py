@@ -827,3 +827,86 @@ def app_icon() -> QIcon:
         painter.end()
         icon.addPixmap(pixmap)
     return icon
+
+
+DOTS_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+class StepTicker(QWidget):
+    """One row per step: the CLI dots animation while it runs, a check
+    mark when it completes, a cross when it fails."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._column = QVBoxLayout(self)
+        self._column.setContentsMargins(0, 0, 0, 0)
+        self._column.setSpacing(4)
+        self._active: QLabel | None = None
+        self._frame = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(80)
+        self._timer.timeout.connect(self._advance)
+
+    def reset(self) -> None:
+        self._timer.stop()
+        self._active = None
+        while self._column.count():
+            item = self._column.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+
+    def begin(self, message: str) -> None:
+        self.complete()
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        glyph = QLabel(DOTS_FRAMES[0])
+        glyph.setStyleSheet(
+            f"color: {theme.ACTIVE.accent}; font-weight: 700;")
+        glyph.setFixedWidth(16)
+        step = QLabel(message)
+        step.setObjectName("Dim")
+        step.setWordWrap(True)
+        row.addWidget(glyph, alignment=Qt.AlignmentFlag.AlignTop)
+        row.addWidget(step, 1)
+        holder = QWidget()
+        holder.setLayout(row)
+        self._column.addWidget(holder)
+        self._active = glyph
+        self._frame = 0
+        if self.isVisible():
+            self._timer.start()
+
+    def complete(self, message: str = "") -> None:
+        self._settle("✓", theme.ACTIVE.ok, message)
+
+    def fail(self, message: str = "") -> None:
+        self._settle("✗", theme.ACTIVE.bad, message)
+
+    def _settle(self, mark: str, color: str, message: str) -> None:
+        if self._active is None:
+            return
+        self._active.setText(mark)
+        self._active.setStyleSheet(f"color: {color}; font-weight: 700;")
+        if message:
+            row = self._active.parentWidget().layout()
+            step = row.itemAt(1).widget()
+            if step is not None:
+                step.setText(message)
+        self._active = None
+        self._timer.stop()
+
+    def _advance(self) -> None:
+        if self._active is None:
+            self._timer.stop()
+            return
+        self._frame = (self._frame + 1) % len(DOTS_FRAMES)
+        self._active.setText(DOTS_FRAMES[self._frame])
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if self._active is not None:
+            self._timer.start()
+        super().showEvent(event)
