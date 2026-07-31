@@ -90,9 +90,18 @@ class WorkflowEngine:
         self.transition_hook = transition_hook
         self.gates = gates or WorkflowGates()
         self.issues = issues
+        # Maintain's own configuration files live in the repository but
+        # are read live at packet-build time — they are not part of the
+        # code snapshot a run works on. Without these excludes, editing
+        # a prompt in Settings dirties the repository and every later
+        # run refuses with "uncommitted changes".
+        own_files = [".maintain.json", ".maintain-prompts"]
+        global_prompt = Path(config.package.global_prompt)
+        if not global_prompt.is_absolute():
+            own_files.append(global_prompt.as_posix())
         self.workspaces = WorkspaceManager(config.repository,
                                            config.runtime_root.parent / "workspaces",
-                                           (".maintain.json",))
+                                           tuple(own_files))
         self.runner = CommandRunner(
             config.max_command_log_bytes,
             source_repository=config.repository,

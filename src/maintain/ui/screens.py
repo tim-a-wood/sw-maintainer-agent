@@ -546,6 +546,19 @@ class ExchangeScreen(Screen):
                 return
         super().keyPressEvent(event)
 
+    def refresh_style(self) -> None:
+        """Re-show the open packet after a style change; the clipboard
+        gets the file in the new style too. No change, no work."""
+        if self.handoff is None:
+            return
+        from maintain.zip_package import packet_for_style
+        shown = packet_for_style(self.handoff.zip_path, self.package_style)
+        if self.card.packet_path == shown:
+            return
+        self.card.set_packet(shown,
+                             shown.stat().st_size if shown.is_file() else 0)
+        self.auto_copy()
+
     def update_packet(self, zip_path: Path, attachment_names: list[str],
                       document_count: int) -> None:
         from maintain.zip_package import packet_for_style
@@ -1899,6 +1912,8 @@ class ExplainSettingsPage(Screen):
         self.command_edit = QLineEdit()
         self.add(self.command_edit)
         self.add(label(text("explain.set.command.hint"), "Hint"))
+        self.status = StatusLine()
+        self.add(self.status)
         self.add(label(text("explain.set.install"), "MonoHint"))
         self.add_gap()
         self.add_row(
@@ -1907,6 +1922,13 @@ class ExplainSettingsPage(Screen):
 
     def load(self, command: str) -> None:
         self.command_edit.setText(command)
+
+    def show_state(self, ok: bool, command: str) -> None:
+        """Whether the render command resolves, right where it is set."""
+        self.status.set_state(
+            "ok" if ok else "warn",
+            text("explain.set.found", name=command) if ok
+            else text("explain.set.absent"))
 
     def value(self) -> str:
         return self.command_edit.text().strip() or "manim"
@@ -2111,6 +2133,7 @@ class SettingsScreen(Screen):
 class DownloadsPage(Screen):
     saved = Signal()
     back = Signal()
+    browse = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -2119,6 +2142,10 @@ class DownloadsPage(Screen):
         self.downloads_edit = QLineEdit()
         self.add(self.downloads_edit)
         self.add(label(text("exchange.downloads.hint"), "Hint"))
+        self.add_row(button(text("downloads.browse"), "Secondary",
+                            self.browse.emit))
+        self.message = label("", "Bad")
+        self.add(self.message)
         self.add_gap()
         self.add_row(
             button(text("settings.save"), "Primary", self._save),
@@ -2128,10 +2155,17 @@ class DownloadsPage(Screen):
         values = load_ui_settings()
         self.downloads_edit.setText(
             str(values.get("downloads_path") or default_downloads()))
+        self.message.setText("")
 
     def _save(self) -> None:
+        value = self.downloads_edit.text().strip()
+        if value and not Path(value).is_dir():
+            # A typo here silently breaks the reply pickup; refuse it.
+            self.message.setText(text("downloads.missing"))
+            return
+        self.message.setText("")
         values = load_ui_settings()
-        values["downloads_path"] = self.downloads_edit.text().strip()
+        values["downloads_path"] = value
         save_ui_settings(values)
         self.saved.emit()
 
@@ -2185,9 +2219,15 @@ class TasksPage(Screen):
         self.add_gap()
         self.add_row(
             button(text("settings.save"), "Primary", self._save),
-            button(text("settings.back"), "Ghost", self.back.emit))
+            button(text("settings.back"), "Ghost", self._back))
         self._doc_values: list[str] = []
         self._override = False
+
+    def _back(self) -> None:
+        # Back keeps prompt edits exactly as Save does — the page
+        # applies documents at once, so text must not behave worse.
+        self._flush_prompt()
+        self.back.emit()
 
     def set_tab(self, key: str) -> None:
         self._flush_prompt()
@@ -2224,7 +2264,10 @@ class TasksPage(Screen):
         self.docs_hint.setVisible(bool(self.docs_hint.text()))
         self.docs.set_files(self._doc_values)
         if not self._doc_values:
-            self.docs_hint.setText(text("tasks.docs.none"))
+            # The explanation stays; the empty note joins it.
+            head = self.docs_hint.text()
+            self.docs_hint.setText(
+                f"{head} {text('tasks.docs.none')}".strip())
             self.docs_hint.setVisible(True)
 
     def _toggle_prompt(self) -> None:

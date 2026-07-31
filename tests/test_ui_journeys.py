@@ -108,10 +108,17 @@ def test_settings_round_trip_through_every_page(qt_app, tmp_path, monkeypatch):
     window.home.open_settings.emit()
     assert _screen(window) == "settings"
 
-    # Downloads: the folder where the tool finds the Copilot replies.
+    # Downloads: a missing folder is refused; Browse fills a real one.
     window._open_settings_page("downloads")
     assert _screen(window) == "set-downloads"
-    window.page_downloads.downloads_edit.setText(str(tmp_path / "dl"))
+    window.page_downloads.downloads_edit.setText(str(tmp_path / "nowhere"))
+    window.page_downloads._save()
+    assert _screen(window) == "set-downloads"   # stays; nothing stored
+    assert window.page_downloads.message.text() == ui_text("downloads.missing")
+    (tmp_path / "dl").mkdir()
+    window.pick_directory = lambda: str(tmp_path / "dl")
+    window.page_downloads.browse.emit()
+    assert window.page_downloads.downloads_edit.text() == str(tmp_path / "dl")
     window.page_downloads._save()
     assert _screen(window) == "settings"
     assert toasts[-1] == ui_text("settings.saved")
@@ -131,21 +138,25 @@ def test_settings_round_trip_through_every_page(qt_app, tmp_path, monkeypatch):
     assert window.page_global.message.text() == ui_text("global.reset.done")
     assert window.page_global.editor.toPlainText() != "# My rules\nKeep it small.\n"
 
-    # Tasks: a project document, a task document, and an own plan prompt.
+    # Tasks: two project documents in one pick, a task document, and an
+    # own plan prompt.
     inside = tmp_path / "project" / "docs.md"
     inside.write_text("# Docs\n", encoding="utf-8")
+    second = tmp_path / "project" / "more.md"
+    second.write_text("# More\n", encoding="utf-8")
     outside = tmp_path / "elsewhere.md"
     outside.write_text("# Outside\n", encoding="utf-8")
-    window.pick_files = lambda: [str(inside)]
+    window.pick_files = lambda: [str(inside), str(second)]
     window._open_settings_page("tasks")
     assert _screen(window) == "set-tasks"
     window.page_tasks.add_doc.emit(None)
     assert "docs.md" in window.store.config.package.documents
+    assert "more.md" in window.store.config.package.documents
     window.pick_files = lambda: [str(outside)]
     window.page_tasks.set_tab("plan")
     window.page_tasks.add_doc.emit("plan")
     assert str(outside) in window.store.config.package.task("plan").documents
-    assert documents_count(window.store, "plan") == 2
+    assert documents_count(window.store, "plan") == 3
 
     overridden, builtin = window.store.task_prompt("plan")
     assert overridden is False and "tasks" in builtin.lower()
@@ -156,6 +167,13 @@ def test_settings_round_trip_through_every_page(qt_app, tmp_path, monkeypatch):
     window.page_tasks._save()
     overridden, prompt = window.store.task_prompt("plan")
     assert overridden is True and prompt == "Plan it my way."
+    # Back keeps prompt edits exactly as Save does.
+    window._open_settings_page("tasks")
+    window.page_tasks.set_tab("plan")
+    window.page_tasks.prompt_edit.setPlainText("Plan it another way.")
+    window.page_tasks._back()
+    overridden, prompt = window.store.task_prompt("plan")
+    assert overridden is True and prompt == "Plan it another way."
     window._open_settings_page("tasks")
     window.page_tasks.set_tab("plan")
     window.page_tasks._toggle_prompt()
@@ -166,6 +184,7 @@ def test_settings_round_trip_through_every_page(qt_app, tmp_path, monkeypatch):
     assert not window.store.config.package.task("plan").documents
     window.page_tasks.set_tab("project")
     window.page_tasks.remove_doc.emit(None, "docs.md")
+    window.page_tasks.remove_doc.emit(None, "more.md")
     assert not window.store.config.package.documents
 
     # Package style: zip, persisted on disk, then back to markdown.
@@ -194,12 +213,71 @@ def test_settings_round_trip_through_every_page(qt_app, tmp_path, monkeypatch):
     assert window.page_checks.message.text()
     assert _screen(window) == "set-checks"
 
-    # Explain: the Manim command is a per-user setting.
+    # Explain: the page says whether the command resolves, at open and
+    # after save.
+    from maintain.repository_memory import save_ui_settings
+    values = load_ui_settings()
+    values["manim_command"] = "no-such-render-command"
+    save_ui_settings(values)
     window._open_settings_page("explain")
-    window.page_explain.command_edit.setText("python -m manim")
+    assert window.page_explain.status.text() == ui_text("explain.set.absent")
+    stub = tmp_path / "manim-stub"
+    stub.write_text("#!/bin/sh\n", encoding="utf-8")
+    stub.chmod(0o755)
+    window.page_explain.command_edit.setText(str(stub))
     window.page_explain.saved.emit()
-    assert load_ui_settings()["manim_command"] == "python -m manim"
+    assert load_ui_settings()["manim_command"] == str(stub)
+    assert str(stub) in window.page_explain.status.text()
 
+    assert not errors, errors
+
+
+def test_settings_edits_never_block_the_next_run(qt_app, tmp_path,
+                                                 monkeypatch):
+    """The walkthrough's worst find: a prompt edit wrote files into the
+    repository, and every later run refused with uncommitted changes.
+    Also pinned here: the home Continue card while the engine waits,
+    and a package style change with a packet open."""
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    window._open_settings_page("tasks")
+    window.page_tasks.set_tab("plan")
+    window.page_tasks._toggle_prompt()
+    window.page_tasks.prompt_edit.setPlainText("Plan with care.")
+    window.page_tasks._back()
+    window._open_settings_page("global")
+    window.page_global.editor.setPlainText("# Rules\nKeep it small.\n")
+    window.page_global._save()
+
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               message="run despite settings edits")
+    payload = window.current_handoff.request.payload
+    swept = [item["path"] for item in payload["candidate_files"]]
+    swept += [item["path"] for item in payload["repository_map"]]
+    assert swept and not any(item.startswith(".maintain") for item in swept)
+
+    # Continue from home returns to the waiting screen — no dead click.
+    window.show_home()
+    run_id = window.current_handoff.request.run_id
+    window.home.continue_run.emit(run_id)
+    assert _screen(window) == "exchange"
+
+    # A style change while the packet is open re-shows and re-copies it.
+    assert window.exchange.card.packet_path.suffix == ".md"
+    window._open_settings_page("package")
+    window.page_package.zip_radio.setChecked(True)
+    window.page_package._save()
+    assert window.exchange.card.packet_path.suffix == ".zip"
+    from PySide6.QtWidgets import QApplication
+    mime = QApplication.clipboard().mimeData()
+    assert mime.hasUrls()
+    assert mime.urls()[0].toLocalFile().endswith(".zip")
+    window.home.continue_run.emit(run_id)
+    assert _screen(window) == "exchange"
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
     assert not errors, errors
 
 

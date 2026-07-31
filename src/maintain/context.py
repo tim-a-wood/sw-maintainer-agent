@@ -69,7 +69,8 @@ class ContextSelector:
             else:
                 paths = []
                 ignored = {
-                    ".git", ".maintain", ".venv", ".mypy_cache", ".pytest_cache",
+                    ".git", ".maintain", ".maintain-prompts", ".venv",
+                    ".mypy_cache", ".pytest_cache",
                     ".ruff_cache", ".tox", ".nox", ".next", "node_modules", "vendor",
                     "dist", "build", "coverage", "target", "__pycache__",
                 }
@@ -94,6 +95,11 @@ class ContextSelector:
                 except ValueError:
                     continue
                 relative = path.relative_to(self.repository).as_posix()
+                # Maintain's own configuration is packet input, never
+                # candidate code.
+                if relative == ".maintain.json" or relative.startswith(
+                        ".maintain-prompts/"):
+                    continue
                 if (path.is_symlink() or secret_file(path)
                         or any(fnmatch.fnmatch(relative, x) for x in self.excludes)):
                     continue

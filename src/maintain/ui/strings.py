@@ -385,6 +385,9 @@ STR: dict[str, str] = {
     "explain.set.command.hint": "The command or the full path of Manim on this "
                                 "computer. This value is for you, not for the "
                                 "project.",
+    "explain.set.found": "The tool found the render command: {name}",
+    "explain.set.absent": "The tool cannot find this command. The render "
+                          "step will say so.",
     "explain.set.install": "Install one time: pip install maintain[explain] — "
                            "and: winget install ffmpeg",
 
@@ -483,6 +486,8 @@ STR: dict[str, str] = {
     "issues.closed.more": "Closed: {title} and {count} more.",
     "exchange.downloads": "Downloads folder",
     "exchange.downloads.hint": "The tool takes the newest reply file from this folder.",
+    "downloads.browse": "Browse…",
+    "downloads.missing": "The folder does not exist.",
     "working.plan": "Copilot makes the plan…",
     "working.checks": "The checks run…",
     "working.busy": "The tool works…",

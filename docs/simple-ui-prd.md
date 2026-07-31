@@ -988,3 +988,35 @@ stay in place, only missing or outdated ones download. The full
 broken environment. The probe also fixed a wrong name: verification
 ran `pipx runpip maintain`, but the environment is named after the
 project — every runpip call now uses the detected name.
+
+### 14.27 The settings walkthrough
+
+"A lot of them don't seem to function very well." A scripted walk
+drove every page end to end and found eight faults; all are fixed and
+pinned by tests.
+
+The worst: editing any task prompt (or saving the global prompt) wrote
+Maintain's own files into the repository, the repository turned dirty,
+and every later run refused with "The source repository has
+uncommitted changes" — Settings bricked the tool. The engine's clean
+check now excludes Maintain's own files (.maintain.json,
+.maintain-prompts, the configured global prompt), and the context
+sweep skips them too, so a prompt file never rides in a packet as
+candidate code.
+
+The rest, in walkthrough order. The home Continue card was a dead
+click while the engine waited — a walk to Settings and back could not
+return to the run; Continue now returns to the exact screen the run
+waits on (exchange, plan, findings, or test). The documents picker
+accepted many files and silently kept only the first; every selected
+file lands now. Prompt edits were lost when leaving with Back instead
+of Save; Back flushes them, the same as Save, because the rest of the
+page already applied changes at once. A package style change with a
+packet open left the old file on screen and in the clipboard; the
+open packet re-shows and re-copies in the new style, and an unchanged
+style is a no-op. The Downloads page accepted a folder that does not
+exist, silently breaking the reply pickup — it now refuses with a
+plain message and carries a Browse button. The Explain page saved any
+command with no feedback; it now says at open and after save whether
+the render command resolves. And the project-documents explanation no
+longer vanishes behind the "No documents yet" note.

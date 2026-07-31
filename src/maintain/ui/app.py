@@ -399,6 +399,7 @@ class MainWindow(QMainWindow):
                      self.page_package, self.page_checks):
             page.back.connect(lambda: self.show_screen("settings"))
         self.page_downloads.saved.connect(self._settings_saved)
+        self.page_downloads.browse.connect(self._browse_downloads_folder)
         self.page_tasks.saved.connect(self._settings_saved)
         self.page_tasks.add_doc.connect(self._add_document)
         self.page_tasks.remove_doc.connect(self._remove_document)
@@ -1162,6 +1163,7 @@ class MainWindow(QMainWindow):
         values = load_ui_settings()
         values["manim_command"] = self.page_explain.value()
         save_ui_settings(values)
+        self._refresh_explain_state()
         self.toast(text("settings.saved"))
         self.show_screen("settings")
 
@@ -1233,6 +1235,13 @@ class MainWindow(QMainWindow):
             self.show_busy(text("working.plan"))
 
     def _continue_run(self, run_id: str) -> None:
+        # The run may already be open and waiting in this window — a
+        # walk to Settings and back must not turn Continue into a dead
+        # click. Return to the screen the run waits on.
+        if (self.controller.busy and self.current_handoff is not None
+                and self.current_handoff.request.run_id == run_id):
+            self.show_screen(getattr(self, "_wait_screen", "exchange"))
+            return
         summary = next((item for item in self.controller.runs()
                         if item.run_id == run_id), None)
         if summary is not None and summary.state == str(RunState.AWAITING_ACCEPTANCE):
@@ -1265,6 +1274,7 @@ class MainWindow(QMainWindow):
 
     def _packet_ready(self, handoff: PacketHandoff) -> None:
         self.current_handoff = handoff
+        self._wait_screen = "exchange"
         if self._pending_issue_link:
             self.controller.issues.link_run(self._pending_issue_link,
                                             handoff.request.run_id)
@@ -1440,18 +1450,21 @@ class MainWindow(QMainWindow):
 
     def _plan_ready(self, record: RunRecord, tasks: list) -> None:
         self.current_record = record
+        self._wait_screen = "plan"
         self._set_stage(0)
         self.plan_check.show_tasks(tasks)
         self.show_screen("plan")
 
     def _findings_ready(self, record: RunRecord, findings: list) -> None:
         self.current_record = record
+        self._wait_screen = "findings"
         self._set_stage(2)
         self.findings.show_findings(findings, max(1, record.attempt))
         self.show_screen("findings")
 
     def _checks_failed(self, record: RunRecord, results: list) -> None:
         self.current_record = record
+        self._wait_screen = "test"
         self._set_stage(3)
         self.test.show_failed(results)
         self.show_screen("test")
@@ -1717,12 +1730,25 @@ class MainWindow(QMainWindow):
         elif page == "explain":
             self.page_explain.load(
                 str(load_ui_settings().get("manim_command", "manim")))
+            self._refresh_explain_state()
         self.show_screen(f"set-{page}")
+
+    def _refresh_explain_state(self) -> None:
+        from maintain.render import manim_available, resolve_manim_command
+        command = resolve_manim_command(
+            str(load_ui_settings().get("manim_command", "manim")))
+        self.page_explain.show_state(manim_available(command), command)
 
     def _settings_saved(self) -> None:
         self._after_config_change()
         self.toast(text("settings.saved"))
         self.show_screen("settings")
+
+    def _browse_downloads_folder(self) -> None:
+        selected = self.pick_directory()
+        if selected:
+            self.page_downloads.downloads_edit.setText(selected)
+            self.page_downloads.message.setText("")
 
     def _package_saved(self, style: str) -> None:
         try:
@@ -1744,13 +1770,16 @@ class MainWindow(QMainWindow):
         paths = self.pick_files()
         if not paths:
             return
-        try:
-            self.store.add_document(Path(paths[0]), task)
-        except MaintainError as exc:
-            self.show_error(str(exc))
-            return
+        failure = ""
+        for item in paths:   # the dialog selects many; every one lands
+            try:
+                self.store.add_document(Path(item), task)
+            except MaintainError as exc:
+                failure = str(exc)
         self._after_config_change()
         self.page_tasks.refresh()
+        if failure:
+            self.show_error(failure)
 
     def _remove_document(self, task, value: str) -> None:
         self.store.remove_document(value, task)
@@ -1759,6 +1788,9 @@ class MainWindow(QMainWindow):
 
     def _after_config_change(self) -> None:
         self.exchange.package_style = self.store.config.package.style
+        # A style change while a packet is open re-shows and re-copies
+        # the packet in the new style; unchanged styles are a no-op.
+        self.exchange.refresh_style()
         if not self.controller.busy:
             self.controller = Controller(self.store.config)
             self._wire_controller()

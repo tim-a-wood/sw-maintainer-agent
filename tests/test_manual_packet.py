@@ -266,3 +266,22 @@ def test_cli_package_builds_a_plan_packet(tmp_path, monkeypatch):
         assert {"TASK.md", "GLOBAL.md", "CODEBASE.md", "MANIFEST.json"} <= set(
             archive.namelist())
         assert "app.py" in archive.read("CODEBASE.md").decode()
+
+
+def test_preflight_ignores_maintain_own_files(tmp_path):
+    """The engine excludes its own configuration from the dirty check,
+    so a prompt edited in Settings never blocks the next run."""
+    from maintain.errors import PolicyError
+    from maintain.workspace import WorkspaceManager
+    repository = _repository(tmp_path)
+    prompts = repository / ".maintain-prompts"
+    prompts.mkdir()
+    (prompts / "plan.md").write_text("Plan with care.", encoding="utf-8")
+    (repository / "GLOBAL.md").write_text("# Rules\n", encoding="utf-8")
+    manager = WorkspaceManager(
+        repository, tmp_path / "workspaces",
+        (".maintain.json", ".maintain-prompts", "GLOBAL.md"))
+    manager.preflight()   # the tool's own files never refuse a run
+    (repository / "stray.py").write_text("x = 1\n", encoding="utf-8")
+    with pytest.raises(PolicyError):
+        manager.preflight()
