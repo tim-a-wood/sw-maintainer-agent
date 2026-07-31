@@ -51,7 +51,15 @@ STR: dict[str, str] = {
     "when.today": "today",
     "when.yesterday": "yesterday",
     "home.continue": "Continue run {run}",
-    "home.continue.sub": "{stage}. The tool waits for you.",
+    "home.continue.named": "Continue: {name}",
+    "home.continue.sub": "{activity} — {phase}. The tool waits for you.",
+    "activity.feature": "Change",
+    "activity.issue": "Repair",
+    "home.explain.continue": "Continue the explanation",
+    "home.explain.continue.sub": "The tool waits for the scene reply.",
+    "stop.name.title": "Name this work",
+    "stop.name.body": "The name shows on the home screen. An empty name "
+                      "changes nothing.",
 
     # Describe
     "describe.title": "What do you want to change?",
@@ -220,6 +228,8 @@ STR: dict[str, str] = {
     "projects.all": "All projects…",
     "include.code": "Include the project code and tests",
     "code.added": "Added {count} code files to the package.",
+    "chips.more": "+{count} more…",
+    "chips.fewer": "Show fewer",
     "package.markdown": "One Markdown file",
     "package.markdown.sub": "The whole packet in one readable file. "
                             "The tool extracts the text from PDF and "
@@ -354,6 +364,10 @@ STR: dict[str, str] = {
                           "error and the check findings.",
     "explain.done": "Done",
     "explain.discarded": "The explanation is discarded.",
+    "explain.past": "Finished explanations",
+    "explain.past.sub": "{when} — select for the video.",
+    "explain.resume.gone": "The package for this explanation is gone. "
+                           "Start a new one.",
     "explain.findings.head": "The local checks found faults. Repair sends "
                              "them to Copilot.",
     "explain.saved.note": "The scene, the video, and the frame sheet stay "

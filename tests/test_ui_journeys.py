@@ -88,6 +88,7 @@ def _wired_window(tmp_path, monkeypatch) -> tuple[MainWindow, list, list]:
     config = _project(tmp_path)
     window = MainWindow(config)
     window.ask_confirm = lambda *args, **kwargs: True
+    window.ask_line = lambda *args, **kwargs: None
     errors: list[str] = []
     window.show_error = errors.append
     toasts: list[str] = []

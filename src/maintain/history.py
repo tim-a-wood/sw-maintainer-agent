@@ -17,6 +17,8 @@ class RunSummary:
     created_at: str
     repository: str
     changed_files: int
+    name: str = ""
+    phase: str = ""    # Plan, Build, Review, Test, or Save
 
     @property
     def display_state(self) -> str:
@@ -48,6 +50,30 @@ class IterationEvent:
     @property
     def can_go_back(self) -> bool:
         return bool(self.resume_state)
+
+
+_PHASES = {
+    "created": "Plan", "preflight": "Plan", "scoping": "Plan",
+    "context_expanding": "Plan", "tasks_ready": "Plan",
+    "workspace_ready": "Build", "implementing": "Build",
+    "implemented": "Build", "repairing": "Build",
+    "reviewing": "Review", "changes_requested": "Review",
+    "testing": "Test", "test_failed": "Test",
+    "verified": "Save", "awaiting_acceptance": "Save",
+    "accepted": "Save", "delivering": "Save",
+    "needs_human_delivery": "Save",
+}
+
+
+def run_phase(state: str, tasks: list) -> str:
+    """The loop step a run stands in, for the home card.
+
+    A paused run keeps the state needs_human; the presence of planned
+    tasks then separates a plan-stage pause from a build-stage one.
+    """
+    if state == "needs_human":
+        return "Build" if tasks else "Plan"
+    return _PHASES.get(state, "")
 
 
 def list_runs(runtime_root: Path, repository: Path | None = None) -> list[RunSummary]:
@@ -82,6 +108,9 @@ def list_runs(runtime_root: Path, repository: Path | None = None) -> list[RunSum
             created_at=str(record.get("created_at", "")),
             repository=str(record.get("repository", "")),
             changed_files=len(changed) if isinstance(changed, list) else 0,
+            name=str(record.get("name", "")),
+            phase=run_phase(str(record.get("state", "")),
+                            record.get("tasks") or []),
         ))
     summaries.sort(key=lambda item: item.updated_at, reverse=True)
     return summaries

@@ -19,13 +19,19 @@ from maintain.config import ProjectConfig
 from maintain.downloads import default_downloads, newest_reply
 from maintain.errors import MaintainError
 from maintain.gates import GateDecision
+from maintain.explain_store import (DISCARDED as EXPLAIN_DISCARDED,
+                                    FAILED as EXPLAIN_FAILED,
+                                    PASSED as EXPLAIN_PASSED,
+                                    WAITING as EXPLAIN_WAITING,
+                                    load_explain_states, restore_request,
+                                    resumable_explain, save_explain_state)
 from maintain.issue_packets import (SideExchange, build_side_packet,
                                     discuss_reply, discuss_request,
                                     explain_dir, explain_request,
                                     scan_candidates, scan_request,
                                     side_packet_dir)
 from maintain.issues import CLOSED, display_order
-from maintain.models import RunRecord, RunState
+from maintain.models import RunRecord, RunState, utc_now
 from maintain.providers.command import parse_response
 from maintain.render import render_scene
 from maintain.scene_check import scene_class_name
@@ -33,6 +39,7 @@ from maintain.scene_probe import probe_scene
 from maintain.scene_quality import quality_findings
 from maintain.providers.manual_ui import PacketHandoff
 from maintain.repository_memory import load_ui_settings, save_ui_settings
+from maintain.zip_package import PacketBuild
 
 from . import theme as theme_module
 
@@ -187,10 +194,17 @@ class MainWindow(QMainWindow):
             self.exchange.check(clipboard_text=clipboard_text)
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        """A running engine pauses and settles before the window dies."""
+        """A running engine pauses and settles before the window dies.
+        FR-N1: the person can name the paused work on the way out."""
         if self.controller.busy:
+            name = self.ask_line(text("stop.name.title"),
+                                 text("stop.name.body"))
             self.controller.stop()
             self.controller.wait_settled()
+            if name:
+                summary = self.controller.resumable_run()
+                if summary is not None:
+                    self.controller.set_run_name(summary.run_id, name)
         super().closeEvent(event)
 
     # ----- construction -----
@@ -281,6 +295,7 @@ class MainWindow(QMainWindow):
         self.home.open_issues.connect(self.show_issues)
         self.home.open_explain.connect(self.show_explain)
         self.home.continue_run.connect(self._continue_run)
+        self.home.continue_explain.connect(self._resume_explain)
 
         self.issues_list.open_issue.connect(self._open_issue)
         self.issues_list.add_issue.connect(self._new_issue)
@@ -303,6 +318,7 @@ class MainWindow(QMainWindow):
         self.explain.back.connect(self.show_home)
         self.explain.import_requested.connect(self._import_explain_files)
         self.explain.open_videos.connect(self._open_last_video_dir)
+        self.explain.open_past.connect(self._open_past_explain)
         self.explain_result.open_video.connect(self._open_explain_video)
         self.explain_result.open_folder.connect(self._open_explain_folder)
         self.explain_result.repair.connect(self._repair_explain)
@@ -465,6 +481,9 @@ class MainWindow(QMainWindow):
         self._pending_issue_link = ""
         runs = self.controller.runs()   # one scan feeds the whole screen
         self.home.set_resumable(self.controller.resumable_run(runs))
+        self.home.set_resumable_explain(
+            None if self._side is not None
+            else resumable_explain(self.store.config))
         issues = self.controller.issues.load()
         self.home.set_issue_count(
             sum(1 for issue in issues if issue.status != CLOSED),
@@ -855,6 +874,9 @@ class MainWindow(QMainWindow):
         self.explain.reset()
         self.explain.audience_edit.setText(
             str(load_ui_settings().get("explain_audience", "")))
+        self.explain.set_history(
+            [state for state in load_explain_states(self.store.config)
+             if state.get("status") == EXPLAIN_PASSED][:6])
         newest = self._newest_video()
         self._last_video_dir = newest.parent if newest else None
         from datetime import datetime
@@ -934,6 +956,13 @@ class MainWindow(QMainWindow):
                          "source": "", "tail": "", "video": None,
                          "sheet": None, "findings": [],
                          "dir": explain_dir(config, request.run_id)}
+        # FR-X2: the exchange survives the application; a restart shows
+        # it on the home screen until a scene reply or a discard.
+        save_explain_state(config, request.run_id,
+                           status=EXPLAIN_WAITING, goal=goal,
+                           audience=audience, sources=list(sources),
+                           created_at=utc_now(),
+                           packet=str(packet.zip_path), request=request)
         self._show_side(exchange, packet, reply_kind="scene")
 
     def _explain_reply(self, source: str) -> None:
@@ -1012,8 +1041,62 @@ class MainWindow(QMainWindow):
         else:
             state["tail"] = result.output_tail
             self.explain_result.show_failed(result.message, result.output_tail)
+        if state.get("run_id"):
+            save_explain_state(
+                self.store.config, state["run_id"],
+                status=EXPLAIN_PASSED if result.ok else EXPLAIN_FAILED,
+                video=str(result.video) if result.ok and result.video else "",
+                sheet=str(result.sheet) if result.ok and result.sheet else "",
+                finished_at=utc_now())
         self.explain_result.show_findings(findings)
         self._attention()
+
+    def _resume_explain(self, run_id: str) -> None:
+        """FR-X2: reopen a waiting exchange with its original packet and
+        ids, so a reply Copilot already wrote still validates."""
+        state = next((item for item in load_explain_states(self.store.config)
+                      if item.get("run_id") == run_id), None)
+        if not state:
+            return
+        request = restore_request(state)
+        packet_path = Path(str(state.get("packet", "")))
+        if request is None or not packet_path.is_file():
+            self.show_error(text("explain.resume.gone"))
+            self.show_home()
+            return
+        config = self.store.config
+        import zipfile as zipfile_module
+        try:
+            with zipfile_module.ZipFile(packet_path) as archive:
+                members = tuple(archive.namelist())
+        except (OSError, zipfile_module.BadZipFile):
+            members = ()
+        packet = PacketBuild(
+            zip_path=packet_path, sha256="",
+            bytes=packet_path.stat().st_size, task_key="explain",
+            members=members)
+        exchange = SideExchange(
+            kind="explain", request=request,
+            directory=explain_dir(config, run_id) / "packets")
+        self._explain = {"sources": list(state.get("sources", [])),
+                         "goal": str(state.get("goal", "")),
+                         "audience": str(state.get("audience", "")),
+                         "run_id": run_id, "source": "", "tail": "",
+                         "video": None, "sheet": None, "findings": [],
+                         "dir": explain_dir(config, run_id)}
+        self._show_side(exchange, packet, reply_kind="scene")
+
+    def _open_past_explain(self, run_id: str) -> None:
+        """FR-X3: a finished explanation opens at its video."""
+        state = next((item for item in load_explain_states(self.store.config)
+                      if item.get("run_id") == run_id), None)
+        video = str(state.get("video", "")) if state else ""
+        if video and Path(video).is_file():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(video))
+            return
+        directory = explain_dir(self.store.config, run_id)
+        if directory.is_dir():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
 
     def _open_explain_video(self) -> None:
         state = self._explain or {}
@@ -1340,6 +1423,13 @@ class MainWindow(QMainWindow):
     def _run_settled(self, record: RunRecord) -> None:
         self.current_record = record
         self._in_test = False
+        pending = getattr(self, "_pending_run_name", None)
+        if pending:
+            # The engine wrote its final state before this signal, so
+            # the name lands on settled ground.
+            self.controller.set_run_name(record.run_id, pending)
+            record.name = pending
+        self._pending_run_name = None
         state = RunState(record.state)
         if state in {RunState.AWAITING_ACCEPTANCE, RunState.DELIVERED}:
             self._attention()
@@ -1517,6 +1607,10 @@ class MainWindow(QMainWindow):
         if self._side is not None:
             kind = self._side["exchange"].kind
             issue_id = self._side["exchange"].issue_id
+            if kind == "explain" and self._explain:
+                save_explain_state(self.store.config,
+                                   self._explain["run_id"],
+                                   status=EXPLAIN_DISCARDED)
             self._end_side()
             self.toast(text("scan.discarded" if kind == "scan"
                             else "explain.discarded" if kind == "explain"
@@ -1531,6 +1625,10 @@ class MainWindow(QMainWindow):
         if not self.ask_confirm(text("stop.title"), text("stop.body"),
                                 text("stop.yes"), text("stop.no")):
             return
+        # FR-N1: the run pauses with the person's own words on it, so
+        # the home screen says what the work was, not only its id.
+        self._pending_run_name = self.ask_line(text("stop.name.title"),
+                                               text("stop.name.body"))
         self.controller.stop()
 
     # ----- settings -----
@@ -1628,6 +1726,12 @@ class MainWindow(QMainWindow):
         if not accepted:
             return None
         return value if value or allow_empty else None
+
+    def ask_line(self, title: str, body: str) -> str | None:
+        """One short line of text, or None for cancel and empty alike."""
+        value, accepted = QInputDialog.getText(self, title, body)
+        value = value.strip()
+        return value if accepted and value else None
 
     def ask_choice(self, title: str, body: str,
                    options: list[str]) -> str | None:

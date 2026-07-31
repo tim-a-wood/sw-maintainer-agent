@@ -505,27 +505,61 @@ class Chip(QFrame):
 
 
 class FileChips(QWidget):
-    """A wrapping row of removable file chips."""
+    """A wrapping row of removable file chips.
+
+    A large set — the include-code sweep can add hundreds — shows only
+    the first chips plus one "+N more" chip that expands the rest
+    (FR-P10). A fresh set_files starts folded again.
+    """
 
     removed = Signal(int)
+    VISIBLE_LIMIT = 12
 
     def __init__(self) -> None:
         super().__init__()
         self._flow = FlowLayout()
         self.setLayout(self._flow)
+        self._names: list[str] = []
+        self._removable = True
+        self._expanded = False
 
     def set_files(self, names: list[str], removable: bool = True) -> None:
+        self._names = list(names)
+        self._removable = removable
+        self._expanded = False
+        self._render()
+
+    def _toggle(self) -> None:
+        self._expanded = not self._expanded
+        self._render()
+
+    def _render(self) -> None:
+        from maintain.ui.strings import text
         while self._flow.count():
             item = self._flow.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.setParent(None)
                 widget.deleteLater()
-        for index, name in enumerate(names):
-            chip = Chip(name, removable=removable)
+        hidden = len(self._names) - self.VISIBLE_LIMIT
+        folded = not self._expanded and hidden > 1
+        shown = self._names[:self.VISIBLE_LIMIT] if folded else self._names
+        for index, name in enumerate(shown):
+            chip = Chip(name, removable=self._removable)
             chip.removed.connect(lambda i=index: self.removed.emit(i))
             self._flow.addWidget(chip)
-        self.setVisible(bool(names))
+        if folded:
+            more = QPushButton(text("chips.more", count=hidden))
+        elif self._expanded:
+            more = QPushButton(text("chips.fewer"))
+        else:
+            more = None
+        if more is not None:
+            more.setObjectName("Ghost")
+            more.setCursor(Qt.CursorShape.PointingHandCursor)
+            more.clicked.connect(self._toggle)
+            self._flow.addWidget(more)
+        self.setVisible(bool(self._names))
         self.updateGeometry()
 
 

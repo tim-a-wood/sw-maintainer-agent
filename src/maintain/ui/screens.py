@@ -162,6 +162,7 @@ class HomeScreen(Screen):
     open_issues = Signal()
     open_explain = Signal()
     continue_run = Signal(str)   # run_id
+    continue_explain = Signal(str)   # explain run_id
 
     def __init__(self, project_name: str, project_path: str) -> None:
         super().__init__()
@@ -178,6 +179,12 @@ class HomeScreen(Screen):
         self._continue.clicked.connect(self._emit_continue)
         self._continue_run_id = ""
         self.add(self._continue)
+        self._continue_explain = ChoiceButton("film", "", "",
+                                              accent_kind="warn")
+        self._continue_explain.setVisible(False)
+        self._continue_explain.clicked.connect(self._emit_continue_explain)
+        self._continue_explain_id = ""
+        self.add(self._continue_explain)
         self._issues_card: ChoiceButton | None = None
         for index, (icon, title_key, sub_key, slot) in enumerate((
                 ("plus", "home.change", "home.change.sub",
@@ -219,19 +226,41 @@ class HomeScreen(Screen):
         self._name.setText(name)
         self._path.setText(path)
 
-    def set_resumable(self, summary: RunSummary | None, stage_name: str = "") -> None:
+    def set_resumable(self, summary: RunSummary | None) -> None:
         if summary is None:
             self._continue.setVisible(False)
             return
         self._continue_run_id = summary.run_id
-        self._continue.set_texts(
-            text("home.continue", run=summary.run_id),
-            text("home.continue.sub", stage=stage_name or summary.display_state))
+        # The person's own name first; the run id only when no name is
+        # given. The second line places the run: activity and phase.
+        title = (text("home.continue.named", name=summary.name)
+                 if summary.name else text("home.continue", run=summary.run_id))
+        activity = text("activity.issue" if summary.mode == "issue"
+                        else "activity.feature")
+        self._continue.set_texts(title, text(
+            "home.continue.sub", activity=activity,
+            phase=summary.phase or summary.display_state))
         self._continue.setVisible(True)
+
+    def set_resumable_explain(self, state: dict | None) -> None:
+        """The waiting explanation, back on the home screen (FR-X2)."""
+        if not state:
+            self._continue_explain.setVisible(False)
+            return
+        self._continue_explain_id = str(state.get("run_id", ""))
+        goal = str(state.get("goal", "")).strip()
+        self._continue_explain.set_texts(
+            text("home.explain.continue"),
+            goal or text("home.explain.continue.sub"))
+        self._continue_explain.setVisible(True)
 
     def _emit_continue(self) -> None:
         if self._continue_run_id:
             self.continue_run.emit(self._continue_run_id)
+
+    def _emit_continue_explain(self) -> None:
+        if self._continue_explain_id:
+            self.continue_explain.emit(self._continue_explain_id)
 
 
 class DescribeScreen(Screen):
@@ -1550,6 +1579,7 @@ class ExplainScreen(Screen):
     back = Signal()
     import_requested = Signal()
     open_videos = Signal()
+    open_past = Signal(str)          # explain run_id
 
     def __init__(self) -> None:
         super().__init__()
@@ -1580,11 +1610,42 @@ class ExplainScreen(Screen):
         self.last_video.setStyleSheet("padding: 2px 6px; font-size: 12px;")
         self.last_video.setVisible(False)
         self.add_row(self.last_video)
+        self._past_head = label(text("explain.past").upper(), "Eyebrow")
+        self._past_head.setVisible(False)
+        self.add(self._past_head)
+        self._past_holder = QWidget()
+        self._past_column = QVBoxLayout(self._past_holder)
+        self._past_column.setContentsMargins(0, 0, 0, 0)
+        self._past_column.setSpacing(6)
+        self._past_holder.setVisible(False)
+        self.add(self._past_holder)
         self.add_gap()
         self.add_row(
             button(text("explain.start"), "Primary", self._start),
             button(text("receive.back"), "Ghost", self.back.emit))
         self.files: list[Path] = []
+
+    def set_history(self, states: list[dict]) -> None:
+        """FR-X3: the finished explanations, each one click from its
+        video."""
+        while self._past_column.count():
+            item = self._past_column.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        for state in states:
+            goal = str(state.get("goal", "")).strip() or str(
+                state.get("run_id", ""))
+            when = str(state.get("created_at", ""))[:16].replace("T", " ")
+            card = ChoiceButton("film", goal, text("explain.past.sub",
+                                                   when=when))
+            run_id = str(state.get("run_id", ""))
+            card.clicked.connect(
+                lambda rid=run_id: self.open_past.emit(rid))
+            self._past_column.addWidget(card)
+        self._past_head.setVisible(bool(states))
+        self._past_holder.setVisible(bool(states))
 
     def reset(self) -> None:
         self.goal_edit.setPlainText("")

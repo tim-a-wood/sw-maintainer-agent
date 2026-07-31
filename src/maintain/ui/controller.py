@@ -199,6 +199,18 @@ class Controller(QObject):
         if thread is not None and thread.is_alive():
             thread.join(timeout)
 
+    def set_run_name(self, run_id: str, name: str) -> None:
+        """The person's own label on a paused run. Call only after the
+        engine settles, so the write never races the engine's own."""
+        import json
+        path = Path(self.config.runtime_root).expanduser() / run_id / "run.json"
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["name"] = name.strip()
+            path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        except (OSError, json.JSONDecodeError):
+            pass
+
     # ----- read-only data -----
 
     def runs(self) -> list[RunSummary]:

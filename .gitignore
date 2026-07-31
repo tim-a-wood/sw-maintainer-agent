@@ -9,3 +9,4 @@ dist/
 run-audit.zip
 .coverage
 htmlcov/
+*.mp4

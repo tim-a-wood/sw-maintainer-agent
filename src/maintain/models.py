@@ -83,6 +83,7 @@ class RunRecord:
     base_commit: str
     branch: str
     worktree: str
+    name: str = ""     # the person's own label, given when a run pauses
     state: str = RunState.CREATED
     sequence: int = 0
     attempt: int = 0

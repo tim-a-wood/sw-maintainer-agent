@@ -698,11 +698,14 @@ def test_explain_flow_render_repair_and_settings(qt_app, tmp_path, monkeypatch):
     assert not errors, errors
 
 
-def test_stop_pauses_and_home_offers_continue(qt_app, tmp_path, monkeypatch):
+def test_stop_pauses_names_the_run_and_home_offers_continue(
+        qt_app, tmp_path, monkeypatch):
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)
     window = MainWindow(config)
     window.ask_confirm = lambda *args, **kwargs: True
+    # FR-N1: the stop prompt takes the person's own words for the run.
+    window.ask_line = lambda *args, **kwargs: "Wire the loader"
 
     window.home.new_change.emit("feature")
     window.describe.request_edit.setPlainText("Change the value to after.")
@@ -714,6 +717,14 @@ def test_stop_pauses_and_home_offers_continue(qt_app, tmp_path, monkeypatch):
     summary = window.controller.resumable_run()
     assert summary is not None
     assert summary.state == str(RunState.NEEDS_HUMAN)
+    assert summary.name == "Wire the loader"
+    assert summary.phase == "Plan"   # paused before any planned tasks
+
+    # The home card says the name, the activity, and the phase.
+    window.show_home()
+    assert "Wire the loader" in window.home._continue.title_label.text()
+    sub = window.home._continue.sub_label.text()
+    assert "Change" in sub and "Plan" in sub
 
     # Continue resumes the run and asks for the plan packet again.
     window._continue_run(summary.run_id)
@@ -944,3 +955,126 @@ def test_reference_allclear_and_last_video(qt_app, tmp_path, monkeypatch):
     window.show_explain()
     assert window.explain.last_video.isVisibleTo(window.explain)
     assert "Last video" in window.explain.last_video.text()
+
+
+def test_file_chips_fold_large_sets_behind_a_more_chip(qt_app):
+    """FR-P10: the include-code sweep once filled the screen with 157
+    chips; large sets fold behind one +N chip."""
+    from maintain.ui.widgets import FileChips
+    chips = FileChips()
+    removed: list[int] = []
+    chips.removed.connect(removed.append)
+
+    chips.set_files([f"file{i}.py" for i in range(30)])
+    assert chips._flow.count() == 13          # 12 chips + the "+18 more"
+    more = chips._flow.itemAt(12).widget()
+    assert "18" in more.text()
+    more.click()
+    assert chips._flow.count() == 31          # every chip + "Show fewer"
+    chips._flow.itemAt(30).widget().click()
+    assert chips._flow.count() == 13
+
+    # The chip index still names the true file, folded or not.
+    chips._flow.itemAt(0).widget().removed.emit()
+    assert removed == [0]
+
+    # A small set shows plainly; one hidden file is not worth a fold.
+    chips.set_files(["a.py", "b.py"])
+    assert chips._flow.count() == 2
+    chips.set_files([f"f{i}" for i in range(13)])
+    assert chips._flow.count() == 13
+
+
+def test_explain_survives_a_restart_and_lists_its_video(
+        qt_app, tmp_path, monkeypatch):
+    """FR-X2/X3: a waiting explanation returns after a restart with its
+    original ids; the finished one is browsable with its video."""
+    from maintain.explain_store import load_explain_states
+    from maintain.repository_memory import load_ui_settings, save_ui_settings
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.toast = lambda *args, **kwargs: None
+    errors: list[str] = []
+    window.show_error = errors.append
+    pass_stub = _shell_stub(
+        tmp_path / "pass-manim",
+        'mkdir -p media/videos/scene/1080p60\n'
+        'echo video > "media/videos/scene/1080p60/$3.mp4"\n')
+    values = load_ui_settings()
+    values["manim_command"] = pass_stub
+    save_ui_settings(values)
+
+    window.show_explain()
+    window.explain.goal_edit.setPlainText("Explain the value bound.")
+    window.explain.add_files([config.repository / "app.py"])
+    window.explain._start()
+    assert _screen(window) == "exchange"
+    run_id = window._explain["run_id"]
+    states = load_explain_states(config)
+    assert states and states[0]["run_id"] == run_id
+    assert states[0]["status"] == "waiting"
+
+    # The application dies; a fresh window offers the waiting exchange.
+    window2 = MainWindow(config)
+    window2.toast = lambda *args, **kwargs: None
+    window2.show_error = errors.append
+    window2.show_home()
+    home_card = window2.home._continue_explain
+    assert home_card.isVisibleTo(window2.home)
+    window2._resume_explain(run_id)
+    assert _screen(window2) == "exchange"
+    assert window2._side["exchange"].request.run_id == run_id
+    assert window2.current_handoff.zip_path.is_file()
+
+    # The old packet's reply validates; the render finishes the state.
+    window2.exchange.check(clipboard_text=SCENE_REPLY)
+    wait_until(qt_app,
+               lambda: window2.explain_result.render_chip.text() == "PASS",
+               message="render after resume")
+    mine = next(item for item in load_explain_states(config)
+                if item["run_id"] == run_id)
+    assert mine["status"] == "passed"
+    assert mine["video"] and Path(mine["video"]).is_file()
+
+    # The finished explanation lists on the input screen.
+    window2.show_explain()
+    assert window2.explain._past_holder.isVisibleTo(window2.explain)
+
+    # A discarded exchange stops offering itself on the home screen.
+    window2.explain.goal_edit.setPlainText("Another goal.")
+    window2.explain.add_files([config.repository / "app.py"])
+    window2.explain._start()
+    assert _screen(window2) == "exchange"
+    window2._stop_run()
+    assert all(item["status"] != "waiting"
+               for item in load_explain_states(config))
+    window2.show_home()
+    assert not window2.home._continue_explain.isVisibleTo(window2.home)
+    assert not errors, errors
+
+
+def test_run_phase_maps_states_to_loop_steps():
+    from maintain.history import run_phase
+    assert run_phase("scoping", []) == "Plan"
+    assert run_phase("implementing", [{}]) == "Build"
+    assert run_phase("repairing", [{}]) == "Build"
+    assert run_phase("reviewing", [{}]) == "Review"
+    assert run_phase("testing", [{}]) == "Test"
+    assert run_phase("awaiting_acceptance", [{}]) == "Save"
+    # A pause keeps needs_human; planned tasks split Plan from Build.
+    assert run_phase("needs_human", []) == "Plan"
+    assert run_phase("needs_human", [{}]) == "Build"
+    assert run_phase("delivered", [{}]) == ""
+
+
+def test_run_record_round_trips_the_name():
+    from maintain.models import RunRecord
+    record = RunRecord(run_id="r", mode="feature", request="x",
+                       repository=".", base_commit="", branch="",
+                       worktree="", name="Wire the loader")
+    assert RunRecord.from_dict(record.to_dict()).name == "Wire the loader"
+    # Records written before the field existed still load.
+    old = {key: value for key, value in record.to_dict().items()
+           if key != "name"}
+    assert RunRecord.from_dict(old).name == ""

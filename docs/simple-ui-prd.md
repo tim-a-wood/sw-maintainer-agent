@@ -899,3 +899,36 @@ with the retired folder style load as ZIP.
 
 Parked, not forgotten: the OneDrive module lives in the git history
 (v0.9.1 and earlier) if a link transport ever returns.
+
+### 14.24 Named work, folded chips, and explanations that survive
+
+Four findings from the same real-machine session.
+
+**The chip wall (FR-P10).** Include-code swept 157 files into the
+packet, and 157 removable chips filled the send region. The chip row
+now shows the first twelve and one "+N more" chip; a click expands,
+"Show fewer" folds. One hidden file is not worth a fold, so thirteen
+files still show plainly.
+
+**Named runs (FR-N1).** A returning person read "Continue run
+f-20260731-103304-94fd" and learned nothing. Stopping a run — by the
+Stop button or by closing the window mid-run — now asks one line:
+"Name this work". The name lands on the run record after the engine
+settles (never racing its final write), and the home card leads with
+it: "Continue: Wire the loader" over "Change — Plan. The tool waits
+for you." The activity comes from the run mode, the phase from the
+state — a paused run splits Plan from Build by whether planned tasks
+exist yet. An empty or cancelled prompt changes nothing.
+
+**MP4s out of git.** Rendered videos never belong in a repository;
+`*.mp4` joined the tool repository's own .gitignore.
+
+**Explanations recover (FR-X2, FR-X3).** The explain exchange lived
+only in memory: a crash or a quit lost it, and finished videos hid in
+a runtime folder. Each explain run now keeps a state.json beside its
+packets — waiting, passed, failed, or discarded. A waiting one returns
+on the home screen ("Continue the explanation") and reopens with its
+original run and task ids, so a reply Copilot already wrote for that
+packet still validates. Finished ones list on the Explain screen under
+"Finished explanations", each one click from its video (folder as the
+fallback). A discarded exchange stops offering itself.

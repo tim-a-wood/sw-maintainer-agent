@@ -55,6 +55,7 @@ def test_controlled_names_are_consistent():
 
 def test_placeholders_format_cleanly():
     samples = {"run": "0143", "stage": "Build", "count": 3, "files": "a.py",
+               "activity": "Change", "phase": "Plan",
                "text": "Done", "branch": "maintain/x", "name": "a.zip",
                "link": "https://x", "task": "build", "n": 2, "label": "Plan",
                "state": "saved", "id": "a3f2c1", "severity": "high",
