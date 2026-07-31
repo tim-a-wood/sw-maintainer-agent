@@ -25,8 +25,12 @@ ui = ["PySide6-Essentials>=6.6,<7", "pypdf>=4,<6"]
 # Manim's native dependencies (moderngl, glcontext) publish no wheels for
 # Python 3.14 yet; without this marker the whole install fails on 3.14
 # trying to compile them. With it, the app installs and the render step
-# explains how to enable the video feature.
-explain = ["manim==0.20.1; python_version < '3.14'"]
+# explains how to enable the video feature. PySide6-Addons carries
+# Qt Multimedia, so the finished video plays inside the result window.
+explain = [
+  "manim==0.20.1; python_version < '3.14'",
+  "PySide6-Addons>=6.6,<7",
+]
 
 [project.scripts]
 maintain = "maintain.cli:main"

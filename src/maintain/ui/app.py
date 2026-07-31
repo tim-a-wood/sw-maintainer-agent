@@ -70,13 +70,21 @@ def busy_pointer():
 
 
 def _pip_install_manim() -> bool:
-    """Install the video feature into the app's own environment."""
+    """Install the video feature into the app's own environment.
+
+    PySide6-Addons carries the in-window player. The pin matches the
+    version that already runs, so pip never replaces Qt files that the
+    open app holds locked.
+    """
     import subprocess
     import sys as sys_module
 
+    import PySide6
+
     from maintain.proc import hidden
     completed = subprocess.run(
-        [sys_module.executable, "-m", "pip", "install", "manim==0.20.1"],
+        [sys_module.executable, "-m", "pip", "install", "manim==0.20.1",
+         f"PySide6-Addons=={PySide6.__version__}"],
         capture_output=True, text=True, check=False, **hidden())
     return completed.returncode == 0
 
@@ -1001,7 +1009,7 @@ class MainWindow(QMainWindow):
         if result.ok:
             state["video"] = result.video
             state["sheet"] = result.sheet
-            self.explain_result.show_passed(result.sheet)
+            self.explain_result.show_passed(result.sheet, result.video)
         else:
             state["tail"] = result.output_tail
             self.explain_result.show_failed(result.message, result.output_tail)

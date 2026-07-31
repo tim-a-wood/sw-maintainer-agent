@@ -628,7 +628,12 @@ class ExchangeScreen(Screen):
                 "ok", f"{text('send.link.done')} {text('send.link.paste')}")
         elif state == PENDING:
             self.link_steps.fail()
-            self.send_status.set_state("warn", text("send.link.manual"))
+            # The link is composed and copied even before the sync
+            # confirms — lead with that, keep File Explorer for the
+            # case where Copilot cannot open it yet.
+            self.send_status.set_state(
+                "warn", text("send.link.pending") if value
+                else text("send.link.manual"))
         else:
             self.link_steps.complete()
             self.send_status.set_state(
@@ -1689,6 +1694,22 @@ class ExplainScreen(Screen):
                         self.audience_edit.text().strip())
 
 
+def make_video_panel():
+    """The in-window player, when the optional Qt module is present.
+
+    None when PySide6-Addons is absent or broken; the caller falls
+    back to the Open-the-video button.
+    """
+    try:
+        from maintain.ui.video import VideoPanel
+    except Exception:  # noqa: BLE001 - the explain extra may be absent
+        return None
+    try:
+        return VideoPanel()
+    except Exception:  # noqa: BLE001 - a broken multimedia stack
+        return None
+
+
 class ExplainResultScreen(Screen):
     open_video = Signal()
     open_folder = Signal()
@@ -1720,6 +1741,15 @@ class ExplainResultScreen(Screen):
         self.add(self.steps)
         self.folder_label = ElidedLabel("", "MonoHint")
         self.add(self.folder_label)
+        self.video_area = QWidget()
+        video_column = QVBoxLayout(self.video_area)
+        video_column.setContentsMargins(0, 0, 0, 0)
+        self.video_area.setVisible(False)
+        self.add(self.video_area)
+        self.video_panel = None
+        self.video_hint = label(text("explain.video.enable"), "Hint")
+        self.video_hint.setVisible(False)
+        self.add(self.video_hint)
         self.sheet_view = QLabel()
         self.sheet_view.setVisible(False)
         self.sheet_view.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1746,12 +1776,54 @@ class ExplainResultScreen(Screen):
             button(text("explain.done"), "Ghost", self.done.emit))
         self.add(label(text("explain.saved.note"), "Hint"))
         self._output_tail = ""
+        self._sheet_path = None
+
+    def _ensure_video_panel(self):
+        """The player, made on first need — so it also appears on the
+        first render after an in-app install of the video feature."""
+        if self.video_panel is None:
+            panel = make_video_panel()
+            if panel is not None:
+                panel.failed.connect(self._video_failed)
+                self.video_area.layout().addWidget(panel)
+                self.video_panel = panel
+        return self.video_panel
+
+    def _stop_video(self) -> None:
+        if self.video_panel is not None:
+            self.video_panel.stop()
+        self.video_area.setVisible(False)
+
+    def _video_failed(self) -> None:
+        """The file does not decode here; back to the plain buttons."""
+        self._stop_video()
+        self._show_sheet()
+
+    def _show_sheet(self) -> None:
+        if not self._sheet_path:
+            return
+        pixmap = QPixmap(str(self._sheet_path))
+        if not pixmap.isNull():
+            self.sheet_view.setPixmap(pixmap.scaledToWidth(
+                560, Qt.TransformationMode.SmoothTransformation))
+            self.sheet_view.setVisible(True)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        # Leaving the screen releases the video file, so nothing stays
+        # locked. A minimize is spontaneous — the panel only pauses,
+        # and the restored window keeps the paused video.
+        if not event.spontaneous():
+            self._stop_video()
+        super().hideEvent(event)
 
     def show_running(self, folder: str) -> None:
         self.render_chip.set_state("RUN", "accent")
         self.status.set_state("busy", text("explain.render.running"))
         self.folder_label.setText(folder)
         self._output_tail = ""
+        self._sheet_path = None
+        self._stop_video()
+        self.video_hint.setVisible(False)
         self.sheet_view.setVisible(False)
         self.tail_view.setVisible(False)
         self.video_button.setVisible(False)
@@ -1770,15 +1842,20 @@ class ExplainResultScreen(Screen):
         else:
             self.steps.fail()
 
-    def show_passed(self, sheet=None) -> None:
+    def show_passed(self, sheet=None, video=None) -> None:
         self.render_chip.set_state("PASS", "pass")
         self.status.set_state("ok", text("explain.render.passed"))
-        if sheet:
-            pixmap = QPixmap(str(sheet))
-            if not pixmap.isNull():
-                self.sheet_view.setPixmap(pixmap.scaledToWidth(
-                    560, Qt.TransformationMode.SmoothTransformation))
-                self.sheet_view.setVisible(True)
+        self._sheet_path = sheet
+        panel = self._ensure_video_panel() if video else None
+        if panel is not None:
+            # The video plays right here; the still frame sheet would
+            # only repeat it.
+            self.video_hint.setVisible(False)
+            self.video_area.setVisible(True)
+            panel.load(video)
+        else:
+            self.video_hint.setVisible(bool(video))
+            self._show_sheet()
         self.video_button.setVisible(True)
         self.repair_button.setVisible(False)
         self.repair_hint.setVisible(False)

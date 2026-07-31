@@ -129,6 +129,9 @@ def test_main_warns_when_ffmpeg_and_winget_are_absent(capsys):
 def test_explain_extra_is_gated_below_python_314():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert "manim==0.20.1; python_version < '3.14'" in pyproject
+    # The same extra carries the Qt video module for the in-window
+    # player on the result screen.
+    assert "PySide6-Addons" in pyproject
 
 
 def test_setup_ps1_only_bootstraps_the_python_script():

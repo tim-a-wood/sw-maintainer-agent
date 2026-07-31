@@ -82,6 +82,9 @@ STR: dict[str, str] = {
     "send.link.unset": "Set the OneDrive folder in Settings for the automatic link.",
     "send.link.done": "In sync. The link is in the clipboard.",
     "send.link.paste": "Paste the link into Copilot. Then send the message.",
+    "send.link.pending": "The link is in the clipboard — paste it into Copilot. "
+                         "If Copilot cannot open it, wait for the check mark in "
+                         "File Explorer.",
     "send.link.manual": "Look at the file in File Explorer. When you see the check mark, "
                         "paste the link.",
     "send.file.copied": "The package is in the clipboard. Paste it into Copilot.",
@@ -352,6 +355,10 @@ STR: dict[str, str] = {
     "explain.render.running": "Manim renders the scene…",
     "explain.render.passed": "The render is complete.",
     "explain.render.failed": "The render failed.",
+    "explain.video.enable": "Run the setup script again for the video in "
+                            "this window.",
+    "video.play": "Play",
+    "video.pause": "Pause",
     "explain.open.video": "Open the video",
     "explain.open.folder": "Open the folder",
     "explain.repair": "Repair with Copilot",

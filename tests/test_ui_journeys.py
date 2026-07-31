@@ -1147,3 +1147,127 @@ def test_markdown_packet_embeds_extracted_reference_text(tmp_path):
     assert "attachments/photo.png" in content
     assert "not a text-carrying" in content
     assert packet_sidecars(packet) == ["attachments/photo.png"]
+
+
+def test_explain_result_embeds_and_releases_the_video(qt_app, tmp_path,
+                                                      monkeypatch):
+    """The finished scene plays inside the result view; a new render or
+    a step away lets go of the file, so nothing stays locked."""
+    from PySide6.QtCore import Signal
+    from PySide6.QtWidgets import QWidget
+
+    import maintain.ui.screens as screens_module
+
+    class FakePanel(QWidget):
+        failed = Signal()
+
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def load(self, path):
+            self.calls.append(("load", str(path)))
+
+        def stop(self):
+            self.calls.append(("stop",))
+
+    made = []
+
+    def fake_factory():
+        made.append(FakePanel())
+        return made[-1]
+
+    monkeypatch.setattr(screens_module, "make_video_panel", fake_factory)
+    screen = screens_module.ExplainResultScreen()
+    screen.show()
+    qt_app.processEvents()
+    screen.show_running(str(tmp_path))
+    assert not screen.video_area.isVisibleTo(screen)
+
+    video = tmp_path / "scene.mp4"
+    video.write_bytes(b"x")
+    screen.show_passed(None, video)
+    assert made, "the player was never made"
+    panel = made[0]
+    assert ("load", str(video)) in panel.calls
+    assert screen.video_area.isVisibleTo(screen)
+    assert not screen.video_hint.isVisibleTo(screen)
+    assert not screen.sheet_view.isVisibleTo(screen)   # no still repeat
+
+    # A new render stops the playback before anything else runs.
+    screen.show_running(str(tmp_path))
+    assert ("stop",) in panel.calls
+    assert not screen.video_area.isVisibleTo(screen)
+
+    # Leaving the view releases the file.
+    panel.calls.clear()
+    screen.show_passed(None, video)
+    screen.hide()
+    qt_app.processEvents()
+    assert ("stop",) in panel.calls
+
+    # A decode failure falls back to the plain buttons, quietly.
+    panel.calls.clear()
+    screen.show()
+    screen.show_passed(None, video)
+    panel.failed.emit()
+    qt_app.processEvents()
+    assert ("stop",) in panel.calls
+    assert not screen.video_area.isVisibleTo(screen)
+    assert len(made) == 1   # one player, reused for every render
+
+
+def test_explain_result_hints_at_setup_without_the_player(qt_app, tmp_path,
+                                                          monkeypatch):
+    import maintain.ui.screens as screens_module
+
+    monkeypatch.setattr(screens_module, "make_video_panel", lambda: None)
+    screen = screens_module.ExplainResultScreen()
+    video = tmp_path / "scene.mp4"
+    video.write_bytes(b"x")
+    screen.show_passed(None, video)
+    assert screen.video_hint.isVisibleTo(screen)
+    assert not screen.video_area.isVisibleTo(screen)
+    # Without a video there is nothing to enable; no hint either.
+    screen.show_running(str(tmp_path))
+    screen.show_passed(None, None)
+    assert not screen.video_hint.isVisibleTo(screen)
+
+
+def test_pending_link_outcome_leads_with_the_copied_link(qt_app, tmp_path,
+                                                         monkeypatch):
+    """When the sync watch gives up, the person still has the link —
+    the outcome line says that first, File Explorer second."""
+    from maintain.onedrive import PENDING
+
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    window.exchange._on_link_state(PENDING, "https://1drv.example/m/x.md")
+    line = window.exchange.send_status.text()
+    assert "clipboard" in line and "File Explorer" in line
+    # Without a link base there is no link; the old advice stands alone.
+    window.exchange._on_link_state(PENDING, "")
+    assert window.exchange.send_status.text().startswith("Look at the file")
+    assert not errors, errors
+
+
+def test_manim_install_also_brings_the_video_player(monkeypatch):
+    """The one in-app install enables the render and the in-window
+    player together, pinned to the Qt that already runs."""
+    import subprocess
+    import types as types_module
+
+    import PySide6
+
+    from maintain.ui.app import _pip_install_manim
+
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = list(argv)
+        return types_module.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert _pip_install_manim() is True
+    joined = " ".join(seen["argv"])
+    assert "manim==0.20.1" in joined
+    assert f"PySide6-Addons=={PySide6.__version__}" in joined

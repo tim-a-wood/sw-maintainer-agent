@@ -45,8 +45,9 @@ decision lives in the Python script, where the test suite exercises it
 4. Installs Maintain with the `ui` and `explain` extras:
    `pipx install --force <repo>[ui,explain]`. The `ui` extra carries
    pypdf, so the one-file packet can extract text from PDF references.
-   If the full install fails, the script retries with `ui` alone so
-   the app still lands.
+   The `explain` extra carries Manim and the Qt video module, so the
+   finished video plays inside the result window. If the full install
+   fails, the script retries with `ui` alone so the app still lands.
 5. Installs ffmpeg with winget when it is absent. Manim needs it for
    the video files; it can never come from pip.
 6. Verifies the result and prints one PASS line for each step.

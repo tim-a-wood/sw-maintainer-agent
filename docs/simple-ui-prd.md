@@ -860,3 +860,22 @@ During a publish only the step list speaks now; the status line stays
 empty and returns with a single final outcome (link ready, look in File
 Explorer, or the error). Rule of the pattern: when a step list narrates
 the progress, no second widget repeats it.
+
+### 14.22 The video plays where the render finished
+
+The result screen showed four check marks and then sent the person
+away to an external player. Now the finished scene plays inside the
+view itself: it starts on its own, with Play/Pause, a position bar,
+and the time. Qt Multimedia comes with PySide6-Addons, added to the
+explain extra; the in-app Manim install brings it too, pinned to the
+Qt version that already runs so pip never touches locked files. When
+the module is absent the screen keeps the old buttons and one hint
+names the setup script; a file that does not decode falls back to the
+frame sheet, quietly. Leaving the view releases the video file —
+a minimize only pauses. The still frame sheet no longer shows next to
+a playing video.
+
+The same pass rewrote the sync-not-confirmed outcome on the exchange
+screen. It said "Look at the file in File Explorer" — but the link was
+already composed and in the clipboard. The line now leads with that,
+and File Explorer is the fallback advice, not the instruction.
