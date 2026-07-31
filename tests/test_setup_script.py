@@ -166,3 +166,40 @@ def test_setup_skips_the_shortcut_off_windows(capsys):
     out = capsys.readouterr().out
     assert "no shortcut is made" in out
     assert not any(call[0] == "powershell" for call in runner.calls)
+
+
+def test_verification_offers_the_video_install_and_retries(capsys):
+    manim_states = iter([(1, ""), (0, "Version: 0.20.1\n")])
+    runner = FakeRunner(outcomes={"-0p": (0, PY_LIST_OLD)})
+    original = runner.run
+
+    def run(argv, capture=False):
+        if "show manim" in " ".join(argv):
+            code, out = next(manim_states)
+            runner.calls.append(list(argv))
+            import types as types_module
+            return types_module.SimpleNamespace(returncode=code, stdout=out)
+        return original(argv, capture)
+
+    runner.run = run
+    asked = []
+    assert setup.main(runner, current=(3, 12), platform="linux",
+                      ask=lambda prompt: asked.append(prompt) or "y") == 0
+    out = capsys.readouterr().out
+    assert asked, "the install offer never appeared"
+    assert "PASS: Manim 0.20.1" in out
+    retries = [call for call in runner.calls
+               if call[-1].endswith("[ui,explain]")]
+    assert len(retries) == 2   # the first install, then the accepted offer
+
+
+def test_verification_respects_a_declined_offer(capsys):
+    runner = FakeRunner(outcomes={"-0p": (0, PY_LIST_OLD),
+                                  "show manim": (1, "")})
+    assert setup.main(runner, current=(3, 12), platform="linux",
+                      ask=lambda prompt: "n") == 0
+    out = capsys.readouterr().out
+    assert "The video feature is off. Manim is not in the app" in out
+    retries = [call for call in runner.calls
+               if call[-1].endswith("[ui,explain]")]
+    assert len(retries) == 1   # the declined offer adds no install

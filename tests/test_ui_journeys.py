@@ -1003,3 +1003,63 @@ def test_link_publish_shows_stages_and_gates_the_ready_state(
     window._stop_run()
     wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
     assert not errors, errors
+
+
+def test_manim_resolves_from_the_app_environment(tmp_path, monkeypatch):
+    import maintain.render as render_module
+
+    # A configured custom command passes through untouched.
+    assert render_module.resolve_manim_command("py -m manim") == "py -m manim"
+    # The default resolves to the interpreter's sibling script when
+    # PATH cannot see manim (pipx exposes only the app's own commands).
+    fake_env = tmp_path / "venv"
+    fake_env.mkdir()
+    sibling = fake_env / "manim"
+    sibling.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(render_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(render_module.sys, "executable",
+                        str(fake_env / "python"))
+    assert render_module.resolve_manim_command("manim") == str(sibling)
+    assert render_module.manim_available(str(sibling))
+    # Nothing anywhere: the default stays and is reported absent.
+    sibling.unlink()
+    assert render_module.resolve_manim_command("manim") == "manim"
+    assert not render_module.manim_available("manim")
+
+
+def test_explain_offers_the_manim_install_and_resumes(qt_app, tmp_path,
+                                                      monkeypatch):
+    import maintain.ui.app as app_module
+
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    monkeypatch.setattr("maintain.render.manim_available", lambda c: False)
+    monkeypatch.setattr("maintain.render.resolve_manim_command", lambda c: c)
+    monkeypatch.setattr(app_module.sys, "version_info", (3, 12, 0),
+                        raising=False) if hasattr(app_module, "sys") else None
+    installed = {"count": 0}
+
+    def fake_install() -> bool:
+        installed["count"] += 1
+        monkeypatch.setattr("maintain.render.manim_available",
+                            lambda c: True)
+        return True
+
+    monkeypatch.setattr(app_module, "_pip_install_manim", fake_install)
+    asked = {"count": 0}
+
+    def confirm(*args, **kwargs):
+        asked["count"] += 1
+        return True
+
+    window.ask_confirm = confirm
+    window.show_explain()
+    window.explain.goal_edit.setPlainText("Explain the value flow.")
+    window.explain.include_code.setChecked(True)
+    window.explain._start()
+    wait_until(qt_app, lambda: installed["count"] == 1, message="install ran")
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               message="explain packet after install")
+    assert asked["count"] == 1
+    assert any("video feature is ready" in item for item in toasts)
+    window._stop_run()
+    assert not errors, errors

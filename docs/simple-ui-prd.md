@@ -814,3 +814,24 @@ Findings from the real computer's OneDrive attempt:
   the reply contract (maintain-output.zip for build steps) are
   unchanged; the Markdown is how the packet travels. The Package
   settings page offers all three styles.
+
+### 14.19 Manim finds itself, and asks to be installed
+
+The real computer showed "Manim is absent" while setup had verified
+Manim present. The cause: pipx exposes only the application's own
+commands on PATH, so the manim script installed by the explain extra
+sits beside the app's interpreter where `which` cannot see it. Three
+changes:
+
+- The default manim command now resolves to the app environment's own
+  script first (`resolve_manim_command`); a custom command passes
+  through untouched. On the affected computer this fixes the render
+  with no install at all.
+- When Manim is genuinely missing and the Python supports it, the
+  Explain start offers the install: one confirm, the busy screen while
+  pip installs into the app's environment, then the flow resumes by
+  itself. On Python 3.14 the version message stays instead.
+- setup.py's verification step now offers the same install
+  interactively ("Install it now? [Y/n]") when the app environment
+  supports the video feature; a non-interactive run keeps the plain
+  note.

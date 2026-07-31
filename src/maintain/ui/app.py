@@ -69,6 +69,18 @@ def busy_pointer():
         QGuiApplication.restoreOverrideCursor()
 
 
+def _pip_install_manim() -> bool:
+    """Install the video feature into the app's own environment."""
+    import subprocess
+    import sys as sys_module
+
+    from maintain.proc import hidden
+    completed = subprocess.run(
+        [sys_module.executable, "-m", "pip", "install", "manim==0.20.1"],
+        capture_output=True, text=True, check=False, **hidden())
+    return completed.returncode == 0
+
+
 def saved_theme() -> str:
     value = str(load_ui_settings().get("theme", "dark"))
     return value if value in {"light", "dark"} else "dark"
@@ -77,6 +89,7 @@ def saved_theme() -> str:
 class MainWindow(QMainWindow):
     explain_render_done = Signal(object)   # RenderResult, from the worker
     explain_render_step = Signal(str, str)  # phase, step text
+    manim_install_done = Signal(bool, object)  # ok, resume arguments
 
     def __init__(self, config: ProjectConfig) -> None:
         super().__init__()
@@ -96,6 +109,7 @@ class MainWindow(QMainWindow):
         self.explain_render_done.connect(self._explain_render_done)
         self.explain_render_step.connect(
             lambda phase, step: self.explain_result.on_render_step(phase, step))
+        self.manim_install_done.connect(self._manim_install_done)
         self._busy_timer = QTimer(self)
         self._busy_timer.setSingleShot(True)
         self._busy_timer.timeout.connect(self._busy_now)
@@ -878,6 +892,8 @@ class MainWindow(QMainWindow):
         if self.controller.busy:
             self.toast(text("issues.busy"))
             return
+        if self._offer_manim_install(files, goal, audience):
+            return
         if self.explain.include_code.isChecked():
             files = self._with_project_code(files)
         sources = self._relative_sources(files)
@@ -939,6 +955,43 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=work_thread, daemon=True,
                          name="maintain-render").start()
+
+    def _offer_manim_install(self, files: list, goal: str,
+                             audience: str) -> bool:
+        """Ask to install the video feature before the Copilot round
+        starts, so the person never renders into a dead end. True when
+        an install is now running (the flow resumes after it)."""
+        import sys as sys_module
+        from maintain.render import manim_available, resolve_manim_command
+        command = resolve_manim_command(
+            str(load_ui_settings().get("manim_command", "manim")))
+        if manim_available(command):
+            return False
+        if sys_module.version_info[:2] >= (3, 14):
+            return False   # the render message names the version cause
+        if not self.ask_confirm(text("explain.install.title"),
+                                text("explain.install.body"),
+                                text("explain.install.yes"), text("stop.no")):
+            return False
+        self.busy.show_message(text("explain.installing"))
+        self.show_screen("busy")
+
+        def work() -> None:
+            self.manim_install_done.emit(
+                _pip_install_manim(), (files, goal, audience))
+
+        threading.Thread(target=work, daemon=True,
+                         name="maintain-manim-install").start()
+        return True
+
+    def _manim_install_done(self, ok: bool, resume) -> None:
+        files, goal, audience = resume
+        if ok:
+            self.toast(text("explain.install.done"))
+            self._start_explain(files, goal, audience)
+        else:
+            self.show_error(text("explain.install.failed"))
+            self.show_explain()
 
     def _explain_render_done(self, outcome) -> None:
         state = self._explain or {}

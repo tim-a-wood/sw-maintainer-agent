@@ -235,6 +235,15 @@ STR: dict[str, str] = {
     "package.markdown.sub": "The whole packet in one readable file. "
                             "Copilot reads it directly. Files that are "
                             "not text ride as separate attachments.",
+    "explain.install.title": "Install the video feature?",
+    "explain.install.body": "Manim is not installed. The tool installs "
+                            "it into its own environment. This can "
+                            "take some minutes.",
+    "explain.install.yes": "Install",
+    "explain.installing": "The tool installs the video feature.",
+    "explain.install.done": "The video feature is ready.",
+    "explain.install.failed": "The install failed. Run scripts/setup.ps1 "
+                              "again.",
     "step.scene.check": "Check the scene",
     "step.render.probe": "Check the geometry",
     "step.render.video": "Render the video",

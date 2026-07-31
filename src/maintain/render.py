@@ -24,8 +24,23 @@ class RenderResult:
     sheet: Path | None = None
 
 
+def resolve_manim_command(command: str) -> str:
+    """The app environment's own manim wins for the default command.
+
+    pipx exposes only the application's entry points on PATH, so the
+    manim script installed by the explain extra lives beside the app's
+    interpreter and `which` cannot see it."""
+    if command != "manim" or shutil.which(command):
+        return command
+    name = "manim.exe" if sys.platform == "win32" else "manim"
+    sibling = Path(sys.executable).with_name(name)
+    if sibling.exists():
+        return str(sibling)
+    return command
+
+
 def manim_available(command: str) -> bool:
-    return shutil.which(command) is not None
+    return shutil.which(command) is not None or Path(command).exists()
 
 
 def _absent_message(manim_command: str,
@@ -69,6 +84,7 @@ def render_scene(source: str, work_dir: Path, *, manim_command: str,
     work_dir.mkdir(parents=True, exist_ok=True)
     scene_path = work_dir / "scene.py"
     scene_path.write_text(source, encoding="utf-8")
+    manim_command = resolve_manim_command(manim_command)
     if not manim_available(manim_command):
         return RenderResult(ok=False, message=_absent_message(manim_command))
     try:

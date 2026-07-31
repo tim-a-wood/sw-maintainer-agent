@@ -87,9 +87,16 @@ def list_interpreters(runner: Runner) -> list[Interpreter]:
     return parse_py_list(listing.stdout or "")
 
 
+def default_ask(prompt: str) -> str:
+    if not sys.stdin.isatty():
+        return "n"
+    return input(prompt)
+
+
 def main(runner: Runner | None = None,
          current: tuple[int, int] | None = None,
-         platform: str | None = None) -> int:
+         platform: str | None = None,
+         ask=default_ask) -> int:
     runner = runner or Runner()
     current = current or sys.version_info[:2]
     platform = platform or sys.platform
@@ -183,15 +190,31 @@ def main(runner: Runner | None = None,
                       "with: maintain-ui")
 
     print("6. Verification")
-    shown = runner.run([*python, "-m", "pipx", "runpip", "maintain",
-                        "show", "manim"], capture=True)
-    match = re.search(r"^Version:\s*(\S+)", shown.stdout or "",
-                      re.MULTILINE)
-    if shown.returncode == 0 and match:
-        print(f"   PASS: Manim {match.group(1)} in the app environment")
+
+    def manim_version() -> str:
+        shown = runner.run([*python, "-m", "pipx", "runpip", "maintain",
+                            "show", "manim"], capture=True)
+        match = re.search(r"^Version:\s*(\S+)", shown.stdout or "",
+                          re.MULTILINE)
+        return match.group(1) if shown.returncode == 0 and match else ""
+
+    version = manim_version()
+    if version:
+        print(f"   PASS: Manim {version} in the app environment")
     else:
-        print("   NOTE: The video feature is off. Manim is not in the "
-              "app environment.")
+        active = chosen.version if chosen is not None else current
+        if explain_supported(active):
+            answer = ask("   The video feature is off. Install it now? "
+                         "[Y/n] ").strip().lower()
+            if answer in ("", "y", "yes"):
+                runner.run([*python, "-m", "pipx", "install", "--force",
+                            f"{REPOSITORY}[ui,explain]"])
+                version = manim_version()
+        if version:
+            print(f"   PASS: Manim {version} in the app environment")
+        else:
+            print("   NOTE: The video feature is off. Manim is not in the "
+                  "app environment.")
 
     print("")
     print("Done. Start the app with: maintain-ui")
