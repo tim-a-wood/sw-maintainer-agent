@@ -1389,6 +1389,11 @@ def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
     assert described[0].status == "in_work"
     assert described[0].title.startswith("The loader misses")
     assert window.current_handoff.request.run_id in described[0].runs
+    # The issue list renders the described source without a crash — the
+    # screenshot run caught a missing catalog key here once.
+    window.show_issues()
+    window.issues_list.set_filter("all")
+    assert _screen(window) == "issues"
     window._stop_run()
     wait_until(qt_app, lambda: not window.controller.busy, message="stop two")
 

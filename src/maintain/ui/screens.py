@@ -1228,8 +1228,8 @@ class IssueRowWidget(QFrame):
             size=34, icon_size=18))
         column = QVBoxLayout()
         column.setSpacing(1)
-        title = QLabel(issue.title)
-        title.setObjectName("ChoiceTitle")
+        # A long described title must not push the chips off the row.
+        title = ElidedLabel(issue.title, "ChoiceTitle")
         source = text("issues.source." + issue.source)
         place = f"{issue.file}:{issue.line}" if issue.file else issue.id
         reference = f" · {issue.external_ref}" if issue.external_ref else ""

@@ -285,6 +285,7 @@ STR: dict[str, str] = {
     "issues.source.test": "Test",
     "issues.source.scan": "Scan",
     "issues.source.import": "Import",
+    "issues.source.described": "Described",
     "issues.busy": "First stop the run. Then work on the issues.",
 
     # Issue detail
