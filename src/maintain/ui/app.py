@@ -122,7 +122,7 @@ class MainWindow(QMainWindow):
         self.current_record: RunRecord | None = None
         self._in_test = False
         self._side: dict | None = None
-        self._pending_issue_link = ""
+        self._pending_issue_links: list[str] = []
         self._explain: dict | None = None
         self.explain_render_done.connect(self._explain_render_done)
         self.explain_render_step.connect(
@@ -371,6 +371,7 @@ class MainWindow(QMainWindow):
         self.describe.back.connect(self.show_home)
         self.describe.import_requested.connect(self._import_run_files)
         self.describe.pick_issue.connect(self._repair_issue)
+        self.describe.repair_selected.connect(self._repair_issues)
         self.describe.open_issues_list.connect(self.show_issues)
         self.describe.open_checks.connect(
             lambda: self._open_settings_page("checks"))
@@ -525,7 +526,7 @@ class MainWindow(QMainWindow):
 
     def show_home(self) -> None:
         self._set_run_footer(False)
-        self._pending_issue_link = ""
+        self._pending_issue_links = []
         runs = self.controller.runs()   # one scan feeds the whole screen
         self.home.set_resumable(self.controller.resumable_run(runs))
         self.home.set_resumable_explain(
@@ -765,24 +766,39 @@ class MainWindow(QMainWindow):
         self.show_issues()
 
     def _repair_issue(self, issue_id: str) -> None:
+        self._repair_issues([issue_id])
+
+    def _repair_issues(self, issue_ids: list) -> None:
+        """FR-I8: one run repairs several related faults together; the
+        delivery closes every one of them."""
         if self.controller.busy:
             self.toast(text("issues.busy"))
             return
-        try:
-            issue = self.controller.issues.get(issue_id)
-        except MaintainError as exc:
-            self.toast(str(exc))
+        issues = []
+        for issue_id in issue_ids:
+            try:
+                issues.append(self.controller.issues.get(str(issue_id)))
+            except MaintainError as exc:
+                self.toast(str(exc))
+                return
+        if not issues:
             return
         self._new_change("issue")
-        parts = [issue.title]
-        if issue.detail.strip():
-            parts.append(issue.detail.strip())
-        if issue.file:
-            parts.append(f"Location: {issue.file}:{issue.line}")
-        if issue.snippet.strip():
-            parts.append(f"The cited code: {issue.snippet.strip()}")
-        self.describe.request_edit.setPlainText("\n\n".join(parts))
-        self._pending_issue_link = issue_id
+        blocks = []
+        for index, issue in enumerate(issues, start=1):
+            parts = [issue.title if len(issues) == 1
+                     else f"{index}. {issue.title}"]
+            if issue.detail.strip():
+                parts.append(issue.detail.strip())
+            if issue.file:
+                parts.append(f"Location: {issue.file}:{issue.line}")
+            if issue.snippet.strip():
+                parts.append(f"The cited code: {issue.snippet.strip()}")
+            blocks.append("\n\n".join(parts))
+        header = ("" if len(issues) == 1 else
+                  f"Repair these {len(issues)} related faults together.\n\n")
+        self.describe.request_edit.setPlainText(header + "\n\n".join(blocks))
+        self._pending_issue_links = [issue.id for issue in issues]
 
     # ----- scan and discuss (run-less packet loops) -----
 
@@ -1236,7 +1252,7 @@ class MainWindow(QMainWindow):
     # ----- run start and resume -----
 
     def _new_change(self, mode: str) -> None:
-        self._pending_issue_link = ""
+        self._pending_issue_links = []
         self.describe.reset(mode)
         self.describe.set_recent(
             list(load_ui_settings().get("recent_requests", [])))
@@ -1268,7 +1284,7 @@ class MainWindow(QMainWindow):
     def _start_run(self, mode: str, request: str, attachments: list) -> None:
         if self.describe.include_code.isChecked():
             attachments = self._with_project_code(attachments)
-        if mode == "issue" and not self._pending_issue_link:
+        if mode == "issue" and not self._pending_issue_links:
             # FR-I6: a described fault lands in the tracker and closes
             # with the run that repairs it. The same words again reuse
             # the same tracked issue.
@@ -1277,7 +1293,7 @@ class MainWindow(QMainWindow):
                                 detail=request, kind="described")],
                 source="described")
             if captured.touched:
-                self._pending_issue_link = captured.touched[0]
+                self._pending_issue_links = [captured.touched[0]]
         if self.controller.start_run(mode, request, attachments):
             self._remember_request(request)
             self._set_stage(0)
@@ -1328,11 +1344,11 @@ class MainWindow(QMainWindow):
     def _packet_ready(self, handoff: PacketHandoff) -> None:
         self.current_handoff = handoff
         self._wait_screen = "exchange"
-        if self._pending_issue_link:
-            self.controller.issues.link_run(self._pending_issue_link,
+        for issue_id in self._pending_issue_links:
+            self.controller.issues.link_run(issue_id,
                                             handoff.request.run_id)
-            self.controller.issues.set_in_work(self._pending_issue_link)
-            self._pending_issue_link = ""
+            self.controller.issues.set_in_work(issue_id)
+        self._pending_issue_links = []
         self._set_run_footer(True, handoff.request.run_id)
         self._set_stage(STAGE_FOR_TASK[handoff.task_key])
         self.exchange.show_handoff(handoff, self._packet_names(),

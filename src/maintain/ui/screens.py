@@ -269,6 +269,7 @@ class DescribeScreen(Screen):
     import_requested = Signal()
     open_checks = Signal()
     pick_issue = Signal(str)         # a tracked issue, one click to repair
+    repair_selected = Signal(list)   # several checked issues, one run
     open_issues_list = Signal()      # the rest of the tracker, when >4
 
     def __init__(self) -> None:
@@ -292,6 +293,13 @@ class DescribeScreen(Screen):
         self._issues_more.setStyleSheet("padding: 2px 6px; font-size: 12px;")
         self._issues_more.setVisible(False)
         self.add_row(self._issues_more)
+        # FR-I8: check several related issues; one button repairs them
+        # together in one run.
+        self.repair_together = button("", "Secondary",
+                                      self._emit_repair_selected)
+        self.repair_together.setVisible(False)
+        self.add_row(self.repair_together)
+        self._issue_checks: list[tuple[QCheckBox, str]] = []
         self._issues_hint = label(text("describe.issues.hint"), "Hint")
         self._issues_hint.setVisible(False)
         self.add(self._issues_hint)
@@ -351,6 +359,7 @@ class DescribeScreen(Screen):
                 widget.setParent(None)
                 widget.deleteLater()
         show = self.mode == "issue" and bool(issues)
+        self._issue_checks = []
         for issue in issues[:self.VISIBLE_ISSUES]:
             key, _ = SEVERITY_CHIPS.get(issue.severity,
                                         ("issues.severity.medium", ""))
@@ -360,14 +369,39 @@ class DescribeScreen(Screen):
             card = ChoiceButton("bug", issue.title, sub)
             card.clicked.connect(
                 lambda iid=issue.id: self.pick_issue.emit(iid))
-            self._issues_column.addWidget(card)
+            mark = QCheckBox()
+            mark.toggled.connect(self._selection_changed)
+            row = QWidget()
+            line = QHBoxLayout(row)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(8)
+            line.addWidget(mark, 0)
+            line.addWidget(card, 1)
+            self._issues_column.addWidget(row)
+            self._issue_checks.append((mark, issue.id))
         hidden = len(issues) - self.VISIBLE_ISSUES
         self._issues_more.setText(
             text("describe.issues.more", count=hidden) if hidden > 0 else "")
         self._issues_more.setVisible(show and hidden > 0)
+        self.repair_together.setVisible(False)
         self._issues_head.setVisible(show)
         self._issues_holder.setVisible(show)
         self._issues_hint.setVisible(show)
+
+    def _selected_issue_ids(self) -> list[str]:
+        return [issue_id for mark, issue_id in self._issue_checks
+                if mark.isChecked()]
+
+    def _selection_changed(self) -> None:
+        count = len(self._selected_issue_ids())
+        self.repair_together.setText(
+            text("describe.issues.together", count=count))
+        self.repair_together.setVisible(count >= 2)
+
+    def _emit_repair_selected(self) -> None:
+        selected = self._selected_issue_ids()
+        if len(selected) >= 2:
+            self.repair_selected.emit(selected)
 
     def set_checks_hint(self, visible: bool) -> None:
         self.checks_hint.setVisible(visible)

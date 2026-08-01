@@ -1363,9 +1363,14 @@ def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
     # line leads to the whole tracker (FR-I7). Long titles wrap.
     window.home.new_change.emit("issue")
     describe = window.describe
+
+    def card(index):
+        row = describe._issues_column.itemAt(index).widget()
+        return row.layout().itemAt(1).widget()
+
     assert describe._issues_holder.isVisibleTo(describe)
     assert describe._issues_column.count() == 4
-    assert describe._issues_column.itemAt(0).widget().title_label.wordWrap()
+    assert card(0).title_label.wordWrap()
     assert describe._issues_more.isVisibleTo(describe)
     assert "+2" in describe._issues_more.text()
     describe._issues_more.click()
@@ -1376,7 +1381,7 @@ def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
 
     # Picking one prefills the fault; the started run links to it.
     window.home.new_change.emit("issue")
-    describe._issues_column.itemAt(0).widget().clicked.emit()
+    card(0).clicked.emit()
     assert "The value is wrong" in describe.request_edit.toPlainText()
     describe._start()
     wait_until(qt_app, lambda: _screen(window) == "exchange",
@@ -1387,6 +1392,29 @@ def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
     assert window.current_handoff.request.run_id in picked.runs
     window._stop_run()
     wait_until(qt_app, lambda: not window.controller.busy, message="stop one")
+
+    # FR-I8: checking several repairs them together in one linked run.
+    window.home.new_change.emit("issue")
+    describe._issue_checks[0][0].setChecked(True)
+    assert not describe.repair_together.isVisibleTo(describe)
+    describe._issue_checks[1][0].setChecked(True)
+    assert describe.repair_together.isVisibleTo(describe)
+    assert "2" in describe.repair_together.text()
+    describe.repair_together.click()
+    body = describe.request_edit.toPlainText()
+    assert "Repair these 2 related faults together." in body
+    assert "1. The value is wrong" in body
+    describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               timeout=90.0, message="together packet")
+    together_run = window.current_handoff.request.run_id
+    linked = [item for item in window.controller.issues.load()
+              if together_run in item.runs]
+    assert len(linked) == 2
+    assert all(item.status == "in_work" for item in linked)
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy,
+               message="stop together")
 
     # A described new fault lands in the tracker, linked and in work.
     window.home.new_change.emit("issue")

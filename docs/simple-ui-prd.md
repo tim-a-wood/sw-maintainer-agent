@@ -1090,3 +1090,17 @@ over title, file, and source, while the tab counts stay whole. A
 fresh visit always starts unfiltered. And card titles wrap now —
 user words land in those cards (issue titles, explain goals), and a
 long sentence must never widen the page.
+
+### 14.32 Related issues repair together (FR-I8)
+
+Related faults often share one fix, and closing them one run at a
+time would ask three round trips for one change. Each issue card on
+the fault screen now carries a check box. A click on the card stays
+the fast path — one issue, prefilled, start. Checking two or more
+shows one button, "Repair {count} together": it composes a single
+numbered description ("Repair these N related faults together." with
+each title, detail, location, and cited code), and the started run
+links to every checked issue. Delivery closes them all — the close
+mechanism and its "Closed: {title} and {count} more" toast already
+spoke plural. Stopping the run leaves each issue in work, exactly as
+a single repair would.

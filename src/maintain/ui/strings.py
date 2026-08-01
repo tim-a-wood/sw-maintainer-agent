@@ -72,8 +72,10 @@ STR: dict[str, str] = {
     "describe.fault.title": "What is the fault?",
     "describe.issues.head": "Open issues",
     "describe.issues.more": "+{count} more issues…",
-    "describe.issues.hint": "Select one, or describe a new fault below. "
-                            "A new fault goes into the issue list.",
+    "describe.issues.together": "Repair {count} together",
+    "describe.issues.hint": "Select one to repair it. Check several to "
+                            "repair them together. A new fault goes into "
+                            "the issue list.",
     "issues.search.placeholder": "Filter by title, file, or source.",
     "describe.placeholder": "Write the change in one or two sentences.",
     "describe.drop.main": "Drop files here, or click to select them.",
