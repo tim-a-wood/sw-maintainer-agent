@@ -31,7 +31,7 @@ from maintain.issue_packets import (SideExchange, build_side_packet,
                                     explain_dir, explain_request,
                                     scan_candidates, scan_request,
                                     side_packet_dir)
-from maintain.issues import CLOSED, display_order
+from maintain.issues import CLOSED, IssueCandidate, display_order
 from maintain.models import RunRecord, RunState, utc_now
 from maintain.providers.command import parse_response
 from maintain.render import render_scene
@@ -370,6 +370,7 @@ class MainWindow(QMainWindow):
         self.describe.start.connect(self._start_run)
         self.describe.back.connect(self.show_home)
         self.describe.import_requested.connect(self._import_run_files)
+        self.describe.pick_issue.connect(self._repair_issue)
         self.describe.open_checks.connect(
             lambda: self._open_settings_page("checks"))
 
@@ -1234,11 +1235,16 @@ class MainWindow(QMainWindow):
     # ----- run start and resume -----
 
     def _new_change(self, mode: str) -> None:
+        self._pending_issue_link = ""
         self.describe.reset(mode)
         self.describe.set_recent(
             list(load_ui_settings().get("recent_requests", [])))
         self.describe.set_checks_hint(not any(
             name != "diff-check" for name, _ in self.store.checks()))
+        if mode == "issue":
+            self.describe.set_issue_choices(display_order(
+                [item for item in self.controller.issues.load()
+                 if item.status != CLOSED])[:4])
         self.show_screen("describe")
 
     def _project_code_files(self) -> list[Path]:
@@ -1261,6 +1267,16 @@ class MainWindow(QMainWindow):
     def _start_run(self, mode: str, request: str, attachments: list) -> None:
         if self.describe.include_code.isChecked():
             attachments = self._with_project_code(attachments)
+        if mode == "issue" and not self._pending_issue_link:
+            # FR-I6: a described fault lands in the tracker and closes
+            # with the run that repairs it. The same words again reuse
+            # the same tracked issue.
+            captured = self.controller.issues.capture(
+                [IssueCandidate(title=" ".join(request.split())[:72],
+                                detail=request, kind="described")],
+                source="described")
+            if captured.touched:
+                self._pending_issue_link = captured.touched[0]
         if self.controller.start_run(mode, request, attachments):
             self._remember_request(request)
             self._set_stage(0)

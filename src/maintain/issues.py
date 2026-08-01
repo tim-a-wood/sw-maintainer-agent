@@ -38,7 +38,7 @@ REASONS = (REASON_FIXED, REASON_WONT_FIX, REASON_DUPLICATE,
 # dropped when it comes back. Fixed and gone reopen instead.
 DISMISSAL_REASONS = (REASON_WONT_FIX, REASON_DUPLICATE, REASON_NOT_A_FAULT)
 
-SOURCES = ("human", "review", "test", "scan", "import")
+SOURCES = ("human", "review", "test", "scan", "import", "described")
 SEVERITIES = ("high", "medium", "low")
 
 FINGERPRINT_WINDOW = 100

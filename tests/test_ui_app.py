@@ -1333,3 +1333,75 @@ def test_build_reply_accepts_markdown_and_text_named_zip(tmp_path):
 
     prose = check_reply(handoff, text="hello there")
     assert not prose.valid and "Markdown reply" in prose.message
+
+
+def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
+    """FR-I6: the fault screen offers the open tracked issues; picking
+    one repairs it linked, and a described fault lands in the tracker —
+    described again, it reuses the same issue."""
+    from maintain.issues import IssueCandidate
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.ask_confirm = lambda *args, **kwargs: True
+    window.ask_line = lambda *args, **kwargs: None
+    window.toast = lambda *args, **kwargs: None
+    errors: list[str] = []
+    window.show_error = errors.append
+
+    window.controller.issues.capture([
+        IssueCandidate(title="The value is wrong", severity="high",
+                       file="app.py", line=1, snippet='VALUE = "before"'),
+        IssueCandidate(title="A slow loop", severity="low", file="app.py",
+                       line=1, snippet="loop")], source="scan")
+
+    # The fault screen lists the tracked issues; the change screen not.
+    window.home.new_change.emit("issue")
+    describe = window.describe
+    assert describe._issues_holder.isVisibleTo(describe)
+    assert describe._issues_column.count() == 2
+    window.home.new_change.emit("feature")
+    assert not describe._issues_holder.isVisibleTo(describe)
+
+    # Picking one prefills the fault; the started run links to it.
+    window.home.new_change.emit("issue")
+    describe._issues_column.itemAt(0).widget().clicked.emit()
+    assert "The value is wrong" in describe.request_edit.toPlainText()
+    describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               timeout=90.0, message="picked issue packet")
+    picked = next(item for item in window.controller.issues.load()
+                  if item.title == "The value is wrong")
+    assert picked.status == "in_work"
+    assert window.current_handoff.request.run_id in picked.runs
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stop one")
+
+    # A described new fault lands in the tracker, linked and in work.
+    window.home.new_change.emit("issue")
+    describe.request_edit.setPlainText("The loader misses the bound check.")
+    describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               timeout=90.0, message="described packet")
+    described = [item for item in window.controller.issues.load()
+                 if item.source == "described"]
+    assert len(described) == 1
+    assert described[0].status == "in_work"
+    assert described[0].title.startswith("The loader misses")
+    assert window.current_handoff.request.run_id in described[0].runs
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stop two")
+
+    # The same words again reuse the tracked issue — no duplicate.
+    window.home.new_change.emit("issue")
+    describe.request_edit.setPlainText("The loader misses the bound check.")
+    describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               timeout=90.0, message="described again")
+    described = [item for item in window.controller.issues.load()
+                 if item.source == "described"]
+    assert len(described) == 1
+    assert len(described[0].runs) == 2
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stop three")
+    assert not errors, errors

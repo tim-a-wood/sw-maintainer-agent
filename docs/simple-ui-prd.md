@@ -1058,3 +1058,22 @@ Copilot misnames ".zip" is read as text before it is refused. The
 paste button now shows at the build step, the lead names both shapes,
 and the main-journey test drives the Markdown route while the repair
 journey keeps the ZIP route covered.
+
+### 14.30 The fault flow and the issue list are one thing (FR-I6)
+
+"Repair a fault" opened a blank page while the issue list sat one
+screen away holding the very faults worth repairing. The fault screen
+now ties in directly. Under "What is the fault?" it lists the open
+tracked issues — severity first, at most four — and selecting one
+walks the existing linked-repair path: the description prefills from
+the issue, the started run links to it, the issue turns in-work, and
+delivery closes it.
+
+Describing a new fault joins the same loop: the description is
+captured as a tracked issue (source "described") before the run
+starts, linked the same way, closed by the same delivery. The same
+words described again reuse the same tracked issue — its fingerprint
+matches — so a stopped repair picked back up later never duplicates
+the entry, and a closed fault described afresh reopens rather than
+forks. Every repair now has a tracker entry; the issue list is the
+one honest ledger of fault work.

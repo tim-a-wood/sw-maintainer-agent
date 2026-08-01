@@ -268,12 +268,28 @@ class DescribeScreen(Screen):
     back = Signal()
     import_requested = Signal()
     open_checks = Signal()
+    pick_issue = Signal(str)         # a tracked issue, one click to repair
 
     def __init__(self) -> None:
         super().__init__()
         self.mode = "feature"
         self._title = label(text("describe.title"), "Title")
         self.add(self._title)
+        # FR-I6: the fault flow ties into the tracker — pick an open
+        # issue, or describe a new fault the tracker then carries.
+        self._issues_head = label(text("describe.issues.head").upper(),
+                                  "Eyebrow")
+        self._issues_head.setVisible(False)
+        self.add(self._issues_head)
+        self._issues_holder = QWidget()
+        self._issues_column = QVBoxLayout(self._issues_holder)
+        self._issues_column.setContentsMargins(0, 0, 0, 0)
+        self._issues_column.setSpacing(6)
+        self._issues_holder.setVisible(False)
+        self.add(self._issues_holder)
+        self._issues_hint = label(text("describe.issues.hint"), "Hint")
+        self._issues_hint.setVisible(False)
+        self.add(self._issues_hint)
         self.request_edit = QPlainTextEdit()
         self.request_edit.setPlaceholderText(text("describe.placeholder"))
         self.request_edit.setFixedHeight(96)
@@ -315,6 +331,30 @@ class DescribeScreen(Screen):
         self.chips.set_files([])
         self.include_code.setChecked(False)
         self.message.set_state("plain", "")
+        self.set_issue_choices([])
+
+    def set_issue_choices(self, issues: list) -> None:
+        """FR-I6: the open tracked issues, one click from their repair."""
+        while self._issues_column.count():
+            item = self._issues_column.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        show = self.mode == "issue" and bool(issues)
+        for issue in issues:
+            key, _ = SEVERITY_CHIPS.get(issue.severity,
+                                        ("issues.severity.medium", ""))
+            sub = text(key)
+            if issue.file:
+                sub = f"{sub} · {issue.file}"
+            card = ChoiceButton("bug", issue.title, sub)
+            card.clicked.connect(
+                lambda iid=issue.id: self.pick_issue.emit(iid))
+            self._issues_column.addWidget(card)
+        self._issues_head.setVisible(show)
+        self._issues_holder.setVisible(show)
+        self._issues_hint.setVisible(show)
 
     def set_checks_hint(self, visible: bool) -> None:
         self.checks_hint.setVisible(visible)
