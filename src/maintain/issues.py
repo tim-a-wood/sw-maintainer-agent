@@ -81,6 +81,7 @@ class IssueCandidate:
     line: int = 0
     snippet: str = ""
     external_ref: str = ""
+    group: str = ""      # the scanner's related-functionality label
     kind: str = "scan"
     verified: bool = True
 
@@ -103,6 +104,7 @@ class Issue:
     snippet: str = ""
     fingerprint: str = ""
     external_ref: str = ""
+    group: str = ""
     runs: tuple[str, ...] = ()
     notes: tuple[dict, ...] = ()
     events: tuple[dict, ...] = ()
@@ -116,7 +118,7 @@ class Issue:
             "closed_reason": self.closed_reason, "source": self.source,
             "file": self.file, "line": self.line, "snippet": self.snippet,
             "fingerprint": self.fingerprint, "external_ref": self.external_ref,
-            "runs": list(self.runs), "notes": [dict(x) for x in self.notes],
+            "group": self.group, "runs": list(self.runs), "notes": [dict(x) for x in self.notes],
             "events": [dict(x) for x in self.events],
             "created_at": self.created_at, "updated_at": self.updated_at,
         }
@@ -137,6 +139,7 @@ class Issue:
             snippet=str(value.get("snippet", "")),
             fingerprint=str(value.get("fingerprint", "")),
             external_ref=str(value.get("external_ref", "")),
+            group=str(value.get("group", "")),
             runs=tuple(str(x) for x in value.get("runs", [])),
             notes=tuple(dict(x) for x in value.get("notes", [])
                         if isinstance(x, dict)),
@@ -243,7 +246,7 @@ class IssueStore:
     def add(self, *, title: str, detail: str = "", severity: str = "medium",
             source: str = "human", file: str = "", line: int = 0,
             snippet: str = "", external_ref: str = "", kind: str = "",
-            run_id: str = "", actor: str = "you") -> Issue:
+            group: str = "", run_id: str = "", actor: str = "you") -> Issue:
         title = title.strip()
         if not title:
             raise ConfigurationError("An issue needs a title.")
@@ -257,7 +260,7 @@ class IssueStore:
             severity=severity, source=source, file=file, line=int(line or 0),
             snippet=snippet,
             fingerprint=fingerprint(kind or source, file, snippet, title),
-            external_ref=external_ref,
+            external_ref=external_ref, group=group.strip()[:40],
             runs=(run_id,) if run_id else (),
             created_at=now, updated_at=now,
         )
@@ -350,6 +353,7 @@ class IssueStore:
                     file=candidate.file, line=candidate.line,
                     snippet=candidate.snippet, kind=candidate.kind,
                     external_ref=candidate.external_ref,
+                    group=candidate.group,
                     run_id=run_id, actor="tool")
                 added.append(issue.id)
                 continue
@@ -368,7 +372,9 @@ class IssueStore:
                 updated.append(issue.id)
             if run_id and run_id not in issue.runs:
                 issue = replace(issue, runs=(*issue.runs, run_id))
-            issue = replace(issue, line=candidate.line or issue.line)
+            issue = replace(issue, line=candidate.line or issue.line,
+                            group=(candidate.group.strip()[:40]
+                                   or issue.group))
             self._put(issue)
         return CaptureResult(added=tuple(added), updated=tuple(updated),
                              reopened=tuple(reopened), skipped=tuple(skipped))
@@ -387,3 +393,25 @@ class IssueStore:
                     and issue.fingerprint not in keep_fingerprints):
                 closed.append(self.close(issue.id, REASON_FIXED, actor="tool"))
         return closed
+
+
+def related_open_issues(issues: list[Issue], picked: Issue,
+                        limit: int = 4) -> list[Issue]:
+    """Open issues that likely share the picked issue's fix (FR-I9).
+
+    The scanner's group label is the strong signal; two issues in the
+    same group were judged related by the model that found them. An
+    ungrouped issue falls back to its file — same file, plausibly the
+    same functionality. Closed issues and the picked one never appear,
+    and the list is capped so an offer stays a decision, not a wall.
+    """
+    relatives: list[Issue] = []
+    for issue in display_order(issues):
+        if issue.id == picked.id or issue.status == CLOSED:
+            continue
+        if picked.group and issue.group == picked.group:
+            relatives.append(issue)
+        elif (not picked.group and picked.file
+                and not issue.group and issue.file == picked.file):
+            relatives.append(issue)
+    return relatives[:limit]

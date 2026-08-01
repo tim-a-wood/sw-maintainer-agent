@@ -25,9 +25,11 @@ SCAN_INSTRUCTIONS = (
     "external_ref. Return content.issues as a list. Each issue needs title, "
     "severity (high, medium, or low), file, line, snippet, and detail. "
     "snippet must quote the offending code verbatim from the supplied file "
-    "content; do not report code you were not given. Report each distinct "
-    "problem once and skip anything listed in known_issues. Do not use "
-    "internet tools."
+    "content; do not report code you were not given. When issues share one "
+    "cause or one area of functionality, give each of them the same short "
+    "group label (one to three words) in group; give an unrelated issue no "
+    "group. Report each distinct problem once and skip anything listed in "
+    "known_issues. Do not use internet tools."
 )
 
 DISCUSS_INSTRUCTIONS = (
@@ -238,6 +240,7 @@ def scan_candidates(content: dict, repository: Path) -> list[IssueCandidate]:
             line=int(line) if isinstance(line, int) and line > 0 else 0,
             snippet=snippet,
             external_ref=str(entry.get("external_ref", "")).strip(),
+            group=str(entry.get("group", "")).strip()[:40],
             kind="scan",
             verified=_verify_snippet(repository, file, snippet),
         ))

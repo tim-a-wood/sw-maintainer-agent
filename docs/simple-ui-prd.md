@@ -1104,3 +1104,33 @@ links to every checked issue. Delivery closes them all — the close
 mechanism and its "Closed: {title} and {count} more" toast already
 spoke plural. Stopping the run leaves each issue in work, exactly as
 a single repair would.
+
+### 14.33 The scanner names the groups; the pick offers them (FR-I9)
+
+Check boxes ask the person to know which faults are related — but the
+model that found the faults already knew. Each scan issue may now
+carry a short group label ("group", one to three words, at most 40
+characters): the scan instructions ask for one label shared across
+issues with one cause or one area of functionality, and none for an
+unrelated issue. The label rides the candidate through the accept
+gate into the store, shows on the tracker row's sub-line, and joins
+the filter haystack, so typing a group name gathers its issues.
+
+Picking one issue to repair — from a fault-screen card or the issue
+detail's Repair — now looks up its relatives first: open issues in
+the same group or, when the pick is ungrouped, ungrouped issues in
+the same file (a plausible stand-in for functionality), at most four
+so the offer stays a decision. When any exist, one question — "Repair
+related issues together?" with the shared label and the relative
+titles — offers the combined run; "Only this one" keeps the fast
+single path. Accepting composes the same numbered together-description
+as checked boxes do, and links every issue. The check boxes remain as
+the manual override for relations the scanner never named.
+
+Landing this surfaced a real race: an operation's settled signal
+queues from the worker thread, so stop-then-start-at-once could let
+the stale settle land after the next run began — clearing the new
+run's pending issue links and yanking its screen home. A settle or
+failure that arrives while a newer operation is in flight now keeps
+its record bookkeeping (names, renames) and leaves the screen and the
+pending links alone.

@@ -1280,7 +1280,8 @@ class IssueRowWidget(QFrame):
         source = text("issues.source." + issue.source)
         place = f"{issue.file}:{issue.line}" if issue.file else issue.id
         reference = f" · {issue.external_ref}" if issue.external_ref else ""
-        sub = ElidedLabel(f"{source} · {place}{reference}", "MonoHint")
+        group = f" · {issue.group}" if issue.group else ""
+        sub = ElidedLabel(f"{source} · {place}{group}{reference}", "MonoHint")
         column.addWidget(title)
         column.addWidget(sub)
         row.addLayout(column, 1)
@@ -1372,7 +1373,8 @@ class IssuesScreen(Screen):
             return False
         if not self._query:
             return True
-        haystack = f"{issue.title} {issue.file} {issue.source}".lower()
+        haystack = (f"{issue.title} {issue.file} {issue.source} "
+                    f"{issue.group}").lower()
         return self._query in haystack
 
     def _render(self) -> None:

@@ -73,6 +73,9 @@ STR: dict[str, str] = {
     "describe.issues.head": "Open issues",
     "describe.issues.more": "+{count} more issues…",
     "describe.issues.together": "Repair {count} together",
+    "issues.related.title": "Repair related issues together?",
+    "issues.related.body": "These open issues share {label}:",
+    "issues.related.only": "Only this one",
     "describe.issues.hint": "Select one to repair it. Check several to "
                             "repair them together. A new fault goes into "
                             "the issue list.",

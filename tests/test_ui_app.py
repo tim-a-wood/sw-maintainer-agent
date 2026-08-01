@@ -566,7 +566,8 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     reply = _side_envelope(window, {"issues": [
         {"title": "The value is wrong", "severity": "high", "file": "app.py",
          "line": 1, "snippet": 'VALUE = "before"',
-         "detail": "It must be after.", "external_ref": "T-9"},
+         "detail": "It must be after.", "external_ref": "T-9",
+         "group": "value handling"},
         {"title": "Invented point", "severity": "low", "file": "app.py",
          "line": 2, "snippet": "not_in_the_file()", "detail": ""},
     ]})
@@ -581,6 +582,7 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     issues = window.controller.issues.load()
     assert len(issues) == 1 and issues[0].source == "scan"
     assert issues[0].external_ref == "T-9"
+    assert issues[0].group == "value handling"
 
     # The same finding again is dropped before the gate.
     window._start_scan()
@@ -1338,12 +1340,23 @@ def test_build_reply_accepts_markdown_and_text_named_zip(tmp_path):
 def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
     """FR-I6: the fault screen offers the open tracked issues; picking
     one repairs it linked, and a described fault lands in the tracker —
-    described again, it reuses the same issue."""
+    described again, it reuses the same issue. Picking also offers the
+    relatives (FR-I9): same scan group, or same file when ungrouped."""
     from maintain.issues import IssueCandidate
+    from maintain.ui.strings import text as ui_text
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)
     window = MainWindow(config)
-    window.ask_confirm = lambda *args, **kwargs: True
+    offers: list[str] = []
+    accept_related = {"value": False}
+
+    def confirm(title, body="", *args, **kwargs):
+        if title == ui_text("issues.related.title"):
+            offers.append(body)
+            return accept_related["value"]
+        return True
+
+    window.ask_confirm = confirm
     window.ask_line = lambda *args, **kwargs: None
     window.toast = lambda *args, **kwargs: None
     errors: list[str] = []
@@ -1379,17 +1392,25 @@ def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
     assert not describe._issues_holder.isVisibleTo(describe)
     assert not describe._issues_more.isVisibleTo(describe)
 
-    # Picking one prefills the fault; the started run links to it.
+    # Picking one prefills the fault; the started run links to it. The
+    # ungrouped pick offers its same-file neighbor; declined, the run
+    # repairs the picked issue alone (FR-I9 fallback).
     window.home.new_change.emit("issue")
     card(0).clicked.emit()
+    assert len(offers) == 1
+    assert "app.py" in offers[0] and "A slow loop" in offers[0]
     assert "The value is wrong" in describe.request_edit.toPlainText()
+    assert "A slow loop" not in describe.request_edit.toPlainText()
     describe._start()
     wait_until(qt_app, lambda: _screen(window) == "exchange",
                timeout=90.0, message="picked issue packet")
+    picked_run = window.current_handoff.request.run_id
     picked = next(item for item in window.controller.issues.load()
                   if item.title == "The value is wrong")
     assert picked.status == "in_work"
-    assert window.current_handoff.request.run_id in picked.runs
+    assert picked_run in picked.runs
+    assert sum(1 for item in window.controller.issues.load()
+               if picked_run in item.runs) == 1
     window._stop_run()
     wait_until(qt_app, lambda: not window.controller.busy, message="stop one")
 
@@ -1456,4 +1477,41 @@ def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
     assert len(described[0].runs) == 2
     window._stop_run()
     wait_until(qt_app, lambda: not window.controller.busy, message="stop three")
+
+    # FR-I9 proper: the scanner grouped two issues across files. The
+    # pick offers the group mate; accepted, one run repairs both, and
+    # the group label is searchable in the tracker.
+    grouped = window.controller.issues.capture([
+        IssueCandidate(title="The parser drops the last row",
+                       severity="medium", file="src/parse.py", line=3,
+                       snippet="rows[:-1]", group="parser bounds"),
+        IssueCandidate(title="The writer skips the header",
+                       severity="medium", file="src/write.py", line=8,
+                       snippet="skip_header", group="parser bounds"),
+    ], source="scan")
+    offers.clear()
+    accept_related["value"] = True
+    describe.pick_issue.emit(grouped.added[0])
+    assert len(offers) == 1
+    assert "parser bounds" in offers[0]
+    assert "The writer skips the header" in offers[0]
+    body = describe.request_edit.toPlainText()
+    assert "Repair these 2 related faults together." in body
+    assert "The parser drops the last row" in body
+    assert "The writer skips the header" in body
+    describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               timeout=90.0, message="grouped packet")
+    grouped_run = window.current_handoff.request.run_id
+    mates = [item for item in window.controller.issues.load()
+             if grouped_run in item.runs]
+    assert len(mates) == 2
+    assert all(item.status == "in_work" for item in mates)
+    window.show_issues()
+    window.issues_list.set_filter("all")
+    window.issues_list.search.setText("parser bounds")
+    assert window.issues_list._rows.count() == 2
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy,
+               message="stop grouped")
     assert not errors, errors

@@ -31,7 +31,8 @@ from maintain.issue_packets import (SideExchange, build_side_packet,
                                     explain_dir, explain_request,
                                     scan_candidates, scan_request,
                                     side_packet_dir)
-from maintain.issues import CLOSED, IssueCandidate, display_order
+from maintain.issues import (CLOSED, IssueCandidate, display_order,
+                             related_open_issues)
 from maintain.models import RunRecord, RunState, utc_now
 from maintain.providers.command import parse_response
 from maintain.render import render_scene
@@ -766,7 +767,29 @@ class MainWindow(QMainWindow):
         self.show_issues()
 
     def _repair_issue(self, issue_id: str) -> None:
-        self._repair_issues([issue_id])
+        """FR-I9: picking one issue offers its relatives — the issues
+        the scanner grouped with it, or its same-file neighbors."""
+        if self.controller.busy:
+            self.toast(text("issues.busy"))
+            return
+        try:
+            picked = self.controller.issues.get(issue_id)
+        except MaintainError as exc:
+            self.toast(str(exc))
+            return
+        relatives = related_open_issues(self.controller.issues.load(), picked)
+        ids = [issue_id]
+        if relatives:
+            label = picked.group or picked.file
+            lines = "\n".join(f"• {item.title}" for item in relatives)
+            body = f"{text('issues.related.body', label=label)}\n\n{lines}"
+            if self.ask_confirm(
+                    text("issues.related.title"), body,
+                    text("describe.issues.together",
+                         count=len(relatives) + 1),
+                    text("issues.related.only")):
+                ids += [item.id for item in relatives]
+        self._repair_issues(ids)
 
     def _repair_issues(self, issue_ids: list) -> None:
         """FR-I8: one run repairs several related faults together; the
@@ -1583,6 +1606,11 @@ class MainWindow(QMainWindow):
                 if value:
                     self.controller.set_run_name(record.run_id, value)
                     record.name = value
+        if self.controller.busy:
+            # A stale settle: its queued signal landed after the next
+            # operation began (stop, then start at once). Screens and
+            # pending issue links belong to the operation in flight.
+            return
         state = RunState(record.state)
         if state in {RunState.AWAITING_ACCEPTANCE, RunState.DELIVERED}:
             self._attention()
@@ -1681,7 +1709,8 @@ class MainWindow(QMainWindow):
     def _run_failed(self, message: str) -> None:
         self._in_test = False
         self.show_error(message)
-        self.show_home()
+        if not self.controller.busy:   # a stale signal never steals the screen
+            self.show_home()
 
     # ----- save actions -----
 
