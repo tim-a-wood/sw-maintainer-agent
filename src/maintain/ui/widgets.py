@@ -450,6 +450,9 @@ class ChoiceButton(QFrame):
         column.setSpacing(1)
         self.title_label = QLabel(title)
         self.title_label.setObjectName("ChoiceTitle")
+        # User content lands here too — a long issue title or explain
+        # goal wraps instead of widening the page.
+        self.title_label.setWordWrap(True)
         self.sub_label = QLabel(sub)
         self.sub_label.setObjectName("ChoiceSub")
         self.sub_label.setWordWrap(True)

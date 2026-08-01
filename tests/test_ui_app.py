@@ -1353,15 +1353,26 @@ def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
         IssueCandidate(title="The value is wrong", severity="high",
                        file="app.py", line=1, snippet='VALUE = "before"'),
         IssueCandidate(title="A slow loop", severity="low", file="app.py",
-                       line=1, snippet="loop")], source="scan")
+                       line=1, snippet="loop"),
+        *[IssueCandidate(title=f"Small fault {index}", severity="low",
+                         file=f"src/mod{index}.py", line=index,
+                         snippet=f"x{index}") for index in range(4)],
+    ], source="scan")
 
-    # The fault screen lists the tracked issues; the change screen not.
+    # The fault screen lists the top tracked issues; past four, one
+    # line leads to the whole tracker (FR-I7). Long titles wrap.
     window.home.new_change.emit("issue")
     describe = window.describe
     assert describe._issues_holder.isVisibleTo(describe)
-    assert describe._issues_column.count() == 2
+    assert describe._issues_column.count() == 4
+    assert describe._issues_column.itemAt(0).widget().title_label.wordWrap()
+    assert describe._issues_more.isVisibleTo(describe)
+    assert "+2" in describe._issues_more.text()
+    describe._issues_more.click()
+    assert _screen(window) == "issues"
     window.home.new_change.emit("feature")
     assert not describe._issues_holder.isVisibleTo(describe)
+    assert not describe._issues_more.isVisibleTo(describe)
 
     # Picking one prefills the fault; the started run links to it.
     window.home.new_change.emit("issue")
@@ -1390,10 +1401,18 @@ def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
     assert described[0].title.startswith("The loader misses")
     assert window.current_handoff.request.run_id in described[0].runs
     # The issue list renders the described source without a crash — the
-    # screenshot run caught a missing catalog key here once.
+    # screenshot run caught a missing catalog key here once. With many
+    # issues, the filter line narrows the list as you type (FR-I7).
     window.show_issues()
     window.issues_list.set_filter("all")
     assert _screen(window) == "issues"
+    assert window.issues_list._rows.count() == 7
+    window.issues_list.search.setText("loader")
+    assert window.issues_list._rows.count() == 1
+    window.issues_list.search.setText("small fault")
+    assert window.issues_list._rows.count() == 4
+    window.issues_list.search.setText("")
+    assert window.issues_list._rows.count() == 7
     window._stop_run()
     wait_until(qt_app, lambda: not window.controller.busy, message="stop two")
 

@@ -71,8 +71,10 @@ STR: dict[str, str] = {
     "describe.title": "What do you want to change?",
     "describe.fault.title": "What is the fault?",
     "describe.issues.head": "Open issues",
+    "describe.issues.more": "+{count} more issues…",
     "describe.issues.hint": "Select one, or describe a new fault below. "
                             "A new fault goes into the issue list.",
+    "issues.search.placeholder": "Filter by title, file, or source.",
     "describe.placeholder": "Write the change in one or two sentences.",
     "describe.drop.main": "Drop files here, or click to select them.",
     "describe.drop.sub": "All file types are permitted. They go into every packet.",

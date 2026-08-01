@@ -269,6 +269,7 @@ class DescribeScreen(Screen):
     import_requested = Signal()
     open_checks = Signal()
     pick_issue = Signal(str)         # a tracked issue, one click to repair
+    open_issues_list = Signal()      # the rest of the tracker, when >4
 
     def __init__(self) -> None:
         super().__init__()
@@ -287,6 +288,10 @@ class DescribeScreen(Screen):
         self._issues_column.setSpacing(6)
         self._issues_holder.setVisible(False)
         self.add(self._issues_holder)
+        self._issues_more = button("", "Ghost", self.open_issues_list.emit)
+        self._issues_more.setStyleSheet("padding: 2px 6px; font-size: 12px;")
+        self._issues_more.setVisible(False)
+        self.add_row(self._issues_more)
         self._issues_hint = label(text("describe.issues.hint"), "Hint")
         self._issues_hint.setVisible(False)
         self.add(self._issues_hint)
@@ -333,8 +338,12 @@ class DescribeScreen(Screen):
         self.message.set_state("plain", "")
         self.set_issue_choices([])
 
+    VISIBLE_ISSUES = 4
+
     def set_issue_choices(self, issues: list) -> None:
-        """FR-I6: the open tracked issues, one click from their repair."""
+        """FR-I6: the open tracked issues, one click from their repair.
+        Past the first four, one line leads to the whole tracker
+        (FR-I7) — Repair there comes back to this screen prefilled."""
         while self._issues_column.count():
             item = self._issues_column.takeAt(0)
             widget = item.widget()
@@ -342,7 +351,7 @@ class DescribeScreen(Screen):
                 widget.setParent(None)
                 widget.deleteLater()
         show = self.mode == "issue" and bool(issues)
-        for issue in issues:
+        for issue in issues[:self.VISIBLE_ISSUES]:
             key, _ = SEVERITY_CHIPS.get(issue.severity,
                                         ("issues.severity.medium", ""))
             sub = text(key)
@@ -352,6 +361,10 @@ class DescribeScreen(Screen):
             card.clicked.connect(
                 lambda iid=issue.id: self.pick_issue.emit(iid))
             self._issues_column.addWidget(card)
+        hidden = len(issues) - self.VISIBLE_ISSUES
+        self._issues_more.setText(
+            text("describe.issues.more", count=hidden) if hidden > 0 else "")
+        self._issues_more.setVisible(show and hidden > 0)
         self._issues_head.setVisible(show)
         self._issues_holder.setVisible(show)
         self._issues_hint.setVisible(show)
@@ -1282,6 +1295,13 @@ class IssuesScreen(Screen):
             self._tab_buttons[key] = control
         tabs.addStretch(1)
         self.add(holder)
+        # FR-I7: many issues stay findable — one line filters the list
+        # as you type; the status counts above stay whole.
+        self._query = ""
+        self.search = QLineEdit()
+        self.search.setPlaceholderText(text("issues.search.placeholder"))
+        self.search.textChanged.connect(self._search_changed)
+        self.add(self.search)
         self._rows = QVBoxLayout()
         self._rows.setSpacing(9)
         rows_holder = QWidget()
@@ -1300,12 +1320,26 @@ class IssuesScreen(Screen):
         self._filter = key
         self._render()
 
+    def _search_changed(self, value: str) -> None:
+        self._query = value.strip().lower()
+        self._render()
+
     def show_issues(self, issues: list) -> None:
         self._issues = list(issues)
+        # A fresh visit starts unfiltered; a stale query would show a
+        # mystery-empty list.
+        if self.search.text():
+            self.search.setText("")   # triggers one render through the slot
+            return
         self._render()
 
     def _matches(self, issue) -> bool:
-        return self._filter == "all" or issue.status == self._filter
+        if self._filter != "all" and issue.status != self._filter:
+            return False
+        if not self._query:
+            return True
+        haystack = f"{issue.title} {issue.file} {issue.source}".lower()
+        return self._query in haystack
 
     def _render(self) -> None:
         for key, control in self._tab_buttons.items():

@@ -371,6 +371,7 @@ class MainWindow(QMainWindow):
         self.describe.back.connect(self.show_home)
         self.describe.import_requested.connect(self._import_run_files)
         self.describe.pick_issue.connect(self._repair_issue)
+        self.describe.open_issues_list.connect(self.show_issues)
         self.describe.open_checks.connect(
             lambda: self._open_settings_page("checks"))
 
@@ -1244,7 +1245,7 @@ class MainWindow(QMainWindow):
         if mode == "issue":
             self.describe.set_issue_choices(display_order(
                 [item for item in self.controller.issues.load()
-                 if item.status != CLOSED])[:4])
+                 if item.status != CLOSED]))
         self.show_screen("describe")
 
     def _project_code_files(self) -> list[Path]:

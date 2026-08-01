@@ -1077,3 +1077,16 @@ matches — so a stopped repair picked back up later never duplicates
 the entry, and a closed fault described afresh reopens rather than
 forks. Every repair now has a tracker entry; the issue list is the
 one honest ledger of fault work.
+
+### 14.31 Many issues (FR-I7)
+
+Volume is the scan loop's natural product, so both surfaces scale.
+The fault screen keeps its four severity-first cards and adds one
+line past them — "+N more issues…" — that opens the whole tracker;
+Repair there returns to the fault screen prefilled, so the long way
+round still ends at the same Start button. The tracker itself gains
+a filter line under the status tabs: type, and the list narrows live
+over title, file, and source, while the tab counts stay whole. A
+fresh visit always starts unfiltered. And card titles wrap now —
+user words land in those cards (issue titles, explain goals), and a
+long sentence must never widen the page.
