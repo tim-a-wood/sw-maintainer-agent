@@ -1552,7 +1552,11 @@ class MainWindow(QMainWindow):
         save_ui_settings(values)
 
     def _keep_for_next_packet(self, paths: list) -> None:
-        self.controller.run_attachments.extend(Path(item) for item in paths)
+        """FR-V3: a dropped file that is not the reply joins the open
+        packet — rebuilt at once, the same as a send-zone drop. The
+        receive zone's status line says so; a silent keep left the
+        person guessing where the file went."""
+        self._add_packet_files(paths)
 
     # ----- bridge: gates -----
 

@@ -119,8 +119,9 @@ exchange. "Task type" means one of Plan, Build, Repair, Review.
   validated as the existing `maintain-output.zip` artifact contract.
 - FR-V2. A stale, foreign, or wrong-kind reply is refused with the exact
   reason and the next step. The screen stays open.
-- FR-V3. A dropped file that is not the reply is kept as an attachment
-  for the next packet, and the tool says so.
+- FR-V3. A dropped file that is not the reply joins the open packet
+  as an attachment at once — the packet is rebuilt — and the tool
+  says so.
 - FR-V4. Applied files go only to the isolated workspace. The project
   tree changes only at Save, after the person accepts.
 
@@ -1245,3 +1246,38 @@ tracker, the failed check named itself with both commands visible,
 the retry went green, the diff colored its lines, the close-reasons
 row offered every reason, and both themes painted every walked
 screen.
+
+### 14.37 Round three: the explain lifecycle and the last corners
+
+A third walk drove the explain feature end to end with a stub
+renderer — packet, scene reply, render pass, the finished list, a
+stale detection after a source edit, the one-click update, and the
+supersede — plus the keep-as-attachment path, the save screen's
+"Ask for changes" round, go-back from a live timeline, a project
+switch, and a narrow window. The lifecycle held: stale showed the
+moment the file changed, the update reran the same goal over the
+current files, and the old entry marked itself superseded. Three
+faults; all fixed.
+
+- A file dropped into the reply zone that was not the reply was kept
+  silently: no message, no packet rebuild, the packet card still
+  said "attachments/ — 0" (FR-V3 demands the tool says so). The drop
+  now joins the open packet at once — rebuilt like a send-zone drop —
+  and the receive zone's status line says "This is not the reply. It
+  is added to the package."
+- A passed render with lint findings contradicted itself: PASS chips
+  over "The local checks found faults" and a primary Repair button.
+  After a pass the findings now read as suggestions — "The video is
+  ready. The local checks suggest these improvements." — and Repair
+  drops to secondary beside Open the video. A failed render keeps
+  the original urgent framing.
+- The home Continue card fell back to the raw run id for unnamed
+  work. It now falls back to the person's request words ("Continue:
+  Rename the constant.") and shows the id only when both are empty.
+
+Held under the walk: the update packet carried the saved goal and
+audience; the save note rode into its repair packet; go-back asked
+with its labeled confirm, reissued the packet, and superseded the
+skipped steps; each project kept its own tracker and foot chip
+across a switch; and the narrow window scrolled every screen with
+the foot bar pinned.

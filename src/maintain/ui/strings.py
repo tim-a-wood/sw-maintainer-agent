@@ -138,7 +138,7 @@ STR: dict[str, str] = {
     "receive.valid": "The reply matches run {run}.",
     "receive.applied": "Applied. Your project does not change before you accept.",
     "receive.clipboard.empty": "First copy the reply in Copilot.",
-    "receive.kept": "This file is not the reply. The tool keeps it for the next packet.",
+    "receive.kept": "This is not the reply. It is added to the package.",
     "receive.back": "Back",
 
     # Plan check
@@ -399,6 +399,9 @@ STR: dict[str, str] = {
     "explain.update": "Update",
     "explain.resume.gone": "The package for this explanation is gone. "
                            "Start a new one.",
+    "explain.findings.suggest": "The video is ready. The local checks "
+                                "suggest these improvements. Repair sends "
+                                "them to Copilot; Done keeps this video.",
     "explain.findings.head": "The local checks found faults. Repair sends "
                              "them to Copilot.",
     "explain.saved.note": "The scene, the video, and the frame sheet stay "

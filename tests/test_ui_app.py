@@ -1256,6 +1256,33 @@ def test_close_asks_a_name_only_for_unnamed_work(qt_app, tmp_path,
     assert window2.controller.resumable_run().name == "Night work"
 
 
+def test_a_non_reply_drop_joins_the_packet_out_loud(qt_app, tmp_path,
+                                                    monkeypatch):
+    """FR-V3: a dropped file that is not the reply joins the open
+    packet — rebuilt and announced, never kept silently."""
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.ask_confirm = lambda *args, **kwargs: True
+    window.ask_line = lambda *args, **kwargs: None
+    toasts: list[str] = []
+    window.toast = toasts.append
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               timeout=90.0, message="plan packet")
+    notes = tmp_path / "meeting-notes.txt"
+    notes.write_text("The value must follow the spec.\n", encoding="utf-8")
+    window.exchange.check(path=notes)
+    with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
+        assert "attachments/meeting-notes.txt" in set(archive.namelist())
+    assert "not the reply" in window.exchange.status.text()
+    assert "added to the package" in window.exchange.status.text()
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="stop")
+
+
 def test_named_runs_lead_history_and_the_timeline(qt_app):
     """FR-N1: the name the person gave heads the history row and the
     run detail; the request and the id stay one line below."""

@@ -231,10 +231,14 @@ class HomeScreen(Screen):
             self._continue.setVisible(False)
             return
         self._continue_run_id = summary.run_id
-        # The person's own name first; the run id only when no name is
-        # given. The second line places the run: activity and phase.
-        title = (text("home.continue.named", name=summary.name)
-                 if summary.name else text("home.continue", run=summary.run_id))
+        # The person's own name first, then their request words; the
+        # run id only when both are empty — an id names nothing. The
+        # second line places the run: activity and phase.
+        request = " ".join(summary.request.split())[:52]
+        title = (text("home.continue.named",
+                      name=summary.name or request)
+                 if summary.name or request
+                 else text("home.continue", run=summary.run_id))
         activity = text("activity.issue" if summary.mode == "issue"
                         else "activity.feature")
         self._continue.set_texts(title, text(
@@ -1973,6 +1977,7 @@ class ExplainResultScreen(Screen):
         super().hideEvent(event)
 
     def show_running(self, folder: str) -> None:
+        self._passed = False
         self.render_chip.set_state("RUN", "accent")
         self.status.set_state("busy", text("explain.render.running"))
         self.folder_label.setText(folder)
@@ -1999,6 +2004,7 @@ class ExplainResultScreen(Screen):
             self.steps.fail()
 
     def show_passed(self, sheet=None, video=None) -> None:
+        self._passed = True
         self.render_chip.set_state("PASS", "pass")
         self.status.set_state("ok", text("explain.render.passed"))
         self._sheet_path = sheet
@@ -2017,6 +2023,7 @@ class ExplainResultScreen(Screen):
         self.repair_hint.setVisible(False)
 
     def show_failed(self, message: str, tail: str) -> None:
+        self._passed = False
         self.render_chip.set_state("FAIL", "fail")
         self.status.set_state("bad", message or text("explain.render.failed"))
         self._output_tail = tail[-4000:]
@@ -2027,15 +2034,24 @@ class ExplainResultScreen(Screen):
         self.repair_hint.setVisible(True)
 
     def show_findings(self, findings: list) -> None:
-        """Quality findings never block; they show above the output tail."""
+        """Quality findings never block; they show above the output tail.
+        After a passed render they are suggestions, not faults — the
+        framing and the button rank must not contradict the PASS."""
         if not findings:
             return
-        block = (text("explain.findings.head") + "\n"
-                 + "\n".join(f"- {item}" for item in findings))
+        passed = getattr(self, "_passed", False)
+        head = text("explain.findings.suggest" if passed
+                    else "explain.findings.head")
+        block = head + "\n" + "\n".join(f"- {item}" for item in findings)
         if self._output_tail.strip():
             block = block + "\n\n" + self._output_tail
         self.tail_view.setPlainText(block)
         self.tail_view.setVisible(True)
+        self.repair_button.setObjectName("Secondary" if passed
+                                         else "Primary")
+        style = self.repair_button.style()
+        style.unpolish(self.repair_button)
+        style.polish(self.repair_button)
         self.repair_button.setVisible(True)
         self.repair_hint.setVisible(True)
 
