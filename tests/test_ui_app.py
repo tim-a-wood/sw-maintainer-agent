@@ -643,7 +643,13 @@ SCENE_REPLY = (
     "```\n")
 
 
-def _shell_stub(path, body: str) -> str:
+def _shell_stub(path, body: str, cmd_body: str = "") -> str:
+    """A fake render command for both platforms. Windows launches
+    .cmd files through subprocess, so the stub stays argv-invoked."""
+    if os.name == "nt":
+        target = path.with_suffix(".cmd")
+        target.write_text("@echo off\r\n" + cmd_body, encoding="utf-8")
+        return str(target)
     path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
     path.chmod(0o755)
     return str(path)
@@ -660,7 +666,8 @@ def test_explain_flow_render_repair_and_settings(qt_app, tmp_path, monkeypatch):
     window.show_error = errors.append
 
     fail_stub = _shell_stub(tmp_path / "fail-manim",
-                            'echo "Boom on line 3" 1>&2\nexit 1\n')
+                            'echo "Boom on line 3" 1>&2\nexit 1\n',
+                            'echo Boom on line 3 1>&2\r\nexit /b 1\r\n')
     values = load_ui_settings()
     values["manim_command"] = fail_stub
     save_ui_settings(values)
@@ -702,7 +709,9 @@ def test_explain_flow_render_repair_and_settings(qt_app, tmp_path, monkeypatch):
     pass_stub = _shell_stub(
         tmp_path / "pass-manim",
         'mkdir -p media/videos/scene/1080p60\n'
-        'echo video > "media/videos/scene/1080p60/$3.mp4"\n')
+        'echo video > "media/videos/scene/1080p60/$3.mp4"\n',
+        'md media\\videos\\scene\\1080p60 2>nul\r\n'
+        'echo video > "media\\videos\\scene\\1080p60\\%3.mp4"\r\n')
     values = load_ui_settings()
     values["manim_command"] = pass_stub
     save_ui_settings(values)
@@ -1057,7 +1066,9 @@ def test_explain_survives_a_restart_and_lists_its_video(
     pass_stub = _shell_stub(
         tmp_path / "pass-manim",
         'mkdir -p media/videos/scene/1080p60\n'
-        'echo video > "media/videos/scene/1080p60/$3.mp4"\n')
+        'echo video > "media/videos/scene/1080p60/$3.mp4"\n',
+        'md media\\videos\\scene\\1080p60 2>nul\r\n'
+        'echo video > "media\\videos\\scene\\1080p60\\%3.mp4"\r\n')
     values = load_ui_settings()
     values["manim_command"] = pass_stub
     save_ui_settings(values)
@@ -1174,7 +1185,9 @@ def test_stale_explanation_offers_update_and_retires_on_pass(
     pass_stub = _shell_stub(
         tmp_path / "pass-manim",
         'mkdir -p media/videos/scene/1080p60\n'
-        'echo video > "media/videos/scene/1080p60/$3.mp4"\n')
+        'echo video > "media/videos/scene/1080p60/$3.mp4"\n',
+        'md media\\videos\\scene\\1080p60 2>nul\r\n'
+        'echo video > "media\\videos\\scene\\1080p60\\%3.mp4"\r\n')
     values = load_ui_settings()
     values["manim_command"] = pass_stub
     save_ui_settings(values)

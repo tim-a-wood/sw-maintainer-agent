@@ -221,9 +221,13 @@ def test_settings_round_trip_through_every_page(qt_app, tmp_path, monkeypatch):
     save_ui_settings(values)
     window._open_settings_page("explain")
     assert window.page_explain.status.text() == ui_text("explain.set.absent")
-    stub = tmp_path / "manim-stub"
-    stub.write_text("#!/bin/sh\n", encoding="utf-8")
-    stub.chmod(0o755)
+    if os.name == "nt":
+        stub = tmp_path / "manim-stub.cmd"
+        stub.write_text("@echo off\r\n", encoding="utf-8")
+    else:
+        stub = tmp_path / "manim-stub"
+        stub.write_text("#!/bin/sh\n", encoding="utf-8")
+        stub.chmod(0o755)
     window.page_explain.command_edit.setText(str(stub))
     window.page_explain.saved.emit()
     assert load_ui_settings()["manim_command"] == str(stub)
