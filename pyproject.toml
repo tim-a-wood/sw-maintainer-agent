@@ -45,7 +45,7 @@ Repository = "https://github.com/tim-a-wood/sw-maintainer-agent"
 where = ["src"]
 
 [tool.setuptools.package-data]
-maintain = ["data/explain/*.md"]
+maintain = ["data/explain/*.md", "data/windows/*.ps1"]
 
 # Static analysis: pyflakes, import and syntax errors, and bugbear on
 # everything; the compact one-statement-per-line style in the parser and

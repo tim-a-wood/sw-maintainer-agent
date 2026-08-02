@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import shutil
+import subprocess
+import tempfile
 import threading
 from pathlib import Path
 
@@ -43,6 +46,7 @@ from maintain.scene_probe import probe_scene
 from maintain.scene_quality import quality_findings
 from maintain.providers.manual_ui import PacketHandoff
 from maintain.repository_memory import load_ui_settings, save_ui_settings
+from maintain.update_check import update_available
 from maintain.zip_package import PacketBuild
 
 from . import theme as theme_module
@@ -110,6 +114,7 @@ class MainWindow(QMainWindow):
     explain_render_done = Signal(object)   # RenderResult, from the worker
     explain_render_step = Signal(str, str)  # phase, step text
     manim_install_done = Signal(bool, object)  # ok, resume arguments
+    update_found = Signal(str)             # release tag, from the worker
 
     def __init__(self, config: ProjectConfig) -> None:
         super().__init__()
@@ -135,6 +140,17 @@ class MainWindow(QMainWindow):
         self._busy_timer = QTimer(self)
         self._busy_timer.setSingleShot(True)
         self._busy_timer.timeout.connect(self._busy_now)
+        # FR-U1: a quiet look for a newer release — soon after the
+        # start, then every six hours. The person can turn it off.
+        self.update_found.connect(self._offer_update)
+        self._update_tag = ""
+        self._update_timer = QTimer(self)
+        self._update_timer.setInterval(6 * 3600 * 1000)
+        self._update_timer.timeout.connect(self._check_for_update)
+        if (bool(load_ui_settings().get("update_check", True))
+                and not os.environ.get("MAINTAIN_NO_UPDATE_CHECK")):
+            QTimer.singleShot(15_000, self._check_for_update)
+            self._update_timer.start()
 
         central = QWidget()
         column = QVBoxLayout(central)
@@ -330,7 +346,10 @@ class MainWindow(QMainWindow):
 
         self.home.new_change.connect(self._new_change)
         self.home.open_history.connect(self.show_history)
-        self.home.open_settings.connect(lambda: self.show_screen("settings"))
+        self.home.open_settings.connect(self._show_settings)
+        self.home.update_clicked.connect(self._update_clicked)
+        self.home.update_skipped.connect(self._skip_update)
+        self.settings.updates_toggled.connect(self._updates_toggled)
         self.home.open_projects.connect(self.show_projects)
         self.home.open_issues.connect(self.show_issues)
         self.home.open_explain.connect(self.show_explain)
@@ -551,6 +570,85 @@ class MainWindow(QMainWindow):
             sum(1 for issue in issues if issue.status == CLOSED))
         self.home.set_momentum(self._momentum_line(runs))
         self.show_screen("home")
+
+    # ----- self update (FR-U1..U4) -----
+
+    def _check_for_update(self) -> None:
+        def probe() -> None:
+            tag = update_available()
+            if tag:
+                self.update_found.emit(tag)
+        threading.Thread(target=probe, daemon=True).start()
+
+    def _offer_update(self, tag: str) -> None:
+        if tag == str(load_ui_settings().get("update_skip", "")):
+            return
+        self._update_tag = tag
+        self.home.set_update(tag.lstrip("v"))
+
+    def _update_clicked(self) -> None:
+        tag = self._update_tag
+        if not tag:
+            return
+        version = tag.lstrip("v")
+        if not self.ask_confirm(text("update.confirm.title", version=version),
+                                text("update.confirm.body"),
+                                text("update.confirm.yes"),
+                                text("update.confirm.no")):
+            return
+        self._apply_update(tag)
+
+    def _skip_update(self) -> None:
+        tag = self._update_tag
+        if not tag:
+            return
+        values = load_ui_settings()
+        values["update_skip"] = tag
+        save_ui_settings(values)
+        self._update_tag = ""
+        self.home.set_update("")
+        self.toast(text("update.skipped", version=tag.lstrip("v")))
+
+    def _apply_update(self, tag: str) -> None:
+        """FR-U4: a detached helper waits for this process to end,
+        runs the release's own installer, and starts the app again.
+        The app cannot rebuild the environment it runs from."""
+        import importlib.resources
+        source = Path(str(importlib.resources.files("maintain") / "data"
+                          / "windows" / "update-maintain.ps1"))
+        if not source.is_file():
+            self.show_error(text("update.missing"))
+            return
+        staged = Path(tempfile.gettempdir()) / (
+            f"maintain-update-{os.getpid()}.ps1")
+        shutil.copyfile(source, staged)
+        creation = (subprocess.CREATE_NEW_CONSOLE
+                    if os.name == "nt" else 0)
+        try:
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-File", str(staged), "-AppProcessId", str(os.getpid()),
+                 "-Reference", f"refs/tags/{tag}"],
+                creationflags=creation, close_fds=True)
+        except OSError as exc:
+            self.show_error(str(exc))
+            return
+        self.close()
+
+    def _show_settings(self) -> None:
+        self.settings.set_updates_checked(
+            bool(load_ui_settings().get("update_check", True)))
+        self.show_screen("settings")
+
+    def _updates_toggled(self, enabled: bool) -> None:
+        values = load_ui_settings()
+        values["update_check"] = bool(enabled)
+        save_ui_settings(values)
+        if enabled:
+            self._check_for_update()
+            self._update_timer.start()
+        else:
+            self._update_timer.stop()
 
     def _momentum_line(self, runs: list | None = None) -> str:
         saved = [item for item in

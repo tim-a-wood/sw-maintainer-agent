@@ -13,6 +13,10 @@ import sys
 
 import pytest
 
+# No test may reach the network for a release check; the update
+# feature is driven directly where a test wants it.
+os.environ.setdefault("MAINTAIN_NO_UPDATE_CHECK", "1")
+
 _EXIT_STATUS = 0
 
 

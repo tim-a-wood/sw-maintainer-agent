@@ -494,6 +494,63 @@ def test_issue_crud_from_the_screens(qt_app, tmp_path, monkeypatch):
     assert window.controller.issues.load() == []
 
 
+def test_update_prompt_applies_or_skips(qt_app, tmp_path, monkeypatch):
+    """FR-U2..U4: the ready-release card, the confirm, the detached
+    helper, and the skip memory."""
+    from maintain.repository_memory import load_ui_settings
+    from maintain.ui import app as app_module
+
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    # The probe must never reach the network from a test.
+    monkeypatch.setattr(app_module, "update_available",
+                        lambda *args, **kwargs: "")
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.show_home()
+
+    # A found release shows one card on the home screen.
+    window._offer_update("v9.9.9")
+    assert window.home._update_card.isVisibleTo(window.home)
+    assert "9.9.9" in window.home._update_card.title_label.text()
+
+    # Accepting spawns the detached helper with the tag, then closes.
+    spawned: list[list] = []
+    monkeypatch.setattr(app_module.subprocess, "Popen",
+                        lambda argv, **kwargs: spawned.append(argv))
+    window.ask_confirm = lambda *args, **kwargs: True
+    window.home.update_clicked.emit()
+    assert len(spawned) == 1
+    assert "refs/tags/v9.9.9" in spawned[0]
+    assert spawned[0][spawned[0].index("-AppProcessId") + 1].isdigit()
+
+    # Declining spawns nothing and keeps the card.
+    window.ask_confirm = lambda *args, **kwargs: False
+    window.home.update_clicked.emit()
+    assert len(spawned) == 1
+    assert window.home._update_card.isVisibleTo(window.home)
+
+    # Skip hides the card, remembers the version, and stays quiet
+    # when the same release is found again.
+    window.home.update_skipped.emit()
+    assert not window.home._update_card.isVisibleTo(window.home)
+    assert load_ui_settings().get("update_skip") == "v9.9.9"
+    window._offer_update("v9.9.9")
+    assert not window.home._update_card.isVisibleTo(window.home)
+    # A newer release than the skipped one shows again.
+    window._offer_update("v9.9.10")
+    assert window.home._update_card.isVisibleTo(window.home)
+
+    # The settings switch stops and starts the look.
+    window._show_settings()
+    assert window.settings.updates_box.isChecked()
+    window.settings.updates_box.setChecked(False)
+    assert load_ui_settings().get("update_check") is False
+    assert not window._update_timer.isActive()
+    window.settings.updates_box.setChecked(True)
+    assert load_ui_settings().get("update_check") is True
+    assert window._update_timer.isActive()
+
+
 def test_tracker_never_hides_new_issues(qt_app, tmp_path, monkeypatch):
     """The field bug: the tracker said "Open 20" and showed nothing.
 

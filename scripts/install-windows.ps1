@@ -12,6 +12,12 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $iconSource = Join-Path $repoRoot "assets\maintain.ico.b64"
 $repositoryUrl = "https://github.com/tim-a-wood/sw-maintainer-agent.git"
 $repositoryRef = "refs/heads/main"
+# The self-updater pins one release: MAINTAIN_PACKAGE_REF names the
+# tag (refs/tags/v1.2.3) that this install must resolve and verify.
+$repositoryRefOverride = [Environment]::GetEnvironmentVariable("MAINTAIN_PACKAGE_REF")
+if (-not [string]::IsNullOrWhiteSpace($repositoryRefOverride)) {
+    $repositoryRef = $repositoryRefOverride.Trim()
+}
 $packageSource = $null
 $packageSourceOverridden = $false
 $packageSourceOverride = [Environment]::GetEnvironmentVariable("MAINTAIN_PACKAGE_SOURCE")
@@ -68,16 +74,29 @@ function Resolve-RemoteCommit {
         [string]$Repository,
         [string]$Reference
     )
-    $result = (& $GitPath ls-remote $Repository $Reference | Out-String).Trim()
-    Assert-NativeCommand -Action "Resolving the latest Maintain source"
-    $match = [regex]::Match(
-        $result,
-        "^(?<commit>[0-9a-fA-F]{40})\s+$([regex]::Escape($Reference))$"
-    )
-    if (-not $match.Success) {
+    # An annotated tag resolves to a tag object; its peeled ^{} line
+    # names the commit. A branch or a lightweight tag has one line.
+    $result = (& $GitPath ls-remote $Repository $Reference "$Reference^{}" |
+        Out-String).Trim()
+    Assert-NativeCommand -Action "Resolving the requested Maintain source"
+    $commit = ""
+    foreach ($line in ($result -split "`n")) {
+        $match = [regex]::Match(
+            $line.Trim(),
+            "^(?<commit>[0-9a-fA-F]{40})\s+(?<ref>\S+)$"
+        )
+        if (-not $match.Success) { continue }
+        if ($match.Groups["ref"].Value -eq "$Reference^{}") {
+            $commit = $match.Groups["commit"].Value
+        }
+        elseif ($match.Groups["ref"].Value -eq $Reference -and -not $commit) {
+            $commit = $match.Groups["commit"].Value
+        }
+    }
+    if (-not $commit) {
         throw "GitHub did not return one exact commit for $Reference."
     }
-    return $match.Groups["commit"].Value.ToLowerInvariant()
+    return $commit.ToLowerInvariant()
 }
 
 function New-SourceCheckout {

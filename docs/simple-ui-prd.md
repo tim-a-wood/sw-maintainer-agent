@@ -1421,3 +1421,32 @@ Three repairs, one policy:
 - The words on a row tolerate the file: a source, status, or close
   reason written by another app version renders as itself instead
   of killing the render loop mid-list.
+
+### 14.42 The app finds its own updates (FR-U1..U4)
+
+A release is a git tag in the form v1.2.3 on the tool's own
+repository. The Release workflow guards the ritual: on a tag push
+it checks that the tag matches the project version, runs the full
+suite on windows-latest, and publishes a GitHub release with a
+source zip. The zip serves the first install; the update path does
+not need it.
+
+- FR-U1. The app looks for a newer release quietly: soon after the
+  start and then every six hours, a background git ls-remote reads
+  the repository's tags and compares the highest v-tag with the
+  running version. The check uses the person's saved git
+  credentials, so it works on a private repository with no API
+  token. Every failure is silent. A settings switch turns the
+  look off.
+- FR-U2. A found release shows as one card on the home screen:
+  "Version 1.2.3 is ready." Nothing installs by itself.
+- FR-U3. "Skip this version" hides the card and remembers the
+  skipped tag; only a newer release shows again. "Not now" on the
+  confirm keeps the card for later.
+- FR-U4. Accepting hands over to a detached helper, because the
+  app cannot rebuild the environment it runs from. The helper
+  waits for the app to close, downloads the release, runs that
+  release's own installer — which resolves, verifies, and installs
+  the pinned tag — and starts the app again. The helper ships
+  inside the package, and the Windows workflow exercises it
+  end to end against the checked-out source.

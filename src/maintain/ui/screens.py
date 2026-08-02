@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QSignalBlocker, QTimer, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QKeySequence, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QFrame,
                                QGridLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -172,6 +172,8 @@ class HomeScreen(Screen):
     open_talk = Signal()
     continue_run = Signal(str)   # run_id
     continue_explain = Signal(str)   # explain run_id
+    update_clicked = Signal()
+    update_skipped = Signal()
 
     def __init__(self, project_name: str, project_path: str) -> None:
         super().__init__()
@@ -194,6 +196,17 @@ class HomeScreen(Screen):
         self._continue_explain.clicked.connect(self._emit_continue_explain)
         self._continue_explain_id = ""
         self.add(self._continue_explain)
+        # A ready release: one card to update, one small way to skip.
+        self._update_card = ChoiceButton("download", "", "",
+                                         accent_kind="warn")
+        self._update_card.setVisible(False)
+        self._update_card.clicked.connect(self.update_clicked.emit)
+        self.add(self._update_card)
+        self._update_skip = button(text("update.skip"), "Ghost",
+                                   self.update_skipped.emit)
+        self._update_skip.setStyleSheet("padding: 2px 8px; font-size: 11px;")
+        self._update_skip.setVisible(False)
+        self.add_row(self._update_skip)
         self._issues_card: ChoiceButton | None = None
         for index, (icon, title_key, sub_key, slot) in enumerate((
                 ("plus", "home.change", "home.change.sub",
@@ -223,6 +236,16 @@ class HomeScreen(Screen):
     def set_momentum(self, value: str) -> None:
         self.momentum.setText(value)
         self.momentum.setVisible(bool(value))
+
+    def set_update(self, version: str) -> None:
+        """FR-U2: a ready release shows as one card; empty hides it."""
+        if version:
+            self._update_card.set_texts(
+                text("update.ready", version=version),
+                text("update.ready.sub"))
+        self._update_card.setVisible(bool(version))
+        self._update_skip.setVisible(bool(version))
+        self._update_skip.parentWidget().setVisible(bool(version))
 
     def set_issue_count(self, count: int, closed: int = 0) -> None:
         if self._issues_card is None:
@@ -2332,6 +2355,7 @@ class BusyScreen(Screen):
 
 class SettingsScreen(Screen):
     open_page = Signal(str)
+    updates_toggled = Signal(bool)
     back = Signal()
 
     ICON_NAMES = {"tasks": "file-text", "global": "globe",
@@ -2347,8 +2371,15 @@ class SettingsScreen(Screen):
                                 text("settings." + key + ".sub"))
             card.clicked.connect(lambda page=key: self.open_page.emit(page))
             self.add(card)
+        self.updates_box = QCheckBox(text("settings.updates"))
+        self.updates_box.toggled.connect(self.updates_toggled.emit)
+        self.add(self.updates_box)
         self.add_gap()
         self.add_row(button(text("settings.back"), "Ghost", self.back.emit))
+
+    def set_updates_checked(self, checked: bool) -> None:
+        with QSignalBlocker(self.updates_box):
+            self.updates_box.setChecked(checked)
 
 
 class DownloadsPage(Screen):

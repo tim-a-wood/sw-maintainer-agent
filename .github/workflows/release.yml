@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Check the tag against the project version
+        shell: pwsh
+        run: |
+          $tag = "$env:GITHUB_REF_NAME"
+          $text = Get-Content -LiteralPath "pyproject.toml" -Raw
+          $match = [regex]::Match($text, '(?m)^version\s*=\s*"(?<v>[^"]+)"\s*$')
+          if (-not $match.Success) { throw "pyproject.toml has no version." }
+          $version = $match.Groups["v"].Value
+          if ($tag -ne "v$version") {
+            throw "Tag $tag does not match project version $version."
+          }
+
+      - name: Install test runtime
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade pip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          python -m pip install --disable-pip-version-check ".[browser,ui]" pytest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run the test suite
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          git config --global user.name "Maintain CI"
+          git config --global user.email "ci@example.invalid"
+
+          python -m pytest -q --deselect `
+            "tests/test_cli_history.py::test_selectable_history_shows_details_and_back_does_not_resume"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build the release zip
+        shell: pwsh
+        run: |
+          $tag = "$env:GITHUB_REF_NAME"
+          git archive --format=zip --prefix="maintain-$tag/" `
+            -o "maintain-$tag.zip" $tag
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Create the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "$env:GITHUB_REF_NAME"
+          gh release create $tag "maintain-$tag.zip" `
+            --title "Maintain $tag" --generate-notes --verify-tag
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

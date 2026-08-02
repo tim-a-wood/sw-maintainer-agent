@@ -86,6 +86,26 @@ jobs:
             -OutputPath (Join-Path $env:RUNNER_TEMP "maintain-diagnostics.zip")
           if (-not $?) { throw "Diagnostic collection failed." }
 
+      - name: Exercise the self-updater
+        shell: pwsh
+        run: |
+          # The updater downloads a reference and runs that source's
+          # installer. Here both come from this checkout: the local
+          # path is the repository and the branch is the release.
+          $env:MAINTAIN_PACKAGE_SOURCE = "$((Get-Location).Path)[browser]"
+          $branch = & git rev-parse --abbrev-ref HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & .\src\maintain\data\windows\update-maintain.ps1 `
+            -AppProcessId 0 -NoRelaunch `
+            -Repository (Get-Location).Path `
+            -Reference "refs/heads/$branch"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $installedLauncher = Join-Path $env:LOCALAPPDATA "Programs\Maintain\Maintain.cmd"
+          & $installedLauncher --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Collect failure evidence
         if: failure()
         shell: pwsh
