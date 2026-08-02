@@ -23,6 +23,10 @@ def git(repository: Path, *args: str, check: bool = True) -> str:
     return result.stdout.strip()
 
 
+def _err(completed) -> str:
+    return completed.stderr.decode("utf-8", "replace").strip()
+
+
 @dataclass(frozen=True)
 class DiffEvidence:
     text: str
@@ -169,31 +173,36 @@ class WorkspaceManager:
     def apply_patch(self, worktree: Path, patch: str) -> None:
         if not patch.strip():
             raise PolicyError("The provider returned an empty patch.")
-        checked = subprocess.run(["git", "-C", str(worktree), "apply", "--check", "-"],
-                                 input=patch, text=True, capture_output=True,
-                                 check=False, **hidden())
+        checked = self._git_apply(worktree, patch, "--check")
         if checked.returncode:
-            raise PolicyError(f"The patch is invalid: {checked.stderr.strip()}")
-        applied = subprocess.run(["git", "-C", str(worktree), "apply", "-"], input=patch,
-                                 text=True, capture_output=True, check=False,
-                                 **hidden())
+            raise PolicyError(
+                f"The patch is invalid: {_err(checked)}")
+        applied = self._git_apply(worktree, patch)
         if applied.returncode:
-            raise PolicyError(f"The patch could not be applied: {applied.stderr.strip()}")
+            raise PolicyError(
+                f"The patch could not be applied: {_err(applied)}")
 
     def apply_patch_idempotent(self, worktree: Path, patch: str) -> bool:
         """Apply a patch once. Return False when the exact patch is already present."""
-        checked = subprocess.run(["git", "-C", str(worktree), "apply", "--check", "-"],
-                                 input=patch, text=True, capture_output=True,
-                                 check=False, **hidden())
+        checked = self._git_apply(worktree, patch, "--check")
         if checked.returncode == 0:
             self.apply_patch(worktree, patch)
             return True
-        reverse = subprocess.run(["git", "-C", str(worktree), "apply", "--reverse", "--check", "-"],
-                                 input=patch, text=True, capture_output=True,
-                                 check=False, **hidden())
+        reverse = self._git_apply(worktree, patch, "--reverse", "--check")
         if reverse.returncode == 0:
             return False
-        raise PolicyError(f"The patch does not apply to the current workspace: {checked.stderr.strip()}")
+        raise PolicyError(
+            "The patch does not apply to the current workspace: "
+            f"{_err(checked)}")
+
+    @staticmethod
+    def _git_apply(worktree: Path, patch: str, *flags: str):
+        # The patch feeds the pipe as bytes: Windows text mode would
+        # turn \n into \r\n and git apply would refuse every hunk.
+        return subprocess.run(
+            ["git", "-C", str(worktree), "apply", *flags, "-"],
+            input=patch.encode("utf-8"), capture_output=True,
+            check=False, **hidden())
 
     @staticmethod
     def apply_output_zip(worktree: Path, archive: Path, allowed: list[str],

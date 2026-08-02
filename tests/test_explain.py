@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess
 import zipfile
@@ -161,7 +162,12 @@ def test_explain_packet_contract_and_members(tmp_path):
 
 # ----- the render runner (stub command, no Manim needed) -----
 
-def _stub(tmp_path: Path, body: str) -> str:
+def _stub(tmp_path: Path, body: str, cmd_body: str) -> str:
+    """A fake render command for both platforms: sh script or .cmd."""
+    if os.name == "nt":
+        script = tmp_path / "fakemanim.cmd"
+        script.write_text("@echo off\r\n" + cmd_body, encoding="utf-8")
+        return str(script)
     script = tmp_path / "fakemanim"
     script.write_text("#!/bin/sh\n" + body, encoding="utf-8")
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
@@ -178,7 +184,9 @@ def test_render_scene_reports_missing_command(tmp_path):
 def test_render_scene_success_finds_the_video(tmp_path):
     stub = _stub(tmp_path,
                  'mkdir -p media/videos/scene/1080p60\n'
-                 'echo video > "media/videos/scene/1080p60/$3.mp4"\n')
+                 'echo video > "media/videos/scene/1080p60/$3.mp4"\n',
+                 'md media\\videos\\scene\\1080p60 2>nul\r\n'
+                 'echo video > "media\\videos\\scene\\1080p60\\%3.mp4"\r\n')
     result = render_scene(GOOD_SCENE, tmp_path / "work", manim_command=stub,
                           scene_class="DemoScene")
     assert result.ok, result.message
@@ -188,7 +196,8 @@ def test_render_scene_success_finds_the_video(tmp_path):
 
 
 def test_render_scene_failure_returns_the_tail(tmp_path):
-    stub = _stub(tmp_path, 'echo "Boom on line 3" 1>&2\nexit 1\n')
+    stub = _stub(tmp_path, 'echo "Boom on line 3" 1>&2\nexit 1\n',
+                 'echo Boom on line 3 1>&2\r\nexit /b 1\r\n')
     result = render_scene(GOOD_SCENE, tmp_path / "work", manim_command=stub,
                           scene_class="DemoScene")
     assert not result.ok and result.message == "The render failed."

@@ -54,7 +54,8 @@ def test_v1_settings_migrate_on_the_next_write(monkeypatch, tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    assert load_last_repository() == repository
+    loaded = load_last_repository()
+    assert loaded == repository, (ascii(str(loaded)), ascii(str(repository)))
     assert [project.path for project in load_recent_projects()] == [repository]
 
     remember_repository(repository)

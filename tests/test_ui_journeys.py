@@ -778,8 +778,15 @@ def test_explain_include_code_needs_no_manual_files(
     assert window.explain.message.text()
     window.explain.include_code.setChecked(True)
     window.explain._start()
-    wait_until(qt_app, lambda: _screen(window) == "exchange",
-               message="explain packet")
+    # A refusal lands in a toast or the message line; name it instead
+    # of timing out silently when a platform breaks the file walk.
+    try:
+        wait_until(qt_app, lambda: _screen(window) == "exchange",
+                   message="explain packet")
+    except AssertionError as exc:
+        raise AssertionError(
+            f"{exc}; toasts={toasts!r}; "
+            f"message={window.explain.message.text()!r}") from None
     carried = [item["path"] for item in
                window.current_handoff.request.payload["candidate_files"]]
     assert "app.py" in carried
@@ -1065,7 +1072,8 @@ def test_manim_resolves_from_the_app_environment(tmp_path, monkeypatch):
     # PATH cannot see manim (pipx exposes only the app's own commands).
     fake_env = tmp_path / "venv"
     fake_env.mkdir()
-    sibling = fake_env / "manim"
+    sibling = fake_env / ("manim.exe" if sys.platform == "win32"
+                         else "manim")
     sibling.write_text("#!/bin/sh\n", encoding="utf-8")
     monkeypatch.setattr(render_module.shutil, "which", lambda name: None)
     monkeypatch.setattr(render_module.sys, "executable",

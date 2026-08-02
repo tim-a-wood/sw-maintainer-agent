@@ -66,10 +66,15 @@ class AuditStore:
     def write_artifact(self, name: str, value: object) -> dict[str, Any]:
         self._ensure()
         relative = Path(name)
-        if relative.is_absolute() or ".." in relative.parts:
+        # anchor catches what is_absolute misses on Windows: "/x" and
+        # "C:x" are rooted or driven without being "absolute", yet they
+        # escape the artifacts folder when joined.
+        if relative.anchor or ".." in relative.parts:
             raise ValueError("Artifact path must be relative.")
         data = value if isinstance(value, bytes) else canonical(value)
         path = self.artifacts / relative
+        if not path.resolve().is_relative_to(self.artifacts.resolve()):
+            raise ValueError("Artifact path must be relative.")
         if path.exists() and path.read_bytes() != data:
             raise RecoveryError(f"Audit artifact would be overwritten: {relative.as_posix()}")
         atomic_write(path, data)

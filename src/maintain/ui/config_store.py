@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Callable
@@ -17,6 +19,22 @@ from maintain.issue_packets import (DISCUSS_INSTRUCTIONS,
                                     EXPLAIN_INSTRUCTIONS,
                                     SCAN_INSTRUCTIONS)
 from maintain.zip_package import GLOBAL_PROMPT_TEMPLATE
+
+
+def _split_command(command: str) -> list[str]:
+    """One command line into argv, keeping Windows backslashes whole.
+    POSIX shlex eats them, so C:\\tools\\python.exe came back mangled."""
+    if os.name != "nt":
+        return shlex.split(command)
+    tokens = shlex.split(command, posix=False)
+    return [token[1:-1] if len(token) >= 2 and token[0] == token[-1]
+            and token[0] in "\"'" else token for token in tokens]
+
+
+def _join_command(argv: list[str]) -> str:
+    if os.name != "nt":
+        return shlex.join(argv)
+    return subprocess.list2cmdline(argv)
 
 BUILTIN_PROMPTS = {
     "plan": SCOPE_INSTRUCTIONS,
@@ -150,7 +168,8 @@ class ConfigStore:
         return self.update_package(lambda package: package.update({"style": style}))
 
     def checks(self) -> list[tuple[str, str]]:
-        return [(spec.name, shlex.join(spec.argv)) for spec in self.config.commands]
+        return [(spec.name, _join_command(spec.argv))
+                for spec in self.config.commands]
 
     def set_checks(self, rows: list[tuple[str, str]]) -> ProjectConfig:
         data = self.load_raw()
@@ -161,7 +180,7 @@ class ConfigStore:
         }
         for name, command in rows:
             name = name.strip()
-            argv = shlex.split(command.strip()) if command.strip() else []
+            argv = _split_command(command.strip()) if command.strip() else []
             if not name or not argv:
                 raise ConfigurationError("Each check needs a name and a command.")
             preserved = existing.get(name, {}) if isinstance(existing.get(name), dict) else {}
