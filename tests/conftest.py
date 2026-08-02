@@ -36,6 +36,12 @@ def pytest_unconfigure(config):
         return
     sys.stdout.flush()
     sys.stderr.flush()
+    # os._exit still runs ExitProcess, whose DLL-detach callbacks are
+    # exactly where Qt crashes; TerminateProcess skips them.
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    kernel32.TerminateProcess(kernel32.GetCurrentProcess(),
+                              _EXIT_STATUS)
     os._exit(_EXIT_STATUS)
 
 
