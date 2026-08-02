@@ -37,11 +37,19 @@ def pytest_unconfigure(config):
     sys.stdout.flush()
     sys.stderr.flush()
     # os._exit still runs ExitProcess, whose DLL-detach callbacks are
-    # exactly where Qt crashes; TerminateProcess skips them.
+    # exactly where Qt crashes; TerminateProcess skips them. HANDLE is
+    # 64-bit, so the pseudo-handle (-1) needs declared argtypes — bare
+    # ctypes passes it as a 32-bit int, and the truncated handle makes
+    # the call fail quietly instead of ending the process.
     import ctypes
-    kernel32 = ctypes.windll.kernel32
-    kernel32.TerminateProcess(kernel32.GetCurrentProcess(),
-                              _EXIT_STATUS)
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.TerminateProcess(wintypes.HANDLE(-1), _EXIT_STATUS)
+    # Reached only if TerminateProcess failed; crashing in os._exit
+    # still ends the process, where waiting here would hang the job.
     os._exit(_EXIT_STATUS)
 
 
