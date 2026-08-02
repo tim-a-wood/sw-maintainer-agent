@@ -44,9 +44,11 @@ jobs:
 
           python -m pytest -q --deselect `
             "tests/test_cli_history.py::test_selectable_history_shows_details_and_back_does_not_resume"
+          Write-Host "pytest exit code: $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           maintain --version
+          Write-Host "maintain exit code: $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Exercise installer, update, launcher, and diagnostics
