@@ -179,9 +179,13 @@ def _task_markdown(
             "`evidence`, and `remediation`. Use an empty list when there are no findings."
         ),
         "scan": (
-            "Return `content.issues` as a list. Each issue must contain `title`, `severity` "
-            "(`high`, `medium`, or `low`), `file`, `line`, `snippet`, and `detail`; `snippet` "
-            "must quote the offending code verbatim from the supplied content. Carry a "
+            "Return `content.issues` as a list with every distinct fault in the supplied "
+            "files. Each issue must contain `title`, `severity` (`high`, `medium`, or `low`), "
+            "`file`, `line`, `snippet`, and `detail`; `snippet` must quote the offending code "
+            "verbatim from the supplied content. Write `title` and `detail` in ASD-STE100 "
+            "simplified technical English for a reader who does not know this codebase: in "
+            "`detail` state what the code does now, why that is a fault, the effect it can "
+            "cause, and the repair direction, and explain each code name you use. Carry a "
             "spreadsheet row reference in `external_ref` when one applies. Skip everything in "
             "`known_issues`. Use an empty list when there is nothing to report."
         ),
@@ -189,6 +193,11 @@ def _task_markdown(
             "Return `content.reply` as plain text that answers the question about the one "
             "issue in the payload. Optionally return `content.severity` (`high`, `medium`, or "
             "`low`) when the evidence justifies a change. Do not return code changes."
+        ),
+        "talk": (
+            "Return `content.reply` as plain text that answers the person's message about "
+            "the project, grounded in the supplied code, the open issues, and the "
+            "conversation so far. Do not return code changes."
         ),
         "explain": (
             "The scene file must import from `manim` only and contain exactly one `Scene` "
@@ -239,6 +248,9 @@ def _task_markdown(
         },
         "discuss": {
             "reply": "The grounded answer to the question.",
+        },
+        "talk": {
+            "reply": "The grounded answer to the message.",
         },
     }
     if request.role == "implement" and request.payload.get("mode") == "issue":

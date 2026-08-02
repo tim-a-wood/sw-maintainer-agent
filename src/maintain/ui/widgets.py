@@ -54,6 +54,9 @@ ICONS: dict[str, str] = {
             '<path d="M8.5 11H5M8.5 15H5.5M15.5 11H19M15.5 15h3"/>'),
     "search": ('<circle cx="11" cy="11" r="6.5"/>'
                '<path d="M15.8 15.8 20 20"/>'),
+    "message": ('<path d="M20 6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8.5a2 2 0 0 0 '
+                '2 2h2.3L12 20l3.7-3.5H18a2 2 0 0 0 2-2z"/>'
+                '<path d="M8 8.8h8M8 12h5.5"/>'),
     "film": ('<rect x="3.5" y="5" width="17" height="14" rx="2"/>'
              '<path d="M7.5 5v14M16.5 5v14"/>'
              '<path d="M3.5 9.5h4M3.5 14.5h4M16.5 9.5h4M16.5 14.5h4"/>'),

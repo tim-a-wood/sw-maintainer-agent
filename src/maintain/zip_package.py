@@ -60,6 +60,9 @@ def packet_task_key(role: str, payload: dict) -> str:
         return "plan"
     if role in {"review", "scan", "discuss", "explain"}:
         return role
+    if role == "talk":
+        # A project talk shares the discuss packet policy and documents.
+        return "discuss"
     if role == "implement":
         return "repair" if int(payload.get("attempt", 1) or 1) > 1 else "build"
     return "build"

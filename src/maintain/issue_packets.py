@@ -1,16 +1,19 @@
-"""Scan and discuss packets: run-less exchanges for the issue list."""
+"""Scan, discuss, and talk packets: run-less exchanges for the project."""
 
 from __future__ import annotations
 
+import hashlib
 import importlib.resources
+import json
 import secrets
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
+from .audit import atomic_write
 from .config import ProjectConfig
-from .context import ContextSelector
+from .context import ContextFile, ContextSelector
 from .engine import PROVIDER_SAFETY_HEADER
 from .errors import ProviderError
 from .issues import SEVERITIES, Issue, IssueCandidate
@@ -19,26 +22,56 @@ from .zip_package import PacketBuild, build_packet
 
 SCAN_INSTRUCTIONS = (
     "Obey the project ground rules in GLOBAL.md. Scan the supplied code for "
-    "defects and points to repair. Use the focus note and any files under "
-    "attachments/ (for example an exported issue spreadsheet) as guides; "
-    "cross-reference spreadsheet rows and carry the row reference in "
-    "external_ref. Return content.issues as a list. Each issue needs title, "
-    "severity (high, medium, or low), file, line, snippet, and detail. "
-    "snippet must quote the offending code verbatim from the supplied file "
-    "content; do not report code you were not given. When issues share one "
-    "cause or one area of functionality, give each of them the same short "
-    "group label (one to three words) in group; give an unrelated issue no "
-    "group. Report each distinct problem once and skip anything listed in "
-    "known_issues. Do not use internet tools."
+    "defects and points to repair. Examine every supplied file, top to "
+    "bottom, and report every distinct fault you find; do not stop after "
+    "the first findings. payload.scan_coverage tells how many project "
+    "files this scan holds; the other files come in later scans, so do "
+    "not report that they are missing. Use the focus note and any files "
+    "under attachments/ (for example an exported issue spreadsheet) as "
+    "guides; cross-reference spreadsheet rows and carry the row reference "
+    "in external_ref. Return content.issues as a list. Each issue needs "
+    "title, severity (high, medium, or low), file, line, snippet, and "
+    "detail. snippet must quote the offending code verbatim from the "
+    "supplied file content; do not report code you were not given. Write "
+    "title and detail in ASD-STE100 simplified technical English: short "
+    "sentences, active voice, one idea per sentence. Write for a reader "
+    "who does not know this codebase. In detail, give, in this order: "
+    "what the code does now, why that is a fault, the effect the fault "
+    "can cause, and the repair direction in one sentence. When you use a "
+    "name from the code (a file, a function, a variable, a setting), say "
+    "in a few words what it is. Keep each detail at or below 120 words. "
+    "When issues share one cause or one area of functionality, give each "
+    "of them the same short group label (one to three words) in group; "
+    "give an unrelated issue no group. Report each distinct problem once "
+    "and skip anything listed in known_issues. Do not use internet tools."
 )
 
 DISCUSS_INSTRUCTIONS = (
     "Obey the project ground rules in GLOBAL.md. Answer the question about "
     "the single issue in the payload. Ground the answer in the supplied code "
-    "and any files under attachments/. Return content.reply as plain text. "
-    "If the evidence justifies a different severity, also return "
+    "and any files under attachments/. Write short plain sentences for a "
+    "reader who does not know this codebase; when you use a name from the "
+    "code, say in a few words what it is. Return content.reply as plain "
+    "text. If the evidence justifies a different severity, also return "
     "content.severity as high, medium, or low; otherwise omit it. Do not "
     "return code changes; a repair task does that. Do not use internet tools."
+)
+
+TALK_INSTRUCTIONS = (
+    "Obey the project ground rules in GLOBAL.md. This is a working "
+    "discussion about the whole project. payload.request holds the "
+    "person's message. payload.conversation holds the discussion before "
+    "this message, oldest first. payload.open_issues lists the project's "
+    "open issues with their groups. The supplied files are the project "
+    "code, and "
+    "payload.repository_map indexes every project file. Answer the "
+    "message; brainstorming, weighing options, and discussing a whole "
+    "group of issues are all in scope. Ground every claim in the supplied "
+    "code and issues; when a needed file is not supplied, name it instead "
+    "of guessing. Write short plain sentences for a reader who does not "
+    "know this codebase; when you use a name from the code, say in a few "
+    "words what it is. Return content.reply as plain text. Do not return "
+    "code changes; a repair task does that. Do not use internet tools."
 )
 
 EXPLAIN_INSTRUCTIONS = (
@@ -65,30 +98,108 @@ EXPLAIN_INSTRUCTIONS = (
     "Do not use internet tools."
 )
 
-_SCAN_FALLBACK_FOCUS = "defect fault error bug wrong incorrect missing unsafe"
-
-
 def _stamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
 @dataclass(frozen=True)
 class SideExchange:
-    """One run-less packet exchange in flight (scan or discuss)."""
+    """One run-less packet exchange in flight (scan, discuss, or talk)."""
 
-    kind: str                      # "scan" or "discuss"
+    kind: str                      # "scan", "discuss", or "talk"
     request: ProviderRequest
     directory: Path
     issue_id: str = ""             # discuss only
+    disclosed: tuple[tuple[str, str], ...] = ()   # scan: (path, sha) sent
+    restart: bool = False          # scan: this wave starts a new cycle
 
 
-def scan_request(config: ProjectConfig, focus: str,
-                 known: Sequence[Issue]) -> ProviderRequest:
-    selector = ContextSelector(config.repository,
-                               config.source_roots + config.test_roots,
-                               config.exclude_paths, config.max_file_bytes)
-    disclosed = selector.select(focus.strip() or _SCAN_FALLBACK_FOCUS)
-    return ProviderRequest(
+@dataclass(frozen=True)
+class ScanWave:
+    """One scan packet plus its place in the whole-project sweep."""
+
+    request: ProviderRequest
+    disclosed: tuple[tuple[str, str], ...]
+    total: int                     # files in the project inventory
+    remaining_after: int           # files still uncovered after this wave
+    restart: bool                  # a finished cycle starts over
+
+
+_WAVE_BYTES = 350_000
+
+
+def _selector(config: ProjectConfig) -> ContextSelector:
+    return ContextSelector(config.repository,
+                           config.source_roots + config.test_roots,
+                           config.exclude_paths, config.max_file_bytes)
+
+
+def _ranked_inventory(selector: ContextSelector,
+                      focus: str) -> list[ContextFile]:
+    """The whole inventory; focus-matching files first when a focus exists."""
+    inventory = selector.all_files()
+    if not focus.strip():
+        return inventory
+    ranked = selector.select(focus, limit_files=len(inventory) + 9,
+                             limit_bytes=1 << 40)
+    ahead = {item.path for item in ranked}
+    return ranked + [item for item in inventory if item.path not in ahead]
+
+
+def _fill_wave(ordered: list[ContextFile],
+               budget: int) -> list[ContextFile]:
+    chosen: list[ContextFile] = []
+    total = 0
+    for item in ordered:
+        if chosen and total + item.bytes > budget:
+            continue
+        chosen.append(item)
+        total += item.bytes
+    return chosen
+
+
+def scan_coverage_path(config: ProjectConfig) -> Path:
+    key = hashlib.sha256(
+        str(Path(config.repository).resolve()).encode()).hexdigest()[:16]
+    return Path(config.runtime_root).parent / "issues" / f"{key}.scan.json"
+
+
+def load_scan_coverage(config: ProjectConfig) -> dict[str, str]:
+    path = scan_coverage_path(config)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    covered = data.get("covered")
+    return ({str(key): str(value) for key, value in covered.items()}
+            if isinstance(covered, dict) else {})
+
+
+def save_scan_coverage(config: ProjectConfig,
+                       covered: dict[str, str]) -> None:
+    rendered = json.dumps({"covered": covered}, ensure_ascii=False,
+                          indent=2) + "\n"
+    atomic_write(scan_coverage_path(config), rendered.encode())
+
+
+def scan_request(config: ProjectConfig, focus: str, known: Sequence[Issue],
+                 covered: dict[str, str] | None = None) -> ScanWave:
+    """One wave of the whole-project sweep.
+
+    Every inventory file gets disclosed across successive scans: each
+    wave takes the uncovered files (focus-matching ones first) up to
+    the packet budget. A changed file returns to the uncovered set on
+    its own, and a finished cycle starts the sweep over."""
+    selector = _selector(config)
+    covered = dict(covered or {})
+    ordered = _ranked_inventory(selector, focus)
+    remaining = [item for item in ordered
+                 if covered.get(item.path) != item.sha256]
+    restart = bool(ordered) and not remaining
+    if restart:
+        remaining = ordered
+    disclosed = _fill_wave(remaining, _WAVE_BYTES)
+    request = ProviderRequest(
         schema_version=1,
         run_id=f"scan-{_stamp()}-{secrets.token_hex(2)}",
         task_id="scan",
@@ -98,6 +209,8 @@ def scan_request(config: ProjectConfig, focus: str,
             "mode": "scan",
             "request": focus.strip(),
             "repository_map": selector.repository_map(),
+            "scan_coverage": {"files_in_scan": len(disclosed),
+                              "files_in_project": len(ordered)},
             "candidate_files": [
                 {"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
                  "content": x.content} for x in disclosed],
@@ -105,13 +218,17 @@ def scan_request(config: ProjectConfig, focus: str,
                 {"id": issue.id, "title": issue.title, "file": issue.file}
                 for issue in known],
         })
+    return ScanWave(
+        request=request,
+        disclosed=tuple((item.path, item.sha256) for item in disclosed),
+        total=len(ordered),
+        remaining_after=len(remaining) - len(disclosed),
+        restart=restart)
 
 
 def discuss_request(config: ProjectConfig, issue: Issue,
                     question: str) -> ProviderRequest:
-    selector = ContextSelector(config.repository,
-                               config.source_roots + config.test_roots,
-                               config.exclude_paths, config.max_file_bytes)
+    selector = _selector(config)
     cited = selector.exact({issue.file}) if issue.file else []
     return ProviderRequest(
         schema_version=1,
@@ -127,6 +244,79 @@ def discuss_request(config: ProjectConfig, issue: Issue,
             "candidate_files": [
                 {"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
                  "content": x.content} for x in cited],
+        })
+
+
+def talk_transcript_path(config: ProjectConfig) -> Path:
+    key = hashlib.sha256(
+        str(Path(config.repository).resolve()).encode()).hexdigest()[:16]
+    return Path(config.runtime_root).parent / "talk" / f"{key}.json"
+
+
+def load_talk_transcript(config: ProjectConfig) -> list[dict]:
+    try:
+        data = json.loads(
+            talk_transcript_path(config).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return []
+    return [{"author": str(entry.get("author", "")),
+             "text": str(entry.get("text", "")),
+             "time": str(entry.get("time", ""))}
+            for entry in entries if isinstance(entry, dict)]
+
+
+def append_talk_entry(config: ProjectConfig, author: str, text: str) -> None:
+    entries = load_talk_transcript(config)
+    entries.append({"author": author, "text": text,
+                    "time": datetime.now().isoformat(timespec="seconds")})
+    rendered = json.dumps({"entries": entries}, ensure_ascii=False,
+                          indent=2) + "\n"
+    atomic_write(talk_transcript_path(config), rendered.encode())
+
+
+def clear_talk_transcript(config: ProjectConfig) -> None:
+    path = talk_transcript_path(config)
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def talk_request(config: ProjectConfig, message: str,
+                 transcript: Sequence[dict],
+                 issues: Sequence[Issue]) -> ProviderRequest:
+    """A whole-project discussion round: code, issues, and the talk so far.
+
+    Disclosure fills the packet budget from the whole inventory, the
+    files that match the message first, so the conversation always
+    carries as much of the codebase as one packet holds."""
+    selector = _selector(config)
+    disclosed = _fill_wave(_ranked_inventory(selector, message), _WAVE_BYTES)
+    conversation = [{"author": entry.get("author", ""),
+                     "text": entry.get("text", "")}
+                    for entry in list(transcript)[-24:]]
+    return ProviderRequest(
+        schema_version=1,
+        run_id=f"talk-{_stamp()}-{secrets.token_hex(2)}",
+        task_id="talk",
+        role="talk",
+        instructions=f"{PROVIDER_SAFETY_HEADER}\n\n{TALK_INSTRUCTIONS}",
+        payload={
+            "mode": "talk",
+            "request": message.strip(),
+            "conversation": conversation,
+            "open_issues": [
+                {"id": issue.id, "title": issue.title,
+                 "severity": issue.severity, "status": issue.status,
+                 "file": issue.file, "group": issue.group}
+                for issue in issues if issue.status != "closed"],
+            "repository_map": selector.repository_map(),
+            "candidate_files": [
+                {"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
+                 "content": x.content} for x in disclosed],
         })
 
 
@@ -256,7 +446,7 @@ class DiscussReply:
 def discuss_reply(content: dict) -> DiscussReply:
     reply = content.get("reply")
     if not isinstance(reply, str) or not reply.strip():
-        raise ProviderError("The discuss reply must contain content.reply as text.")
+        raise ProviderError("The reply must contain content.reply as text.")
     severity = str(content.get("severity", "")).strip().casefold()
     if severity and severity not in SEVERITIES:
         raise ProviderError("The discuss reply has an invalid severity.")

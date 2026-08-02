@@ -31,11 +31,11 @@ from .widgets import (ChoiceButton, DiffHighlighter, DropZone, ElidedLabel,
 TASK_TITLES = {"plan": "send.plan.title", "build": "send.build.title",
                "repair": "send.repair.title", "review": "send.review.title",
                "scan": "send.scan.title", "discuss": "send.discuss.title",
-               "explain": "send.explain.title"}
+               "talk": "send.talk.title", "explain": "send.explain.title"}
 TASK_STEPS = {"plan": "STEP 1 OF 5 — PLAN", "build": "STEP 2 OF 5 — BUILD",
               "repair": "STEP 2 OF 5 — BUILD", "review": "STEP 3 OF 5 — REVIEW",
               "scan": "ISSUE SCAN", "discuss": "ISSUE DISCUSSION",
-              "explain": "CODE EXPLANATION"}
+              "talk": "PROJECT DISCUSSION", "explain": "CODE EXPLANATION"}
 
 SEVERITY_CHIPS = {"high": ("issues.severity.high", "fail"),
                   "medium": ("issues.severity.medium", "warn"),
@@ -161,6 +161,7 @@ class HomeScreen(Screen):
     open_projects = Signal()
     open_issues = Signal()
     open_explain = Signal()
+    open_talk = Signal()
     continue_run = Signal(str)   # run_id
     continue_explain = Signal(str)   # explain run_id
 
@@ -193,6 +194,8 @@ class HomeScreen(Screen):
                  lambda: self.new_change.emit("issue")),
                 ("film", "home.explain", "home.explain.sub",
                  self.open_explain.emit),
+                ("message", "home.talk", "home.talk.sub",
+                 self.open_talk.emit),
                 ("bug", "home.issues", "home.issues.sub.none",
                  self.open_issues.emit),
                 ("history", "home.history", "home.history.sub",
@@ -201,7 +204,7 @@ class HomeScreen(Screen):
                  self.open_projects.emit),
                 ("sliders", "home.settings", "home.settings.sub",
                  self.open_settings.emit))):
-            if index == 3:
+            if index == 4:
                 self.add_gap(4)
             card = ChoiceButton(icon, text(title_key), text(sub_key))
             card.clicked.connect(slot)
@@ -509,6 +512,10 @@ class ExchangeScreen(Screen):
         self._focus_holder = QWidget()
         self._focus_holder.setLayout(focus_row)
         send_column.addWidget(self._focus_holder)
+        # The sweep position: which part of the project this scan holds.
+        self.scan_note = label("", "Hint")
+        self.scan_note.setVisible(False)
+        send_column.addWidget(self.scan_note)
         self.card = PacketCard()
         self.card.drag_started.connect(self._mark_sent)
         send_column.addWidget(self.card)
@@ -606,15 +613,21 @@ class ExchangeScreen(Screen):
         self._wait_timer.timeout.connect(self._tick_waiting)
 
     def show_handoff(self, handoff: PacketHandoff, attachment_names: list[str],
-                     document_count: int, scan: bool = False) -> None:
+                     document_count: int, scan: bool = False,
+                     coverage: str = "") -> None:
         self.handoff = handoff
         again = ""
         request = handoff.request
         if handoff.task_key == "plan" and "round-" in request.task_id:
             again = " · AGAIN"
-        self.eyebrow.setText(TASK_STEPS[handoff.task_key] + again)
-        self.title.setText(text(TASK_TITLES[handoff.task_key]))
+        # A project talk shares the discuss packet policy; its own labels
+        # come from the role.
+        key = "talk" if request.role == "talk" else handoff.task_key
+        self.eyebrow.setText(TASK_STEPS[key] + again)
+        self.title.setText(text(TASK_TITLES[key]))
         self._focus_holder.setVisible(scan)
+        self.scan_note.setText(coverage)
+        self.scan_note.setVisible(bool(coverage))
         self.update_packet(handoff.zip_path, attachment_names, document_count)
         lead_key = ("receive.lead.zip" if handoff.reply_kind == "zip"
                     else "receive.lead.scene" if handoff.reply_kind == "scene"
@@ -1654,6 +1667,10 @@ class ScanCheckScreen(Screen):
         self.add(self.title)
         self.known = label("", "Hint")
         self.add(self.known)
+        # The sweep position after this wave: what is scanned, what is left.
+        self.coverage = label("", "Hint")
+        self.coverage.setVisible(False)
+        self.add(self.coverage)
         select_all = button(text("scan.select.all"), "Ghost",
                             lambda: self._set_all(True))
         select_none = button(text("scan.select.none"), "Ghost",
@@ -1674,7 +1691,8 @@ class ScanCheckScreen(Screen):
             button(text("scan.discard"), "Ghost", self.discard.emit))
         self._boxes: list[QCheckBox] = []
 
-    def show_candidates(self, candidates: list, known_dropped: int) -> None:
+    def show_candidates(self, candidates: list, known_dropped: int,
+                        coverage: str = "") -> None:
         self.title.setText(
             text("scan.check.title.one") if len(candidates) == 1
             else text("scan.check.title.many", count=len(candidates)))
@@ -1683,6 +1701,8 @@ class ScanCheckScreen(Screen):
             else text("scan.check.known", count=known_dropped)
             if known_dropped else "")
         self.known.setVisible(bool(known_dropped))
+        self.coverage.setText(coverage)
+        self.coverage.setVisible(bool(coverage))
         self.message.set_state("plain", "")
         self.clear_layout(self._rows)
         self._boxes = []
@@ -1728,6 +1748,59 @@ class ScanCheckScreen(Screen):
             self.message.set_state("bad", text("scan.check.none"))
             return
         self.add_selected.emit(selected)
+
+
+class TalkScreen(Screen):
+    """The whole-project discussion: one thread, one input, one send."""
+
+    send = Signal(str)
+    restart = Signal()
+    back = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.add(label("PROJECT DISCUSSION", "Eyebrow"))
+        self.add(label(text("talk.title"), "Title"))
+        self.add(label(text("talk.lead"), "Lead"))
+        self._thread = QVBoxLayout()
+        self._thread.setSpacing(7)
+        thread_holder = QWidget()
+        thread_holder.setLayout(self._thread)
+        self.add(thread_holder)
+        self.empty = label(text("talk.empty"), "Hint")
+        self.add(self.empty)
+        self.edit = QPlainTextEdit()
+        self.edit.setPlaceholderText(text("talk.placeholder"))
+        self.edit.setFixedHeight(76)
+        self.add(self.edit)
+        self.add_row(
+            button(text("talk.send"), "Primary", self._send),
+            button(text("talk.restart"), "Secondary", self.restart.emit),
+            button(text("history.back"), "Ghost", self.back.emit))
+
+    def show_thread(self, entries: list) -> None:
+        self.clear_layout(self._thread)
+        self.empty.setVisible(not entries)
+        for entry in entries:
+            card = QFrame()
+            card.setObjectName("Card")
+            box = QVBoxLayout(card)
+            box.setContentsMargins(12, 9, 12, 9)
+            box.setSpacing(2)
+            author = text("talk.you" if entry.get("author") == "you"
+                          else "talk.copilot")
+            stamp = str(entry.get("time", ""))[:16].replace("T", " ")
+            box.addWidget(label(f"{author} · {stamp}" if stamp else author,
+                                "Hint"))
+            box.addWidget(label(str(entry.get("text", ""))))
+            self._thread.addWidget(card)
+
+    def _send(self) -> None:
+        value = self.edit.toPlainText().strip()
+        if not value:
+            return
+        self.edit.setPlainText("")
+        self.send.emit(value)
 
 
 class ExplainScreen(Screen):

@@ -26,11 +26,14 @@ from maintain.explain_store import (DISCARDED as EXPLAIN_DISCARDED,
                                     is_stale, load_explain_states,
                                     restore_request, resumable_explain,
                                     save_explain_state)
-from maintain.issue_packets import (SideExchange, build_side_packet,
+from maintain.issue_packets import (SideExchange, append_talk_entry,
+                                    build_side_packet, clear_talk_transcript,
                                     discuss_reply, discuss_request,
                                     explain_dir, explain_request,
-                                    scan_candidates, scan_request,
-                                    side_packet_dir)
+                                    load_scan_coverage, load_talk_transcript,
+                                    save_scan_coverage, scan_candidates,
+                                    scan_request, side_packet_dir,
+                                    talk_request)
 from maintain.issues import (CLOSED, IssueCandidate, display_order,
                              related_open_issues)
 from maintain.models import RunRecord, RunState, utc_now
@@ -55,8 +58,8 @@ from .screens import (BusyScreen, ChecksPage, DescribeScreen, DoneScreen,
                       GlobalPage, HistoryScreen, HomeScreen, IssueDetailScreen,
                       IssuesScreen, PackagePage, PlanCheckScreen,
                       ProjectsScreen, RunDetailScreen, SaveScreen,
-                      ScanCheckScreen, SettingsScreen, TasksPage, TestScreen,
-                      documents_count)
+                      ScanCheckScreen, SettingsScreen, TalkScreen, TasksPage,
+                      TestScreen, documents_count)
 from .strings import text
 from .widgets import StageHeader, ToastStack
 
@@ -284,6 +287,7 @@ class MainWindow(QMainWindow):
         self.issues_list = IssuesScreen()
         self.issue_detail = IssueDetailScreen()
         self.scan_check = ScanCheckScreen()
+        self.talk = TalkScreen()
         self.explain = ExplainScreen()
         self.explain_result = ExplainResultScreen()
         self.page_explain = ExplainSettingsPage()
@@ -308,6 +312,7 @@ class MainWindow(QMainWindow):
                 ("home", self.home), ("projects", self.projects),
                 ("issues", self.issues_list), ("issue", self.issue_detail),
                 ("scan-check", self.scan_check),
+                ("talk", self.talk),
                 ("explain", self.explain),
                 ("explain-result", self.explain_result),
                 ("set-explain", self.page_explain),
@@ -330,8 +335,13 @@ class MainWindow(QMainWindow):
         self.home.open_projects.connect(self.show_projects)
         self.home.open_issues.connect(self.show_issues)
         self.home.open_explain.connect(self.show_explain)
+        self.home.open_talk.connect(self.show_talk)
         self.home.continue_run.connect(self._continue_run)
         self.home.continue_explain.connect(self._resume_explain)
+
+        self.talk.send.connect(self._talk_send)
+        self.talk.restart.connect(self._talk_restart)
+        self.talk.back.connect(self.show_home)
 
         self.issues_list.open_issue.connect(self._open_issue)
         self.issues_list.add_issue.connect(self._new_issue)
@@ -830,6 +840,18 @@ class MainWindow(QMainWindow):
 
     # ----- scan and discuss (run-less packet loops) -----
 
+    def _scan_coverage_text(self, wave) -> str:
+        """Where the sweep stands: what this packet holds, what is left."""
+        if not wave.total:
+            return ""
+        if len(wave.disclosed) == wave.total:
+            return text("scan.coverage.all", total=wave.total)
+        if wave.remaining_after == 0:
+            return text("scan.coverage.last", count=len(wave.disclosed),
+                        total=wave.total)
+        return text("scan.coverage.part", count=len(wave.disclosed),
+                    total=wave.total, left=wave.remaining_after)
+
     def _start_scan(self) -> None:
         if self.controller.busy:
             self.toast(text("issues.busy"))
@@ -840,15 +862,19 @@ class MainWindow(QMainWindow):
                  if issue.status != CLOSED]
         try:
             with busy_pointer():
-                request = scan_request(config, focus, known)
+                wave = scan_request(config, focus, known,
+                                    load_scan_coverage(config))
                 exchange = SideExchange(
-                    kind="scan", request=request,
-                    directory=side_packet_dir(config, request.run_id))
+                    kind="scan", request=wave.request,
+                    directory=side_packet_dir(config, wave.request.run_id),
+                    disclosed=wave.disclosed, restart=wave.restart)
                 packet = build_side_packet(exchange, config, [])
         except MaintainError as exc:
             self.show_error(str(exc))
             return
-        self._show_side(exchange, packet)
+        self._show_side(exchange, packet,
+                        coverage=self._scan_coverage_text(wave))
+        self._side["scan_left"] = wave.remaining_after
 
     def _discuss_send(self, issue_id: str, question: str) -> None:
         if self.controller.busy:
@@ -874,7 +900,7 @@ class MainWindow(QMainWindow):
         self._show_side(exchange, packet)
 
     def _show_side(self, exchange: SideExchange, packet,
-                   reply_kind: str = "json") -> None:
+                   reply_kind: str = "json", coverage: str = "") -> None:
         handoff = PacketHandoff(request=exchange.request, packet=packet,
                                 reply_kind=reply_kind)
         self._side = {"exchange": exchange, "attachments": [],
@@ -883,9 +909,12 @@ class MainWindow(QMainWindow):
         self.stage_header.setVisible(False)
         self._set_run_footer(True, exchange.request.run_id)
         self.foot_history.setVisible(False)
+        documents_key = ("discuss" if exchange.kind == "talk"
+                         else exchange.kind)
         self.exchange.show_handoff(handoff, [],
-                                   documents_count(self.store, exchange.kind),
-                                   scan=exchange.kind == "scan")
+                                   documents_count(self.store, documents_key),
+                                   scan=exchange.kind == "scan",
+                                   coverage=coverage)
         self.show_screen("exchange")
 
     def _end_side(self) -> None:
@@ -910,6 +939,17 @@ class MainWindow(QMainWindow):
             self.exchange.status.set_state("bad", str(exc))
             return
         if exchange.kind == "scan":
+            config = self.store.config
+            if exchange.disclosed:
+                # The reply proves this wave reached Copilot; its files
+                # count as covered. A restart wave begins a new cycle.
+                covered = ({} if exchange.restart
+                           else load_scan_coverage(config))
+                covered.update(dict(exchange.disclosed))
+                save_scan_coverage(config, covered)
+            left = int(side.get("scan_left", 0))
+            hint = (text("scan.more", left=left) if left
+                    else text("scan.cycle.done"))
             known = self.controller.issues.known_fingerprints()
             fresh = [item for item in candidates
                      if item.fingerprint not in known]
@@ -919,12 +959,19 @@ class MainWindow(QMainWindow):
                 self.toast(text("scan.check.known.one") if dropped == 1
                            else text("scan.check.known", count=dropped)
                            if dropped else text("scan.added", count=0))
+                self.toast(hint)
                 self.show_issues()
                 return
             side["candidates"] = fresh
             side["run_id"] = exchange.request.run_id
-            self.scan_check.show_candidates(fresh, dropped)
+            self.scan_check.show_candidates(fresh, dropped, coverage=hint)
             self.show_screen("scan-check")
+            return
+        if exchange.kind == "talk":
+            append_talk_entry(self.store.config, "copilot", parsed.reply)
+            self._end_side()
+            self.toast(text("talk.applied"))
+            self.show_talk()
             return
         issue_id = exchange.issue_id
         store = self.controller.issues
@@ -959,6 +1006,45 @@ class MainWindow(QMainWindow):
         self._end_side()
         self.toast(text("scan.discarded"))
         self.show_issues()
+
+    # ----- project discussion (run-less packet loop) -----
+
+    def show_talk(self) -> None:
+        self.talk.show_thread(load_talk_transcript(self.store.config))
+        self.show_screen("talk")
+
+    def _talk_send(self, message: str) -> None:
+        if self.controller.busy:
+            self.toast(text("issues.busy"))
+            return
+        config = self.store.config
+        # The packet separates the new message (payload.request) from
+        # the discussion before it (payload.conversation).
+        prior = load_talk_transcript(config)
+        append_talk_entry(config, "you", message)
+        self.talk.show_thread(load_talk_transcript(config))
+        issues = self.controller.issues.load()
+        try:
+            with busy_pointer():
+                request = talk_request(config, message, prior, issues)
+                exchange = SideExchange(
+                    kind="talk", request=request,
+                    directory=side_packet_dir(config, request.run_id))
+                packet = build_side_packet(exchange, config, [])
+        except MaintainError as exc:
+            self.show_error(str(exc))
+            return
+        self._show_side(exchange, packet)
+
+    def _talk_restart(self) -> None:
+        if not load_talk_transcript(self.store.config):
+            return
+        if not self.ask_confirm(text("talk.restart.title"),
+                                text("talk.restart.body"),
+                                text("talk.restart.yes"), text("stop.no")):
+            return
+        clear_talk_transcript(self.store.config)
+        self.show_talk()
 
     # ----- explain (run-less packet loop with a local render) -----
 
@@ -1502,22 +1588,28 @@ class MainWindow(QMainWindow):
         known = [issue for issue in self.controller.issues.load()
                  if issue.status != CLOSED]
         try:
-            request = scan_request(config, focus, known)
+            wave = scan_request(config, focus, known,
+                                load_scan_coverage(config))
             exchange = SideExchange(
-                kind="scan", request=request,
-                directory=side_packet_dir(config, request.run_id))
+                kind="scan", request=wave.request,
+                directory=side_packet_dir(config, wave.request.run_id),
+                disclosed=wave.disclosed, restart=wave.restart)
             packet = build_side_packet(exchange, config,
                                        self._side["attachments"])
         except MaintainError as exc:
             self.show_error(str(exc))
             return
-        handoff = PacketHandoff(request=request, packet=packet,
+        handoff = PacketHandoff(request=wave.request, packet=packet,
                                 reply_kind="json")
-        self._side.update({"exchange": exchange, "handoff": handoff})
+        self._side.update({"exchange": exchange, "handoff": handoff,
+                           "scan_left": wave.remaining_after})
         self.current_handoff = handoff
         self.exchange.handoff = handoff
         self.exchange.update_packet(handoff.zip_path, self._packet_names(),
                                     documents_count(self.store, "scan"))
+        note = self._scan_coverage_text(wave)
+        self.exchange.scan_note.setText(note)
+        self.exchange.scan_note.setVisible(bool(note))
         self.toast(text("send.updated"))
 
     def _issues_notice(self, kind: str, count: int, label: str) -> None:
@@ -1833,11 +1925,14 @@ class MainWindow(QMainWindow):
             self._end_side()
             self.toast(text("scan.discarded" if kind == "scan"
                             else "explain.discarded" if kind == "explain"
+                            else "talk.discarded" if kind == "talk"
                             else "discuss.discarded"))
             if kind == "discuss" and issue_id:
                 self._open_issue(issue_id)
             elif kind == "explain":
                 self.show_home()
+            elif kind == "talk":
+                self.show_talk()
             else:
                 self.show_issues()
             return

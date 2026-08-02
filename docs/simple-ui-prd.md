@@ -1329,3 +1329,61 @@ The ninth round came back green end to end: 300 passed, the CLI
 answered, and the installer, update repair, launcher, and
 diagnostics steps all exercised clean. The on-Windows verification
 pass that M3 was waiting on is done.
+
+### 14.39 The scan becomes a sweep (FR-W1..W4)
+
+A real scan on a real project returned one issue — found in a file
+whose name contains the word "defect". That was the tell: the scan
+disclosed only files that scored against the focus words, and with
+no focus it fell back to a built-in list of fault-flavored words
+("defect fault error bug ..."), capped at 60 files. Copilot was
+then told "do not report code you were not given", and it obeyed.
+The screen's promise — "Empty means a full scan" — was false: an
+unfocused scan was a keyword lottery, and quiet, ordinary files
+never entered the draw.
+
+- FR-W1. A scan is a sweep of the whole project inventory. The
+  files that fit one packet budget go now; the rest go in later
+  waves. A per-project coverage cursor records what a reply has
+  proven delivered, a changed file re-enters the queue by content
+  hash, and a finished cycle starts the sweep over.
+- FR-W2. The focus text orders the queue — matching files go first.
+  It never shrinks coverage.
+- FR-W3. The tool says where the sweep stands, in the packet's
+  send region ("This scan holds 42 of 120 project files. 78 files
+  stay for later scans.") and again on the proposal screen, so the
+  person knows to run the next part.
+- FR-W4. Issue text stands alone for a codebase newcomer, in
+  ASD-STE100: what the code does now, why that is a fault, the
+  effect it can cause, and the repair direction, with each code
+  name explained in a few words. The scan instructions demand it,
+  the packet's output contract repeats it, and the instructions
+  now say out loud: report every distinct fault, do not stop after
+  the first findings.
+
+The coverage cursor advances only when a reply comes back — a
+packet that was built but never carried to Copilot claims nothing.
+
+### 14.40 Discuss the project (FR-B1..B4)
+
+The issue-level discussion existed; what was missing was the wide
+one — brainstorm over the whole codebase, or talk through an
+entire group of issues at once. A "Discuss the project" card on
+the home screen opens one thread per project.
+
+- FR-B1. The thread persists beside the runs and survives visits
+  and restarts of the app; "Start a new discussion" clears it
+  after a labeled confirm.
+- FR-B2. Each round's packet carries the person's message, the
+  discussion before it, the open issues with their groups, the
+  repository map, and as much project code as one packet holds —
+  the files that match the message first. Asking "discuss the
+  error-handling group" therefore lands with the group's issues
+  and the code in the same packet.
+- FR-B3. The reply joins the thread and the screen returns to the
+  conversation. Stop discards only the round in flight; the
+  settled messages stay.
+- FR-B4. A talk shares the discuss packet policy and documents.
+  Replies are plain text, grounded in the supplied code and
+  issues, written for a reader who does not know the codebase —
+  and never code changes; repairs stay in repair runs.

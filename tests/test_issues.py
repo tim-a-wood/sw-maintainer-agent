@@ -376,7 +376,8 @@ def test_scan_request_and_packet_carry_codebase_and_known_issues(tmp_path):
     repository = _repository(tmp_path)
     config = _config(tmp_path, repository)
     known = [Issue(id="aa11bb", title="Known point", file="app.py")]
-    request = scan_request(config, "the value bound", known)
+    wave = scan_request(config, "the value bound", known)
+    request = wave.request
     assert request.role == "scan" and request.run_id.startswith("scan-")
     assert request.payload["known_issues"][0]["id"] == "aa11bb"
     paths = [item["path"] for item in request.payload["repository_map"]]
@@ -389,6 +390,64 @@ def test_scan_request_and_packet_carry_codebase_and_known_issues(tmp_path):
     packet = build_side_packet(exchange, config, [attachment])
     assert packet.task_key == "scan"
     assert "attachments/tracker.csv" in packet.members
+
+
+def test_scan_discloses_every_file_not_a_keyword_slice(tmp_path):
+    """FR-W1: a scan is a sweep. Every project file gets sent, the
+    focus only orders the queue, and a small packet budget turns into
+    waves that a coverage cursor walks until the whole project is
+    covered."""
+    from maintain import issue_packets
+    from maintain.issue_packets import (load_scan_coverage,
+                                        save_scan_coverage)
+
+    repository = _repository(tmp_path)
+    # Files with no fault-flavored words anywhere: the old keyword
+    # ranking scored these zero and never disclosed them.
+    (repository / "quiet_module.py").write_text(
+        "def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (repository / "second_module.py").write_text(
+        "def twice(a):\n    return a * 2\n", encoding="utf-8")
+    config = _config(tmp_path, repository)
+
+    wave = scan_request(config, "", [])
+    sent = {path for path, _ in wave.disclosed}
+    assert {"app.py", "quiet_module.py", "second_module.py"} <= sent
+    assert wave.total == len(sent)
+    assert wave.remaining_after == 0 and wave.restart is False
+    coverage = wave.request.payload["scan_coverage"]
+    assert coverage["files_in_scan"] == coverage["files_in_project"]
+
+    # A tiny budget forces waves; successive scans walk the whole set.
+    original = issue_packets._WAVE_BYTES
+    issue_packets._WAVE_BYTES = 1
+    try:
+        covered: dict[str, str] = {}
+        seen: set[str] = set()
+        for _ in range(wave.total):
+            part = scan_request(config, "", [], covered)
+            assert len(part.disclosed) == 1
+            covered.update(dict(part.disclosed))
+            seen |= {path for path, _ in part.disclosed}
+        assert seen == sent
+
+        # Everything covered: the next wave starts the cycle over.
+        again = scan_request(config, "", [], covered)
+        assert again.restart is True and len(again.disclosed) == 1
+
+        # A focus pulls its file to the front of the queue.
+        focused = scan_request(config, "twice", [], {})
+        assert focused.disclosed[0][0] == "second_module.py"
+    finally:
+        issue_packets._WAVE_BYTES = original
+
+    # An edited file returns to the uncovered set by content hash.
+    save_scan_coverage(config, dict(wave.disclosed))
+    (repository / "quiet_module.py").write_text(
+        "def add(a, b):\n    return b + a\n", encoding="utf-8")
+    after_edit = scan_request(config, "", [], load_scan_coverage(config))
+    assert {path for path, _ in after_edit.disclosed} == {"quiet_module.py"}
+    assert after_edit.remaining_after == 0 and after_edit.restart is False
 
 
 def test_scan_candidates_validate_and_verify_snippets(tmp_path):
@@ -439,7 +498,7 @@ def test_side_packets_carry_the_ground_rules_and_configured_prompts(tmp_path):
 
     store = _store(tmp_path)
     issue = store.add(title="The bound is wrong", file="app.py", line=1)
-    for request in (scan_request(config, "", []),
+    for request in (scan_request(config, "", []).request,
                     discuss_request(config, issue, "Severity?")):
         # The safety header and the configured ground rules ride along.
         assert request.instructions.startswith(PROVIDER_SAFETY_HEADER)
@@ -453,7 +512,7 @@ def test_side_packets_carry_the_ground_rules_and_configured_prompts(tmp_path):
     ConfigStore(config).set_task_prompt(
         "scan", "Scan only the loader module for unit faults.")
     config = ProjectConfig.load(config.path)
-    task_text, _ = taskmd(scan_request(config, "", []))
+    task_text, _ = taskmd(scan_request(config, "", []).request)
     assert "Scan only the loader module for unit faults." in task_text
     assert PROVIDER_SAFETY_HEADER in task_text
     assert "cross-reference spreadsheet rows" not in task_text
@@ -478,3 +537,57 @@ def test_discuss_request_and_reply_validation(tmp_path):
         discuss_reply({"reply": "  "})
     with pytest.raises(ProviderError):
         discuss_reply({"reply": "ok", "severity": "urgent"})
+
+
+def test_scan_and_talk_instructions_demand_readable_issue_wording():
+    """FR-W4: issue text must stand alone for a codebase newcomer."""
+    from maintain.issue_packets import (SCAN_INSTRUCTIONS,
+                                        TALK_INSTRUCTIONS)
+
+    assert "ASD-STE100" in SCAN_INSTRUCTIONS
+    assert "does not know this codebase" in SCAN_INSTRUCTIONS
+    assert "every distinct fault" in SCAN_INSTRUCTIONS
+    assert "do not stop after" in SCAN_INSTRUCTIONS
+    assert "does not know this codebase" in TALK_INSTRUCTIONS
+
+
+def test_talk_request_carries_code_issues_and_conversation(tmp_path):
+    """FR-B2: one packet holds the code, the open issues, and the talk."""
+    from maintain.issue_packets import (append_talk_entry,
+                                        clear_talk_transcript,
+                                        load_talk_transcript, talk_request)
+
+    repository = _repository(tmp_path)
+    (repository / "quiet_module.py").write_text(
+        "def add(a, b):\n    return a + b\n", encoding="utf-8")
+    config = _config(tmp_path, repository)
+    store = _store(tmp_path)
+    open_issue = store.add(title="The bound is wrong", file="app.py",
+                           group="value handling")
+    closed = store.add(title="Old point", file="app.py")
+    store.close(closed.id, REASON_FIXED)
+
+    append_talk_entry(config, "you", "What should we refactor first?")
+    append_talk_entry(config, "copilot", "The value handling group.")
+    transcript = load_talk_transcript(config)
+    assert [entry["author"] for entry in transcript] == ["you", "copilot"]
+
+    request = talk_request(config, "Discuss the value handling group.",
+                           transcript, store.load())
+    assert request.role == "talk" and request.run_id.startswith("talk-")
+    assert request.payload["conversation"][0]["text"].startswith("What")
+    listed = {item["id"] for item in request.payload["open_issues"]}
+    assert listed == {open_issue.id}
+    assert request.payload["open_issues"][0]["group"] == "value handling"
+    sent = {item["path"] for item in request.payload["candidate_files"]}
+    assert {"app.py", "quiet_module.py"} <= sent
+
+    exchange = SideExchange(kind="talk", request=request,
+                            directory=side_packet_dir(config,
+                                                      request.run_id))
+    packet = build_side_packet(exchange, config, [])
+    # A talk shares the discuss packet policy and documents.
+    assert packet.task_key == "discuss"
+
+    clear_talk_transcript(config)
+    assert load_talk_transcript(config) == []

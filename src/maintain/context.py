@@ -45,7 +45,8 @@ class ContextSelector:
             if score or Path(relative).name.lower().startswith(("readme", "pyproject", "package")):
                 ranked.append(ContextFile(relative, item.sha256, item.bytes, content, score))
         ranked.sort(key=lambda item: (-item.score, item.bytes, item.path))
-        selected, total = [], 0
+        selected: list[ContextFile] = []
+        total = 0
         for item in ranked:
             if len(selected) >= limit_files or total + item.bytes > limit_bytes:
                 continue
@@ -146,6 +147,10 @@ class ContextSelector:
                     dirty.append((path, 0, 0))
         return (str(self.repository.resolve()), tree, tuple(sorted(dirty)),
                 self.roots, self.excludes, self.max_file_bytes)
+
+    def all_files(self) -> list[ContextFile]:
+        """The whole safe inventory, in stable walk order."""
+        return list(self._inventory())
 
     def exact(self, paths: set[str]) -> list[ContextFile]:
         """Return exact safe inventory entries for bounded context expansion."""

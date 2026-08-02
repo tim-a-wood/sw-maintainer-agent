@@ -544,6 +544,10 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     assert _screen(window) == "exchange"
     assert window._side is not None
     assert window.current_handoff.task_key == "scan"
+    # FR-W3: the sweep position is on the screen; this project fits one
+    # wave, so the note names every file.
+    assert window.exchange.scan_note.isVisibleTo(window.exchange)
+    assert "project files" in window.exchange.scan_note.text()
     # A run-less side flow carries no name chip in the foot bar.
     assert not window._run_head.isVisibleTo(window)
     with zipfile.ZipFile(window.current_handoff.zip_path) as archive:
@@ -578,6 +582,11 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     boxes = window.scan_check._boxes
     assert len(boxes) == 2
     assert boxes[0].isChecked() and not boxes[1].isChecked()
+    # The reply proves the wave arrived: its files are covered now, and
+    # the check screen says where the sweep stands.
+    from maintain.issue_packets import load_scan_coverage
+    assert load_scan_coverage(window.store.config)
+    assert window.scan_check.coverage.isVisibleTo(window.scan_check)
 
     window._scan_accept([0])
     assert _screen(window) == "issues"
@@ -601,6 +610,58 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     assert _screen(window) == "issues"
     assert len(window.controller.issues.load()) == 1
     assert any("1" in item for item in toasts)
+
+
+def test_talk_flow_thread_reply_and_restart(qt_app, tmp_path, monkeypatch):
+    """FR-B1..B4: the whole-project discussion loop from the home card."""
+    from maintain.issue_packets import load_talk_transcript
+
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    window.ask_confirm = lambda *args, **kwargs: True
+    issue = window.controller.issues.add(
+        title="The bound is wrong", group="value handling")
+
+    window.home.open_talk.emit()
+    assert _screen(window) == "talk"
+    assert window.talk.empty.isVisibleTo(window.talk)
+
+    # The first message builds a packet with the code and the issues.
+    window.talk.edit.setPlainText("What should we refactor first?")
+    window.talk._send()
+    assert _screen(window) == "exchange"
+    request = window._side["exchange"].request
+    assert request.role == "talk"
+    assert window.current_handoff.task_key == "discuss"
+    assert request.payload["open_issues"][0]["id"] == issue.id
+    assert any(item["path"] == "app.py"
+               for item in request.payload["candidate_files"])
+
+    reply = _side_envelope(window, {
+        "reply": "Start with the value handling group."})
+    window.exchange.check(clipboard_text=reply)
+    assert _screen(window) == "talk"
+    entries = load_talk_transcript(window.store.config)
+    assert [entry["author"] for entry in entries] == ["you", "copilot"]
+    assert window._side is None
+
+    # The next round carries the conversation so far.
+    window.talk.edit.setPlainText("Go deeper on that group.")
+    window.talk._send()
+    request = window._side["exchange"].request
+    assert len(request.payload["conversation"]) == 2
+
+    # Stop discards the round but keeps the settled thread.
+    window._stop_run()
+    assert _screen(window) == "talk"
+    assert window._side is None
+    assert len(load_talk_transcript(window.store.config)) == 3
+
+    # Restart asks, then clears the thread.
+    window._talk_restart()
+    assert load_talk_transcript(window.store.config) == []
+    assert window.talk.empty.isVisibleTo(window.talk)
 
 
 def test_discuss_flow_notes_and_severity_confirm(qt_app, tmp_path, monkeypatch):
