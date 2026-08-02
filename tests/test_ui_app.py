@@ -494,6 +494,52 @@ def test_issue_crud_from_the_screens(qt_app, tmp_path, monkeypatch):
     assert window.controller.issues.load() == []
 
 
+def test_tracker_never_hides_new_issues(qt_app, tmp_path, monkeypatch):
+    """The field bug: the tracker said "Open 20" and showed nothing.
+
+    The status tab persisted across visits, so a visit after a scan
+    rendered the stale tab's empty list under counts that were right.
+    Entries from outside now start on the open work; a detail round
+    trip keeps the person's tab; and the store re-reads its file so
+    another writer's issues appear."""
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+
+    # Leave the tracker on the closed tab, then add twenty issues.
+    window.show_issues()
+    window.issues_list.set_filter("closed")
+    window.show_home()
+    for n in range(20):
+        window.controller.issues.add(title=f"Fault {n}")
+    window.show_issues()
+    assert window.issues_list._filter == "open"
+    assert window.issues_list._rows.count() == 20
+
+    # A detail round trip keeps the tab the person chose.
+    first = window.controller.issues.load()[0]
+    window.controller.issues.set_in_work(first.id)
+    window.show_issues()
+    window.issues_list.set_filter("in_work")
+    window._open_issue(first.id)
+    window.issue_detail.back.emit()
+    assert _screen(window) == "issues"
+    assert window.issues_list._filter == "in_work"
+    assert window.issues_list._rows.count() == 1
+
+    # Another writer's addition appears on the next visit: the file
+    # is the truth and the tracker re-reads it.
+    from maintain.issues import IssueStore
+    other = IssueStore(runtime_root=window.controller.issues.runtime_root,
+                       repository=window.controller.issues.repository)
+    other.add(title="Added by another window")
+    window.show_home()
+    window.show_issues()
+    assert any(issue.title == "Added by another window"
+               for issue in window.controller.issues.load())
+    assert window.issues_list._rows.count() == 20   # 19 open + the new one
+
+
 def test_repair_bridge_prefills_and_links_the_run(qt_app, tmp_path, monkeypatch):
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)

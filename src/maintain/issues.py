@@ -190,6 +190,14 @@ class IssueStore:
             self._loaded = True
         return list(self._issues)
 
+    def refresh(self) -> list[Issue]:
+        """Drop the cache and read the file again.
+
+        Every mutation saves at once, so the file is the truth; a
+        re-read heals the view after anything else wrote it."""
+        self._loaded = False
+        return self.load()
+
     def _save(self) -> None:
         data = {
             "schema_version": SCHEMA_VERSION,

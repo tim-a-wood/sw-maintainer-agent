@@ -22,7 +22,7 @@ from maintain.providers.manual_ui import PacketHandoff
 from maintain.zip_package import global_prompt_text
 
 from .config_store import BUILTIN_PROMPTS, ConfigStore
-from .strings import text
+from .strings import STR, text
 from .widgets import (ChoiceButton, DiffHighlighter, DropZone, ElidedLabel,
                       FileChips, IconSquare, NumberBadge, PacketCard, Spinner,
                       StateChip, StatusLine, StepTicker, TimelineDot, button,
@@ -36,6 +36,14 @@ TASK_STEPS = {"plan": "STEP 1 OF 5 — PLAN", "build": "STEP 2 OF 5 — BUILD",
               "repair": "STEP 2 OF 5 — BUILD", "review": "STEP 3 OF 5 — REVIEW",
               "scan": "ISSUE SCAN", "discuss": "ISSUE DISCUSSION",
               "talk": "PROJECT DISCUSSION", "explain": "CODE EXPLANATION"}
+
+def word(key: str, fallback: str) -> str:
+    """A catalog word, or the raw value when the catalog has no entry.
+
+    Issue files live on disk across app versions; a value written by
+    another version must render as itself, never kill the screen."""
+    return STR.get(key) or fallback
+
 
 SEVERITY_CHIPS = {"high": ("issues.severity.high", "fail"),
                   "medium": ("issues.severity.medium", "warn"),
@@ -1319,7 +1327,7 @@ class IssueRowWidget(QFrame):
         column.setSpacing(1)
         # A long described title must not push the chips off the row.
         title = ElidedLabel(issue.title, "ChoiceTitle")
-        source = text("issues.source." + issue.source)
+        source = word("issues.source." + issue.source, issue.source)
         place = f"{issue.file}:{issue.line}" if issue.file else issue.id
         reference = f" · {issue.external_ref}" if issue.external_ref else ""
         group = f" · {issue.group}" if issue.group else ""
@@ -1401,10 +1409,14 @@ class IssuesScreen(Screen):
         self._query = value.strip().lower()
         self._render()
 
-    def show_issues(self, issues: list) -> None:
+    def show_issues(self, issues: list, keep_filter: bool = False) -> None:
         self._issues = list(issues)
-        # A fresh visit starts unfiltered; a stale query would show a
-        # mystery-empty list.
+        # A fresh visit starts on the open work; a stale status tab or
+        # a stale query would show a mystery-empty list under a tab
+        # that says "Open 20". Round trips from an issue's detail keep
+        # the person's tab (keep_filter).
+        if not keep_filter:
+            self._filter = "open"
         if self.search.text():
             self.search.setText("")   # triggers one render through the slot
             return
@@ -1594,7 +1606,7 @@ class IssueDetailScreen(Screen):
                 text(key, run=run_name or self._run_id))
         self.run_button.setVisible(bool(self._run_id))
         if existing:
-            source = text("issues.source." + issue.source)
+            source = word("issues.source." + issue.source, issue.source)
             self.eyebrow.setText(
                 text("issue.eyebrow", id=issue.id, source=source).upper())
             severity_key, severity_kind = SEVERITY_CHIPS.get(
@@ -1602,10 +1614,12 @@ class IssueDetailScreen(Screen):
             self.severity_chip.set_state(text(severity_key).upper(),
                                          severity_kind)
             if issue.status == "closed":
-                reason = text("issues.reason." + issue.closed_reason)
+                reason = word("issues.reason." + issue.closed_reason,
+                              issue.closed_reason)
                 self.status_chip.set_state(reason.upper(), "wait")
             else:
-                status_key, status_kind = ISSUE_STATUS_CHIPS[issue.status]
+                status_key, status_kind = ISSUE_STATUS_CHIPS.get(
+                    issue.status, ISSUE_STATUS_CHIPS["open"])
                 self.status_chip.set_state(text(status_key).upper(),
                                            status_kind)
         else:

@@ -353,7 +353,10 @@ class MainWindow(QMainWindow):
         self.issue_detail.open_run.connect(self._open_run)
         self.issue_detail.reopen.connect(self._reopen_issue)
         self.issue_detail.remove.connect(self._remove_issue)
-        self.issue_detail.back.connect(self.show_issues)
+        # Back from a detail keeps the person's tab; every entry from
+        # outside the tracker starts on the open work.
+        self.issue_detail.back.connect(
+            lambda: self.show_issues(keep_filter=True))
 
         self.scan_check.add_selected.connect(self._scan_accept)
         self.scan_check.discard.connect(self._scan_discard)
@@ -714,9 +717,15 @@ class MainWindow(QMainWindow):
 
     # ----- issues -----
 
-    def show_issues(self) -> None:
+    def show_issues(self, keep_filter: bool = False) -> None:
+        if not self.controller.busy:
+            # The file is the truth; a re-read heals the list after
+            # anything else wrote it. A running engine shares this
+            # store, so a swap mid-run stays hands-off.
+            self.controller.issues.refresh()
         self.issues_list.show_issues(
-            display_order(self.controller.issues.load()))
+            display_order(self.controller.issues.load()),
+            keep_filter=keep_filter)
         self._set_run_footer(False)
         self.show_screen("issues")
 
@@ -763,7 +772,7 @@ class MainWindow(QMainWindow):
     def _close_issue_with(self, issue_id: str, reason: str) -> None:
         self.controller.issues.close(issue_id, reason)
         self.toast(text("issue.closed", id=issue_id))
-        self.show_issues()
+        self.show_issues(keep_filter=True)
 
     def _reopen_issue(self, issue_id: str) -> None:
         self.controller.issues.reopen(issue_id)
@@ -777,7 +786,7 @@ class MainWindow(QMainWindow):
             return
         self.controller.issues.delete(issue_id)
         self.toast(text("issue.removed", id=issue_id))
-        self.show_issues()
+        self.show_issues(keep_filter=True)
 
     def _repair_issue(self, issue_id: str) -> None:
         """FR-I9: picking one issue offers its relatives — the issues

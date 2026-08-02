@@ -1396,3 +1396,28 @@ is one handover packet out and one outcome in.
   the description and starts the run.
 - FR-B4. A talk shares the discuss packet policy and documents,
   and never returns code changes; repairs stay in repair runs.
+
+### 14.41 The tracker that said "Open 20" and showed nothing
+
+From the field: a scan accepted twenty issues, the tab row counted
+them, and the list stayed empty. Reproduced on the first walk: the
+status tab persisted across visits. The search box already reset
+on a fresh visit — the code called a stale query "a mystery-empty
+list" — but the tab kept whatever the person last chose, so the
+visit after the scan rendered the old tab's nothing under counts
+that said Open 20.
+
+Three repairs, one policy:
+
+- An entry from outside the tracker — home, a scan's accept, the
+  fault screen's bridge — starts on the open work. A round trip
+  from an issue's detail (back, close, remove) keeps the tab the
+  person chose.
+- The tracker re-reads the issue file on every idle visit. Every
+  mutation saves at once, so the file is the truth; the re-read
+  heals the list after any other writer — a second window, another
+  app version, a hand edit. A running engine shares the store, so
+  the swap stays hands-off while a run is live.
+- The words on a row tolerate the file: a source, status, or close
+  reason written by another app version renders as itself instead
+  of killing the render loop mid-list.
