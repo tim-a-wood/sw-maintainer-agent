@@ -688,6 +688,10 @@ def test_issue_mode_reproduces_fixes_and_verifies(qt_app, tmp_path, monkeypatch)
     wait_until(qt_app, lambda: errors or _screen(window) == "done",
                message="done", timeout=60.0)
     assert not errors, errors
+    # The described fault closed with the delivery, and the done screen
+    # keeps that win after the toast fades (FR-I6).
+    assert "Closed 1 issue" in window.done.issues_line.text()
+    assert window.done.issues_line.isVisibleTo(window.done)
 
 
 def test_issue_mode_refuses_a_fault_that_does_not_reproduce(

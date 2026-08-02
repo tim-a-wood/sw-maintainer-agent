@@ -585,6 +585,11 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     assert len(issues) == 1 and issues[0].source == "scan"
     assert issues[0].external_ref == "T-9"
     assert issues[0].group == "value handling"
+    # The external reference is searchable in the tracker (FR-I7).
+    window.issues_list.set_filter("all")
+    window.issues_list.search.setText("T-9")
+    assert window.issues_list._rows.count() == 1
+    window.issues_list.search.setText("")
 
     # The same finding again is dropped before the gate.
     window._start_scan()
@@ -1440,7 +1445,15 @@ def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
                message="stop together")
 
     # A described new fault lands in the tracker, linked and in work.
+    # The held issues from the together run mark their cards, and the
+    # composed repair text stays out of the recent-request chips.
+    from maintain.repository_memory import load_ui_settings
+    recents = [str(item) for item in
+               load_ui_settings().get("recent_requests", [])]
+    assert not any("Repair these" in item for item in recents)
     window.home.new_change.emit("issue")
+    assert any("In work" in card(index).sub_label.text()
+               for index in range(describe._issues_column.count()))
     describe.request_edit.setPlainText("The loader misses the bound check.")
     describe._start()
     wait_until(qt_app, lambda: _screen(window) == "exchange",

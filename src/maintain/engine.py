@@ -398,6 +398,10 @@ class WorkflowEngine:
             self._move(record, store, RunState.CANCELLED, tree_hash=record.tree_hash)
             store.append("human_cancelled", {"retained_worktree": record.worktree})
             self._iteration(record, store, "Discarded", kind="discarded")
+            if self.issues is not None:
+                # The discarded run frees its issues: nothing may show
+                # as in work when nothing works on it.
+                self.issues.release_for_run(record.run_id)
             return record
 
     def cleanup_workspace(self, run_id: str) -> RunRecord:

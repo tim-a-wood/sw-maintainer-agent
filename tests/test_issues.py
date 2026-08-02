@@ -219,6 +219,24 @@ def test_related_open_issues_group_first_then_same_file(tmp_path):
     assert len(related_open_issues(store.load(), picked)) == 4
 
 
+def test_release_for_run_returns_in_work_to_open(tmp_path):
+    store = _store(tmp_path)
+    store.capture([_candidate(),
+                   _candidate(snippet="other = 1", title="Second point")],
+                  source="review", run_id="f-1")
+    first, second = store.load()
+    store.set_in_work(first.id)
+    store.close(second.id, REASON_FIXED)
+
+    released = store.release_for_run("f-1")
+    assert [issue.id for issue in released] == [first.id]
+    assert store.get(first.id).status == OPEN
+    assert store.get(first.id).events[-1]["what"] == "released"
+    # A closed issue stays closed; an unlinked run releases nothing.
+    assert store.get(second.id).status == CLOSED
+    assert store.release_for_run("f-9") == []
+
+
 def test_close_for_run_keeps_cited_fingerprints(tmp_path):
     store = _store(tmp_path)
     store.capture([_candidate(),

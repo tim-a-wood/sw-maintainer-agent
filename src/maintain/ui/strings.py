@@ -83,7 +83,8 @@ STR: dict[str, str] = {
     "describe.issues.hint": "Select one to repair it. Check several to "
                             "repair them together. A new fault goes into "
                             "the issue list.",
-    "issues.search.placeholder": "Filter by title, file, source, or group.",
+    "issues.search.placeholder": "Filter by title, file, source, group, "
+                                 "or reference.",
     "describe.placeholder": "Write the change in one or two sentences.",
     "describe.drop.main": "Drop files here, or click to select them.",
     "describe.drop.sub": "All file types are permitted. They go into every packet.",
@@ -188,6 +189,8 @@ STR: dict[str, str] = {
     "done.checks.one": "1 check passed",
     "done.steps": "{count} build rounds · {time} from start to save",
     "done.steps.one": "1 build round · {time} from start to save",
+    "done.issues": "Closed {count} issues in the tracker.",
+    "done.issues.one": "Closed 1 issue in the tracker.",
     "done.merge": "Copy the merge command",
     "done.merge.done": "The merge command is in the clipboard.",
     "done.note": "Copy the change note",

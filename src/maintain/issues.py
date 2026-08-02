@@ -382,6 +382,16 @@ class IssueStore:
     def known_fingerprints(self) -> set[str]:
         return {issue.fingerprint for issue in self.load() if issue.fingerprint}
 
+    def release_for_run(self, run_id: str) -> list[Issue]:
+        """A discarded run frees its issues: in-work returns to open,
+        so nothing shows as worked on when nothing works on it."""
+        released: list[Issue] = []
+        for issue in self.load():
+            if run_id in issue.runs and issue.status == IN_WORK:
+                issue = self._event(issue, "tool", "released", IN_WORK, OPEN)
+                released.append(self._put(replace(issue, status=OPEN)))
+        return released
+
     def close_for_run(self, run_id: str,
                       keep_fingerprints: set[str] = frozenset()) -> list[Issue]:
         """Close a delivered run's linked issues as fixed.

@@ -1178,3 +1178,38 @@ screen and every toast. Nine faults fell out; all are fixed.
 The projects list looking empty mid-session turned out to be the
 test driver skipping the launcher (which records every opened
 project) — not a product fault. Verified, not fixed.
+
+### 14.35 The tracker and the repair loop, walked to the end
+
+A focus round drove the whole issue lifecycle as one user's story: a
+scan seeded the tracker; a detail edit set a reference and severity;
+a grouped pick accepted the related offer and delivered one run that
+closed both issues; a dismissed finding stayed out of the next scan;
+a repair was discarded; a discuss round raised a severity. Six
+faults and gaps came out of it; all are fixed.
+
+- A discarded run left its issues "in work" forever with nothing
+  working on them. The engine now releases a cancelled run's in-work
+  issues back to open, with a "released" event on each issue.
+- A fault card gave no sign its issue was already held by a paused
+  repair, inviting a duplicate run. The card sub-line now ends with
+  "In work" when a run holds the issue.
+- The tracker search could not find "T-42": the filter haystack
+  missed the external reference the rows display. Reference joined
+  the haystack and the placeholder.
+- The delivery toast ("Closed: … and 1 more.") faded in seconds and
+  the done screen said nothing about issues. The stats card now
+  keeps the win: "Closed 2 issues in the tracker."
+- The issue detail's run link showed only the raw run id. It now
+  shows the run's name when the person gave one.
+- Composed tracker repairs were remembered as recent-request chips;
+  replaying one would capture the whole numbered block as a single
+  nonsense described issue. Only hand-written requests join the
+  recent chips now.
+
+The rest of the lifecycle held under the walk, end to end: capture
+with group labels through the accept gate, reference and severity
+edits, the related-repair offer, delivery closing every linked issue
+and keeping review-cited ones open, dismissal suppression before the
+gate, reopen paths, and the discuss round writing both notes and the
+new severity onto the issue.

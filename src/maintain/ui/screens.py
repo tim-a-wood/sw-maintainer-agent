@@ -369,6 +369,10 @@ class DescribeScreen(Screen):
             if issue.group:
                 # The shared label previews the related-repair offer.
                 sub = f"{sub} · {issue.group}"
+            if issue.status == "in_work":
+                # A paused repair already holds this issue; say so
+                # before the person starts a second run on it.
+                sub = f"{sub} · {text('issues.status.in_work')}"
             card = ChoiceButton("bug", issue.title, sub)
             card.clicked.connect(
                 lambda iid=issue.id: self.pick_issue.emit(iid))
@@ -1062,7 +1066,12 @@ class DoneScreen(Screen):
         self.stat_line = QLabel("")
         self.stat_line.setObjectName("Hint")
         self.stat_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        for widget in (self.stat_files, self.file_names, self.stat_line):
+        # FR-I6: an issue repair's real win — the toast fades, this stays.
+        self.issues_line = QLabel("")
+        self.issues_line.setObjectName("Ok")
+        self.issues_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        for widget in (self.stat_files, self.file_names, self.stat_line,
+                       self.issues_line):
             stats.addWidget(widget)
         self.add(self.stats_card)
         audit = label(text("done.audit"), "Lead")
@@ -1105,7 +1114,7 @@ class DoneScreen(Screen):
     def show_record(self, record: RunRecord, files: list[str] = (),
                     checks: int = 0, iterations: int = 0,
                     duration: str = "", first: bool = False,
-                    note: str = "") -> None:
+                    note: str = "", issues_closed: int = 0) -> None:
         self._branch = record.branch
         self._note = note
         self.first_note.setVisible(first)
@@ -1125,6 +1134,11 @@ class DoneScreen(Screen):
                       else text("done.steps", count=iterations,
                                 time=duration))
         self.stat_line.setText(f"{checks_text} · {steps_text}")
+        self.issues_line.setText(
+            text("done.issues.one") if issues_closed == 1
+            else text("done.issues", count=issues_closed)
+            if issues_closed else "")
+        self.issues_line.setVisible(bool(issues_closed))
 
     def _copy_merge(self) -> None:
         if self._branch:
@@ -1381,7 +1395,7 @@ class IssuesScreen(Screen):
         if not self._query:
             return True
         haystack = (f"{issue.title} {issue.file} {issue.source} "
-                    f"{issue.group}").lower()
+                    f"{issue.group} {issue.external_ref}").lower()
         return self._query in haystack
 
     def _render(self) -> None:
@@ -1542,7 +1556,7 @@ class IssueDetailScreen(Screen):
             return "low"
         return "medium"
 
-    def load(self, issue) -> None:
+    def load(self, issue, run_name: str = "") -> None:
         """issue=None starts a new, human-entered issue."""
         existing = issue is not None
         self.issue_id = issue.id if existing else ""
@@ -1555,7 +1569,8 @@ class IssueDetailScreen(Screen):
         if self._run_id:
             key = ("issue.run.fixed" if issue.status == "closed"
                    else "issue.run.linked")
-            self.run_button.setText(text(key, run=self._run_id))
+            self.run_button.setText(
+                text(key, run=run_name or self._run_id))
         self.run_button.setVisible(bool(self._run_id))
         if existing:
             source = text("issues.source." + issue.source)

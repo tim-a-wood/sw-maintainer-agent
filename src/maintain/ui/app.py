@@ -717,7 +717,9 @@ class MainWindow(QMainWindow):
         except MaintainError as exc:
             self.toast(str(exc))
             return
-        self.issue_detail.load(issue)
+        run_name = (self._run_name_on_disk(issue.runs[-1]) or ""
+                    if issue.runs else "")
+        self.issue_detail.load(issue, run_name=run_name)
         self.show_screen("issue")
 
     def _new_issue(self) -> None:
@@ -744,7 +746,9 @@ class MainWindow(QMainWindow):
         except MaintainError as exc:
             self.show_error(str(exc))
             return
-        self.issue_detail.load(issue)
+        run_name = (self._run_name_on_disk(issue.runs[-1]) or ""
+                    if issue.runs else "")
+        self.issue_detail.load(issue, run_name=run_name)
         self.toast(text("issue.saved"))
 
     def _close_issue_with(self, issue_id: str, reason: str) -> None:
@@ -1315,6 +1319,10 @@ class MainWindow(QMainWindow):
     def _start_run(self, mode: str, request: str, attachments: list) -> None:
         if self.describe.include_code.isChecked():
             attachments = self._with_project_code(attachments)
+        # Only hand-written requests join the recent chips. A composed
+        # tracker repair replayed from a chip would capture its whole
+        # block as one nonsense described issue.
+        hand_written = not self._pending_issue_links
         if mode == "issue" and not self._pending_issue_links:
             # FR-I6: a described fault lands in the tracker and closes
             # with the run that repairs it. The same words again reuse
@@ -1326,7 +1334,8 @@ class MainWindow(QMainWindow):
             if captured.touched:
                 self._pending_issue_links = [captured.touched[0]]
         if self.controller.start_run(mode, request, attachments):
-            self._remember_request(request)
+            if hand_written:
+                self._remember_request(request)
             self._set_stage(0)
             self.show_busy(text("working.plan"))
 
@@ -1633,6 +1642,9 @@ class MainWindow(QMainWindow):
             delivered = sum(1 for item in self.controller.runs()
                             if item.state == "delivered")
             iterations = self._build_rounds(record.run_id)
+            issues_closed = sum(
+                1 for item in self.controller.issues.load()
+                if record.run_id in item.runs and item.status == CLOSED)
             self.done.show_record(
                 record, files=self.controller.changed_files(record),
                 checks=len(record.evidence.get("tests", {})
@@ -1640,7 +1652,8 @@ class MainWindow(QMainWindow):
                 iterations=iterations,
                 duration=self._run_duration(record),
                 first=delivered == 1,
-                note=self._change_note(record, iterations=iterations))
+                note=self._change_note(record, iterations=iterations),
+                issues_closed=issues_closed)
             self._set_run_footer(False)
             self._set_stage(5)
             self.stage_header.setVisible(False)
