@@ -116,13 +116,15 @@ def test_check_reply_zip_branches(tmp_path):
     assert not broken.valid and "ZIP" in broken.message
     assert not broken.keep_as_attachment
 
-    # A JSON reply for a different run is named as the mismatch it is.
+    # A JSON reply for a different run is refused in user words, with
+    # the next step — never the engine's "manual returned an envelope".
     envelope = json.dumps({
         "schema_version": 1, "run_id": "f-00000000-000000-else",
         "task_id": "change-value", "role": "review",
         "conversation_id": "c", "content": {"decision": "approve"}})
     other = check_reply(_handoff("json"), text=envelope)
-    assert not other.valid and "different task" in other.message
+    assert not other.valid and "different run or step" in other.message
+    assert "manual" not in other.message and "envelope" not in other.message
 
 
 def test_check_reply_text_branches(tmp_path):

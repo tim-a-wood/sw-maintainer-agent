@@ -1671,10 +1671,11 @@ class MainWindow(QMainWindow):
             self.show_home()
 
     def _build_rounds(self, run_id: str) -> int:
-        """What a person counts as iterations: one per applied build.
-        The raw timeline also logs the plan, the review, and the save."""
+        """What a person counts as iterations: one per applied build or
+        repair. The raw timeline also logs the plan, the review, and
+        the save."""
         rounds = sum(1 for item in self.controller.timeline(run_id)
-                     if item.kind == "build_applied")
+                     if item.kind in {"build_applied", "repair_applied"})
         return max(rounds, 1)
 
     def _change_note(self, record: RunRecord,

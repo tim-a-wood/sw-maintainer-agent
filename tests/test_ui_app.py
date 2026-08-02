@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from maintain.config import ProjectConfig, default_config  # noqa: E402
 from maintain.models import RunState  # noqa: E402
@@ -1254,6 +1254,35 @@ def test_close_asks_a_name_only_for_unnamed_work(qt_app, tmp_path,
     window2.close()
     assert asked == [1]
     assert window2.controller.resumable_run().name == "Night work"
+
+
+def test_named_runs_lead_history_and_the_timeline(qt_app):
+    """FR-N1: the name the person gave heads the history row and the
+    run detail; the request and the id stay one line below."""
+    from maintain.history import RunSummary
+    from maintain.ui.screens import HistoryRow, RunDetailScreen
+
+    named = RunSummary(
+        run_id="f-1", mode="feature", request="Change the value to after.",
+        state="delivered", updated_at="2026-08-02T01:00:00Z",
+        created_at="2026-08-02T00:00:00Z", repository="x",
+        changed_files=1, name="Value correction")
+    row = HistoryRow(named)
+    labels = [widget.text() for widget in row.findChildren(QLabel)]
+    assert any(value == "Value correction" for value in labels)
+    assert any("Change the value" in value and "f-1" in value
+               for value in labels)
+
+    detail = RunDetailScreen()
+    detail.show_timeline(named, [], live=False)
+    assert detail.title.text() == "Value correction"
+    assert "f-1" in detail.title.toolTip()
+    unnamed = RunSummary(
+        run_id="f-2", mode="feature", request="Another change.",
+        state="delivered", updated_at="", created_at="", repository="x",
+        changed_files=0)
+    detail.show_timeline(unnamed, [], live=False)
+    assert "f-2" in detail.title.text()
 
 
 def test_foot_home_and_the_theme_symbol(qt_app, tmp_path, monkeypatch):

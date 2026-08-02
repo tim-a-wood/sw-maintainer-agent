@@ -1213,3 +1213,35 @@ edits, the related-repair offer, delivery closing every linked issue
 and keeping review-cited ones open, dismissal suppression before the
 gate, reopen paths, and the discuss round writing both notes and the
 new severity onto the issue.
+
+### 14.36 Second pass: the corners the first walk missed
+
+A repeat walkthrough drove the surfaces no earlier round reached: the
+reply-validation errors, plan "Ask for changes" with its note, the
+findings gate into a repair round, a failing local check retried to
+green, the save diff, history and the run timeline, manual issue
+entry, the close-reasons row, and a rename read back later. Four
+faults; all fixed.
+
+- The stale-reply refusal spoke engine language: "manual returned an
+  envelope for a different task." — the provider's internal name, the
+  word "envelope", and no next step. The exchange screen now says:
+  "This reply belongs to a different run or step. In Copilot, copy
+  the reply for this package." An unreadable envelope gets the same
+  treatment.
+- The build-round count missed repair rounds: the timeline logs a
+  repair as repair_applied, so a build plus one repair still read
+  "1 build round". Both kinds count now.
+- History rows ignored run names: a run renamed "Value correction"
+  still titled itself by its request. The name leads the row now,
+  with the request and the id one line below.
+- The run timeline's head had the same fault — "Run f-…" for a named
+  run. The name heads it now; the id stays in the tooltip.
+
+The rest of the pass held: the junk-paste refusal already spoke
+plainly, the rescope note rode into the second plan packet and its
+timeline entry, the findings gate captured its point into the
+tracker, the failed check named itself with both commands visible,
+the retry went green, the diff colored its lines, the close-reasons
+row offered every reason, and both themes painted every walked
+screen.

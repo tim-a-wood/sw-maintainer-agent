@@ -1168,9 +1168,13 @@ class HistoryRow(QFrame):
         column = QVBoxLayout()
         column.setSpacing(1)
         request = " ".join(summary.request.split())[:64]
-        title = QLabel(request or f"Run {summary.run_id}")
+        # FR-N1: the name the person gave leads; the request explains.
+        title = QLabel(summary.name or request or f"Run {summary.run_id}")
         title.setObjectName("ChoiceTitle")
-        sub = QLabel(f"{summary.run_id} · {summary.updated_at[:10]}")
+        detail = f"{summary.run_id} · {summary.updated_at[:10]}"
+        if summary.name and request:
+            detail = f"{request[:40]} · {detail}"
+        sub = QLabel(detail)
         sub.setObjectName("ChoiceSub")
         column.addWidget(title)
         column.addWidget(sub)
@@ -2123,7 +2127,11 @@ class RunDetailScreen(Screen):
 
     def show_timeline(self, summary: RunSummary, timeline: list[IterationEvent],
                       live: bool) -> None:
-        self.title.setText(text("run.title", run=summary.run_id))
+        # FR-N1: a named run heads with its name; the id stays findable
+        # in the tooltip and the history row.
+        self.title.setText(summary.name
+                           or text("run.title", run=summary.run_id))
+        self.title.setToolTip(text("run.title", run=summary.run_id))
         self.subtitle.setText(
             " ".join(summary.request.split())[:90] if live
             else text("run.readonly", state=summary.display_state.lower()))

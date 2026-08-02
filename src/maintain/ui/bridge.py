@@ -103,8 +103,20 @@ def check_reply(handoff: PacketHandoff, *, text: str = "",
                 zip_artifact_content(inline_implementation_zip(
                     response.content, request, Path(staging)), request)
     except ProviderError as exc:
-        return ReplyCheck(None, str(exc))
+        return ReplyCheck(None, _user_words(str(exc)))
     return ReplyCheck(ManualReply(kind="json", text=candidate), "")
+
+
+def _user_words(reason: str) -> str:
+    """The shared validators speak engine language ("manual returned an
+    envelope…"); the person gets the reason and the next step (FR-V2)."""
+    if "envelope for a different task" in reason:
+        return ("This reply belongs to a different run or step. "
+                "In Copilot, copy the reply for this package.")
+    if "invalid response envelope" in reason:
+        return ("The tool cannot read this reply. In Copilot, copy the "
+                "complete reply, with its JSON block.")
+    return reason
 
 
 _JSON_FENCE = re.compile(r"```(?:json)?[ \t]*\r?\n(.*?)```", re.DOTALL)
