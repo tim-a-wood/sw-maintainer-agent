@@ -1134,3 +1134,13 @@ run's pending issue links and yanking its screen home. A settle or
 failure that arrives while a newer operation is in flight now keeps
 its record bookkeeping (names, renames) and leaves the screen and the
 pending links alone.
+
+Screenshotting the offer caught the dialog dropping its words: every
+confirm in the app passes wordy choices ("Repair 3 together" / "Only
+this one", "Stop the run" / "Keep working") and the message box
+showed stock Yes/No buttons instead. The confirm dialog now builds
+its two buttons from the caller's words, affirmative as the default.
+Two copy gaps closed at the same time: the fault-screen cards show
+the group label beside the file, previewing the offer a pick will
+make, and the tracker's filter placeholder names group among its
+fields.

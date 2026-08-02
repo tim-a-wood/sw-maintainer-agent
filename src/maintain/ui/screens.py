@@ -366,6 +366,9 @@ class DescribeScreen(Screen):
             sub = text(key)
             if issue.file:
                 sub = f"{sub} · {issue.file}"
+            if issue.group:
+                # The shared label previews the related-repair offer.
+                sub = f"{sub} · {issue.group}"
             card = ChoiceButton("bug", issue.title, sub)
             card.clicked.connect(
                 lambda iid=issue.id: self.pick_issue.emit(iid))

@@ -1964,10 +1964,15 @@ class MainWindow(QMainWindow):
         return value if accepted and value else None
 
     def ask_confirm(self, title: str, body: str, yes: str, no: str) -> bool:
-        result = QMessageBox.question(
-            self, title, body,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        return result == QMessageBox.StandardButton.Yes
+        # The callers word both choices ("Repair 2 together" / "Only
+        # this one"); stock Yes/No buttons would drop that meaning.
+        box = QMessageBox(QMessageBox.Icon.Question, title, body,
+                          parent=self)
+        accept = box.addButton(yes, QMessageBox.ButtonRole.YesRole)
+        box.addButton(no, QMessageBox.ButtonRole.NoRole)
+        box.setDefaultButton(accept)
+        box.exec()
+        return box.clickedButton() is accept
 
     def pick_files(self) -> list[str]:
         paths, _ = QFileDialog.getOpenFileNames(self, text("describe.import"))

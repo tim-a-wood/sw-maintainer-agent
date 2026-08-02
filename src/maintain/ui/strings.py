@@ -79,7 +79,7 @@ STR: dict[str, str] = {
     "describe.issues.hint": "Select one to repair it. Check several to "
                             "repair them together. A new fault goes into "
                             "the issue list.",
-    "issues.search.placeholder": "Filter by title, file, or source.",
+    "issues.search.placeholder": "Filter by title, file, source, or group.",
     "describe.placeholder": "Write the change in one or two sentences.",
     "describe.drop.main": "Drop files here, or click to select them.",
     "describe.drop.sub": "All file types are permitted. They go into every packet.",
