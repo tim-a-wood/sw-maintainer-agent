@@ -1,7 +1,7 @@
 # Maintain Simple UI — Product Requirements
 
-- Status: PRD v1.1 — implemented on this branch (see section 10; M1 and M2
-  are complete, M3 is complete except the on-Windows verification pass)
+- Status: PRD v1.1 — implemented on this branch (see section 10; M1, M2,
+  and M3 are complete; the suite is verified on Windows — section 14.38)
 - Branch: `maintain-simple-ui`
 - Date: 2026-07-28
 - Interactive reference: `docs/mockup/simple-ui-mockup.html` (snapshot at
@@ -1281,3 +1281,51 @@ with its labeled confirm, reissued the packet, and superseded the
 skipped steps; each project kept its own tracker and foot chip
 across a switch; and the narrow window scrolled every screen with
 the foot bar pinned.
+
+### 14.38 The Windows pass: nine rounds to a green machine
+
+M3 had shipped everything but its proof: the suite had never run on
+Windows. A dispatch loop against the Windows smoke workflow on
+`windows-latest` — run, read the failure, fix, dispatch again —
+closed that gap in nine rounds. The first finding was the workflow
+itself: it installed the browser extra only, so every UI test had
+been skipping silently on every past run. With `[browser,ui]`
+installed, an offscreen Qt platform, and a git identity for the
+worktree commits, the real suite ran — and seventeen tests failed.
+
+Five of the faults were product bugs, real differences in how the
+tool behaved on Windows:
+
+- The patch pipe corrupted every diff. Text-mode stdin turns `\n`
+  into `\r\n` on Windows, so `git apply` refused every hunk of
+  every Copilot reply. The patch now feeds the pipe as bytes.
+- An LF patch still missed worktrees checked out with CRLF line
+  endings. Apply now runs with `--ignore-whitespace`.
+- The artifact path guard leaned on `is_absolute()`, which is False
+  on Windows for rooted paths like `/x` and drive-relative paths
+  like `C:x`. The guard now rejects any anchored path and checks
+  the resolved path stays inside the artifacts folder.
+- The checks editor ate backslashes: the POSIX shell splitter
+  mangled `C:\tools\python.exe` on the way in. Windows now splits
+  without POSIX rules and joins with Windows quoting rules.
+- Non-ASCII project paths came back mojibaked (`cafÃ©`): every
+  text-mode subprocess read git's UTF-8 output through the console
+  code page. Every such call now decodes UTF-8 with replacement.
+
+The rest was harness portability — shell-script test stubs became
+`.cmd` files on Windows, fixtures pinned their newlines, generated
+test code stopped interpolating `C:\Users\...` into string literals
+where `\U` reads as an escape — and one long tail: with all 300
+tests passing, the process still exited red. PySide6 6.11 crashes
+with an access violation while Windows unloads its DLLs, after the
+summary prints. Closing every window did not stop it; `os._exit`
+did not either, because `ExitProcess` still runs the DLL-detach
+callbacks where Qt dies. The suite now ends the process through
+`TerminateProcess`, which skips them — passing the handle through
+declared 64-bit types, because the first attempt let ctypes
+truncate the pseudo-handle to 32 bits and the guard fell through.
+
+The ninth round came back green end to end: 300 passed, the CLI
+answered, and the installer, update repair, launcher, and
+diagnostics steps all exercised clean. The on-Windows verification
+pass that M3 was waiting on is done.
