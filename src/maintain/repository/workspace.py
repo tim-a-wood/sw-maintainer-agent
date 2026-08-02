@@ -14,7 +14,7 @@ class AttemptWorkspace:
         base=git(self.run_worktree,"rev-parse","HEAD"); self.root.mkdir(parents=True,exist_ok=True)
         attempt=Path(tempfile.mkdtemp(prefix="attempt-",dir=self.root)); branch=f"maintain-attempt-{attempt.name}"
         try:
-            r=subprocess.run(["git","-C",str(self.repository),"worktree","add","--detach",str(attempt),base],text=True,capture_output=True)
+            r=subprocess.run(["git","-C",str(self.repository),"worktree","add","--detach",str(attempt),base],text=True,encoding="utf-8",errors="replace",capture_output=True)
             if r.returncode: raise RuntimeError((r.stderr or r.stdout).strip())
             declared=[]
             for op in artifact.operations:

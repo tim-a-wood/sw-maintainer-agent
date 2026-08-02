@@ -94,7 +94,8 @@ def _pip_install_manim() -> bool:
     completed = subprocess.run(
         [sys_module.executable, "-m", "pip", "install", "manim==0.20.1",
          f"PySide6-Addons=={PySide6.__version__}"],
-        capture_output=True, text=True, check=False, **hidden())
+        capture_output=True, text=True, encoding="utf-8",
+        errors="replace", check=False, **hidden())
     return completed.returncode == 0
 
 

@@ -68,7 +68,8 @@ def contact_sheet(video: Path, work_dir: Path) -> Path | None:
             [ffmpeg, "-y", "-v", "error", "-i", str(video),
              "-vf", "select='not(mod(n,180))',scale=480:-2,tile=4x4",
              "-frames:v", "1", str(sheet)],
-            capture_output=True, text=True, timeout=SHEET_TIMEOUT_SECONDS,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=SHEET_TIMEOUT_SECONDS,
             check=False, **hidden())
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -91,6 +92,7 @@ def render_scene(source: str, work_dir: Path, *, manim_command: str,
         completed = subprocess.run(
             [manim_command, quality, "scene.py", scene_class],
             cwd=work_dir, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
             timeout=RENDER_TIMEOUT_SECONDS, check=False, **hidden())
     except subprocess.TimeoutExpired:
         return RenderResult(ok=False,

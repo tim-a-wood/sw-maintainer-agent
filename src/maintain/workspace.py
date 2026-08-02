@@ -17,6 +17,7 @@ from .proc import hidden
 
 def git(repository: Path, *args: str, check: bool = True) -> str:
     result = subprocess.run(["git", "-C", str(repository), *args], text=True,
+                            encoding="utf-8", errors="replace",
                             capture_output=True, check=False, **hidden())
     if check and result.returncode:
         raise RecoveryError((result.stderr or result.stdout).strip() or "Git command failed.")
@@ -120,14 +121,18 @@ class WorkspaceManager:
             subprocess.run(["git", "-C", str(worktree), "add", "-A"], env=env,
                            check=True, capture_output=True, **hidden())
             tree = subprocess.run(["git", "-C", str(worktree), "write-tree"], env=env,
-                                  text=True, check=True, capture_output=True,
+                                  text=True, encoding="utf-8",
+                                  errors="replace", check=True,
+                                  capture_output=True,
                                   **hidden()).stdout.strip()
             text = subprocess.run(["git", "-C", str(worktree), "diff", "--cached", "--binary", "HEAD"],
-                                  env=env, text=True, check=True, capture_output=True,
-                                  **hidden()).stdout
+                                  env=env, text=True, encoding="utf-8",
+                                  errors="replace", check=True,
+                                  capture_output=True, **hidden()).stdout
             raw_status = subprocess.run(
                 ["git", "-C", str(worktree), "diff", "--cached", "--name-status", "HEAD"],
-                env=env, text=True, check=True, capture_output=True, **hidden()).stdout
+                env=env, text=True, encoding="utf-8", errors="replace",
+                check=True, capture_output=True, **hidden()).stdout
             statuses = []
             names = []
             for line in raw_status.splitlines():

@@ -56,6 +56,8 @@ def repository_root(path: Path) -> Path | None:
         ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if completed.returncode:
@@ -571,6 +573,8 @@ def _run_windows_picker(script: str, kind: str) -> Path | None:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
     except OSError as exc:

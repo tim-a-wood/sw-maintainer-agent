@@ -530,7 +530,9 @@ def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
     branch = "main"
     for argv in (["git", "-C", str(repository), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
                  ["git", "-C", str(repository), "branch", "--show-current"]):
-        result = subprocess.run(argv, text=True, capture_output=True, check=False)
+        result = subprocess.run(argv, text=True, encoding="utf-8",
+                                errors="replace", capture_output=True,
+                                check=False)
         if result.returncode == 0 and result.stdout.strip():
             branch = result.stdout.strip().removeprefix("origin/")
             break

@@ -62,6 +62,8 @@ class CommandProvider(Provider):
                 executable=plan.executable,
                 input=json.dumps(asdict(request)),
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=self.timeout_seconds,
                 shell=False,

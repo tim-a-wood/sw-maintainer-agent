@@ -47,7 +47,8 @@ class CodexProvider(Provider):
             if self.model:
                 command += ["--model", self.model]
             command.append(prompt)
-            result = subprocess.run(command, text=True, capture_output=True,
+            result = subprocess.run(command, text=True, encoding="utf-8",
+                                    errors="replace", capture_output=True,
                                     timeout=self.timeout_seconds, check=False)
             if result.returncode or not output.is_file():
                 raise ProviderError(f"Codex failed: {(result.stderr or result.stdout)[-600:]}")
@@ -73,7 +74,8 @@ class CodexProvider(Provider):
                 command += ["--model", self.model]
             command.append(prompt)
             try:
-                result = subprocess.run(command, text=True, capture_output=True,
+                result = subprocess.run(command, text=True, encoding="utf-8",
+                                    errors="replace", capture_output=True,
                                         timeout=self.timeout_seconds, check=False)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise ProviderError(f"Codex implementation stopped: {exc}") from exc
@@ -116,7 +118,8 @@ class CodexProvider(Provider):
             command = [self.executable, "exec", "--ephemeral", "--skip-git-repo-check",
                        "--sandbox", "read-only", "--color", "never",
                        "--cd", str(working_directory), "--output-last-message", str(output), prompt]
-            result = subprocess.run(command, text=True, capture_output=True,
+            result = subprocess.run(command, text=True, encoding="utf-8",
+                                    errors="replace", capture_output=True,
                                     timeout=self.timeout_seconds, check=False)
             if result.returncode or not output.is_file():
                 raise ProviderError("Codex schema repair failed.")
