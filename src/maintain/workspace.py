@@ -199,8 +199,11 @@ class WorkspaceManager:
     def _git_apply(worktree: Path, patch: str, *flags: str):
         # The patch feeds the pipe as bytes: Windows text mode would
         # turn \n into \r\n and git apply would refuse every hunk.
+        # --ignore-whitespace lets an LF patch land in the CRLF
+        # worktrees that Windows checkouts produce.
         return subprocess.run(
-            ["git", "-C", str(worktree), "apply", *flags, "-"],
+            ["git", "-C", str(worktree), "apply", "--ignore-whitespace",
+             *flags, "-"],
             input=patch.encode("utf-8"), capture_output=True,
             check=False, **hidden())
 

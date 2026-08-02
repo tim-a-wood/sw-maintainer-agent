@@ -36,7 +36,8 @@ def _repository(tmp_path: Path) -> Path:
     _git(repository, "config", "user.name", "Maintain Test")
     _git(repository, "config", "user.email", "maintain@example.invalid")
     _git(repository, "config", "core.autocrlf", "false")
-    (repository / "app.py").write_text('VALUE = "before"\n', encoding="utf-8")
+    (repository / "app.py").write_text('VALUE = "before"\n', encoding="utf-8",
+                                    newline="\n")
     _git(repository, "add", "app.py")
     _git(repository, "commit", "-m", "initial")
     return repository

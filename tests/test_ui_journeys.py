@@ -296,7 +296,7 @@ def test_repair_failed_checks_stop_continue_and_discard(
     window._open_settings_page("checks")
     window.page_checks._add_row(
         "flag", f'{sys.executable} -c "import sys, pathlib; '
-                f"sys.exit(0 if pathlib.Path('{flag}').exists() else 1)\"")
+                f"sys.exit(0 if pathlib.Path('{flag.as_posix()}').exists() else 1)\"")
     window.page_checks._save()
     assert any(name == "flag" for name, _ in window.store.checks())
 
@@ -553,7 +553,7 @@ def test_rescope_from_plan_findings_and_failed_checks(
     window._open_settings_page("checks")
     window.page_checks._add_row(
         "flag", f'{sys.executable} -c "import sys, pathlib; '
-                f"sys.exit(0 if pathlib.Path('{flag}').exists() else 1)\"")
+                f"sys.exit(0 if pathlib.Path('{flag.as_posix()}').exists() else 1)\"")
     window.page_checks._save()
 
     window.home.new_change.emit("feature")
@@ -770,7 +770,18 @@ def test_include_code_ships_the_project_in_the_first_packet(
 
 def test_explain_include_code_needs_no_manual_files(
         qt_app, tmp_path, monkeypatch):
+    from maintain.repository_memory import load_ui_settings, save_ui_settings
+
     window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    # A present render command keeps the install offer out of the way
+    # on machines without Manim (the Windows runner, for one).
+    probe = tmp_path / ("manim-probe.cmd" if os.name == "nt"
+                       else "manim-probe")
+    probe.write_text("@echo off\r\n" if os.name == "nt" else "#!/bin/sh\n",
+                     encoding="utf-8")
+    values = load_ui_settings()
+    values["manim_command"] = str(probe)
+    save_ui_settings(values)
     window.show_explain()
     window.explain.goal_edit.setPlainText("Explain the module layout.")
     # Without files and without the choice, start refuses.
