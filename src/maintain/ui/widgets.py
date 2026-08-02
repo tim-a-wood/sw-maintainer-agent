@@ -808,6 +808,12 @@ class ToastStack(QWidget):
         row.setContentsMargins(14, 8, 14, 8)
         text_label = QLabel(message)
         text_label.setObjectName("ToastText")
+        # Mirror the QLabel#ToastText style in the widget font, so the
+        # size math in reposition() measures what actually renders.
+        font = text_label.font()
+        font.setPixelSize(13)
+        font.setWeight(QFont.Weight.DemiBold)
+        text_label.setFont(font)
         text_label.setWordWrap(True)
         row.addWidget(text_label)
         self.column.addWidget(chip, 0, Qt.AlignmentFlag.AlignHCenter)
@@ -826,7 +832,10 @@ class ToastStack(QWidget):
         return len(self._chips())
 
     def _remove(self, chip: QFrame | None) -> None:
-        if chip is not None and chip.parent() is not None:
+        # The eviction in push() can delete a chip before its own
+        # dismissal timer fires; a dead C++ object must stay untouched.
+        from shiboken6 import isValid
+        if chip is not None and isValid(chip) and chip.parent() is not None:
             chip.setParent(None)
             chip.deleteLater()
         self.reposition()
@@ -836,7 +845,25 @@ class ToastStack(QWidget):
         if parent is None:
             return
         width = min(440, parent.width() - 40)
-        height = self.sizeHint().height()
+        # Height must follow the chosen width: a wrapped message needs
+        # more room than the natural-width hint, or its last line
+        # clips. Layout hints lag the wrap, so measure the text.
+        chips = self._chips()
+        height = max(0, len(chips) - 1) * self.column.spacing()
+        for chip in chips:
+            label = chip.findChild(QLabel)
+            if label is None:
+                continue
+            label.ensurePolished()   # the styled font, not the default
+            metrics = label.fontMetrics()
+            flags = int(Qt.TextFlag.TextWordWrap)
+            natural = max(metrics.horizontalAdvance(label.text()),
+                          metrics.boundingRect(label.text()).width()) + 6
+            chip_width = min(natural + 28, width)
+            rect = metrics.boundingRect(
+                QRect(0, 0, chip_width - 28, 1000), flags, label.text())
+            chip.setFixedSize(chip_width, rect.height() + 16)
+            height += chip.height()
         self.setGeometry((parent.width() - width) // 2,
                          max(0, parent.height() - height - 56),
                          width, height)

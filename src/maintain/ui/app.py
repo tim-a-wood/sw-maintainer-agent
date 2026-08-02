@@ -878,7 +878,6 @@ class MainWindow(QMainWindow):
         self.stage_header.setVisible(False)
         self._set_run_footer(True, exchange.request.run_id)
         self.foot_history.setVisible(False)
-        self.foot_label.setText(exchange.request.run_id)
         self.exchange.show_handoff(handoff, [],
                                    documents_count(self.store, exchange.kind),
                                    scan=exchange.kind == "scan")
@@ -912,7 +911,8 @@ class MainWindow(QMainWindow):
             dropped = len(candidates) - len(fresh)
             if not fresh:
                 self._end_side()
-                self.toast(text("scan.check.known", count=dropped)
+                self.toast(text("scan.check.known.one") if dropped == 1
+                           else text("scan.check.known", count=dropped)
                            if dropped else text("scan.added", count=0))
                 self.show_issues()
                 return
@@ -946,7 +946,8 @@ class MainWindow(QMainWindow):
         result = self.controller.issues.capture(
             chosen, source="scan", run_id=side.get("run_id", ""))
         self._end_side()
-        self.toast(text("scan.added", count=len(result.touched)))
+        self.toast(text("scan.added.one") if len(result.touched) == 1
+                   else text("scan.added", count=len(result.touched)))
         self.show_issues()
 
     def _scan_discard(self) -> None:
@@ -1255,9 +1256,15 @@ class MainWindow(QMainWindow):
     def _set_run_footer(self, active: bool, run_id: str = "") -> None:
         self.foot_history.setVisible(active)
         self.foot_stop.setVisible(active)
+        side = self._side is not None
         self.foot_label.setText(
-            text("app.footer", run=run_id) if active and run_id
+            text("app.footer.side") if active and run_id and side
+            else text("app.footer") if active and run_id
             else "Maintain")
+        tip = ""
+        if active and run_id:
+            tip = run_id if side else text("app.footer.tip", run=run_id)
+        self.foot_label.setToolTip(tip)
         # FR-N2: the open workflow heads its screens with the run's
         # name; a click edits it. Side flows have no record and no name.
         name = self._run_name_on_disk(run_id) if active and run_id else None
@@ -1301,7 +1308,8 @@ class MainWindow(QMainWindow):
         known = {Path(item).resolve() for item in attachments}
         fresh = [item for item in code if item.resolve() not in known]
         if fresh:
-            self.toast(text("code.added", count=len(fresh)))
+            self.toast(text("code.added.one") if len(fresh) == 1
+                       else text("code.added", count=len(fresh)))
         return [*attachments, *fresh]
 
     def _start_run(self, mode: str, request: str, attachments: list) -> None:
@@ -1498,7 +1506,6 @@ class MainWindow(QMainWindow):
         self._side.update({"exchange": exchange, "handoff": handoff})
         self.current_handoff = handoff
         self.exchange.handoff = handoff
-        self.foot_label.setText(request.run_id)
         self.exchange.update_packet(handoff.zip_path, self._packet_names(),
                                     documents_count(self.store, "scan"))
         self.toast(text("send.updated"))
@@ -1595,7 +1602,8 @@ class MainWindow(QMainWindow):
             self.controller.set_run_name(record.run_id, pending[1])
             record.name = pending[1]
             self._rename_pending = None
-        if getattr(self, "_name_after_stop", False):
+        own_stop = bool(getattr(self, "_name_after_stop", False))
+        if own_stop:
             self._name_after_stop = False
             # FR-N1: named work stays named without a question; only an
             # unnamed run asks. The engine wrote its final state before
@@ -1624,7 +1632,7 @@ class MainWindow(QMainWindow):
             self.exchange.reply_open = False
             delivered = sum(1 for item in self.controller.runs()
                             if item.state == "delivered")
-            iterations = len(self.controller.timeline(record.run_id))
+            iterations = self._build_rounds(record.run_id)
             self.done.show_record(
                 record, files=self.controller.changed_files(record),
                 checks=len(record.evidence.get("tests", {})
@@ -1641,10 +1649,20 @@ class MainWindow(QMainWindow):
             self.toast(text("discard.done"))
             self.show_home()
         elif state is RunState.NEEDS_HUMAN:
-            self.toast(record.error or text("paused.body"))
+            # Your own stop is not an error; the engine's third-person
+            # halt text ("The person stopped…") stays out of the toast.
+            self.toast(text("paused.body") if own_stop
+                       else (record.error or text("paused.body")))
             self.show_home()
         else:
             self.show_home()
+
+    def _build_rounds(self, run_id: str) -> int:
+        """What a person counts as iterations: one per applied build.
+        The raw timeline also logs the plan, the review, and the save."""
+        rounds = sum(1 for item in self.controller.timeline(run_id)
+                     if item.kind == "build_applied")
+        return max(rounds, 1)
 
     def _change_note(self, record: RunRecord,
                      iterations: int | None = None) -> str:
@@ -1652,12 +1670,12 @@ class MainWindow(QMainWindow):
         files = self.controller.changed_files(record)
         checks = len(record.evidence.get("tests", {}).get("commands", []))
         if iterations is None:
-            iterations = len(self.controller.timeline(record.run_id))
+            iterations = self._build_rounds(record.run_id)
         request = " ".join(record.request.split())
         return (
             f"Saved: {request}\n"
             f"Files ({len(files)}): {', '.join(files)}\n"
-            f"Checks passed: {checks} · {iterations} iterations · "
+            f"Checks passed: {checks} · Build rounds: {iterations} · "
             f"{self._run_duration(record)}\n"
             f"Branch: {record.branch}\n")
 

@@ -1144,3 +1144,37 @@ Two copy gaps closed at the same time: the fault-screen cards show
 the group label beside the file, previewing the offer a pick will
 make, and the tracker's filter placeholder names group among its
 fields.
+
+### 14.34 End-to-end walkthrough: nine faults from one user's day
+
+One sitting drove the whole app as a user would — first launch, a
+feature change delivered end to end, a stop and a named continue,
+the tracker, a scan, explain, projects, both themes — reading every
+screen and every toast. Nine faults fell out; all are fixed.
+
+- A third toast within the show window crashed the dismissal timer:
+  the eviction in push() had already deleted the chip, and touching
+  the dead object raised. The timer now checks the object is alive.
+- A wrapped toast clipped its last line. The overlay sized itself
+  from natural-width hints, so a message that wrapped at the capped
+  width got a one-line chip. The overlay now measures each message
+  in its real font at the real width and sizes every chip exactly.
+- The foot bar cut its run line mid-word ("isolated worksp"). The
+  run id was noise there anyway — runs carry names now — so the foot
+  says "Isolated workspace" with the id in the tooltip, and a scan
+  or discuss says "Read-only exchange" instead of a raw exchange id.
+- The done screen counted raw timeline events as "7 iterations" for
+  a straight-through run. It now counts applied builds — "1 build
+  round" — and the paste-ready change note says the same.
+- Stopping your own run toasted the engine's third-person halt text
+  ("The person stopped the exchange…"). Your own stop now speaks in
+  the app's voice: "Continue the run from the home screen."
+- Four count strings broke at one: "Added 1 issues.", "+1 more
+  issues…", "1 known issues", "Added 1 code files". Each has a
+  singular form now.
+- The issue detail screen never showed the scan group; it now joins
+  the location line ("src/parse.py:88 · parser bounds").
+
+The projects list looking empty mid-session turned out to be the
+test driver skipping the launcher (which records every opened
+project) — not a product fault. Verified, not fixed.

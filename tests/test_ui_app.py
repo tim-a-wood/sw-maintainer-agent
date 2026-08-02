@@ -245,7 +245,9 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     assert "maintain/" in window.done.branch.text()
     assert "1 file changed" in window.done.stat_files.text()
     assert "app.py" in window.done.file_names.text()
-    assert "iterations" in window.done.stat_line.text()
+    # The count is applied builds, not raw timeline events (start,
+    # plan, review… would triple the number).
+    assert "build round" in window.done.stat_line.text()
     window.done._copy_merge()
     assert QApplication.clipboard().text().startswith("git merge --no-ff ")
     assert window.done.first_note.isVisibleTo(window.done)

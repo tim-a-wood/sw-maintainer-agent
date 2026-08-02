@@ -384,7 +384,9 @@ class DescribeScreen(Screen):
             self._issue_checks.append((mark, issue.id))
         hidden = len(issues) - self.VISIBLE_ISSUES
         self._issues_more.setText(
-            text("describe.issues.more", count=hidden) if hidden > 0 else "")
+            text("describe.issues.more.one") if hidden == 1
+            else text("describe.issues.more", count=hidden)
+            if hidden > 0 else "")
         self._issues_more.setVisible(show and hidden > 0)
         self.repair_together.setVisible(False)
         self._issues_head.setVisible(show)
@@ -1118,9 +1120,11 @@ class DoneScreen(Screen):
         self.file_names.setVisible(bool(shown))
         checks_text = (text("done.checks.one") if checks == 1
                        else text("done.checks", count=checks))
-        self.stat_line.setText(
-            f"{checks_text} · "
-            + text("done.steps", count=iterations, time=duration))
+        steps_text = (text("done.steps.one", time=duration)
+                      if iterations == 1
+                      else text("done.steps", count=iterations,
+                                time=duration))
+        self.stat_line.setText(f"{checks_text} · {steps_text}")
 
     def _copy_merge(self) -> None:
         if self._branch:
@@ -1580,6 +1584,8 @@ class IssueDetailScreen(Screen):
         {"high": self.radio_high, "medium": self.radio_medium,
          "low": self.radio_low}[severity].setChecked(True)
         place = (f"{issue.file}:{issue.line}" if existing and issue.file else "")
+        if existing and issue.group:
+            place = f"{place} · {issue.group}" if place else issue.group
         self.location.setText(
             f"{text('issue.location')}: {place}" if place else "")
         self.location.setVisible(bool(place))
@@ -1650,8 +1656,9 @@ class ScanCheckScreen(Screen):
             text("scan.check.title.one") if len(candidates) == 1
             else text("scan.check.title.many", count=len(candidates)))
         self.known.setText(
-            text("scan.check.known", count=known_dropped) if known_dropped
-            else "")
+            text("scan.check.known.one") if known_dropped == 1
+            else text("scan.check.known", count=known_dropped)
+            if known_dropped else "")
         self.known.setVisible(bool(known_dropped))
         self.message.set_state("plain", "")
         self.clear_layout(self._rows)
