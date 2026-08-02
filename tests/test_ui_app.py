@@ -612,24 +612,20 @@ def test_scan_flow_gate_dedup_and_accept(qt_app, tmp_path, monkeypatch):
     assert any("1" in item for item in toasts)
 
 
-def test_talk_flow_thread_reply_and_restart(qt_app, tmp_path, monkeypatch):
-    """FR-B1..B4: the whole-project discussion loop from the home card."""
-    from maintain.issue_packets import load_talk_transcript
-
+def test_talk_flow_routes_each_outcome(qt_app, tmp_path, monkeypatch):
+    """FR-B1..B4: one packet out, the talk happens in Copilot, and the
+    closing envelope routes to the tracker, a run request, or nothing."""
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)
     window = MainWindow(config)
-    window.ask_confirm = lambda *args, **kwargs: True
     issue = window.controller.issues.add(
         title="The bound is wrong", group="value handling")
 
+    # The compose screen builds one packet with the code and the issues.
     window.home.open_talk.emit()
     assert _screen(window) == "talk"
-    assert window.talk.empty.isVisibleTo(window.talk)
-
-    # The first message builds a packet with the code and the issues.
-    window.talk.edit.setPlainText("What should we refactor first?")
-    window.talk._send()
+    window.talk.edit.setPlainText("The value handling group.")
+    window.talk.start.emit(window.talk.edit.toPlainText().strip())
     assert _screen(window) == "exchange"
     request = window._side["exchange"].request
     assert request.role == "talk"
@@ -638,30 +634,54 @@ def test_talk_flow_thread_reply_and_restart(qt_app, tmp_path, monkeypatch):
     assert any(item["path"] == "app.py"
                for item in request.payload["candidate_files"])
 
-    reply = _side_envelope(window, {
-        "reply": "Start with the value handling group."})
-    window.exchange.check(clipboard_text=reply)
-    assert _screen(window) == "talk"
-    entries = load_talk_transcript(window.store.config)
-    assert [entry["author"] for entry in entries] == ["you", "copilot"]
+    # Outcome 1: issues — through the same accept gate as a scan,
+    # recorded with the discussion source.
+    window.exchange.check(clipboard_text=_side_envelope(window, {
+        "outcome": "issues", "issues": [
+            {"title": "The value is wrong", "severity": "high",
+             "file": "app.py", "line": 1, "snippet": 'VALUE = "before"',
+             "detail": "The value must be after."}]}))
+    assert _screen(window) == "scan-check"
+    window._scan_accept([0])
+    raised = [item for item in window.controller.issues.load()
+              if item.source == "talk"]
+    assert len(raised) == 1 and raised[0].title == "The value is wrong"
+
+    # Outcome 2: a repair request lands in the fault description with
+    # the named issue linked; nothing starts without the person.
+    window._talk_start("")
+    window.exchange.check(clipboard_text=_side_envelope(window, {
+        "outcome": "repair", "request": "Correct the bound in app.py.",
+        "issue_ids": [issue.id]}))
+    assert _screen(window) == "describe"
+    assert window.describe.mode == "issue"
+    assert window.describe.request_edit.toPlainText() == (
+        "Correct the bound in app.py.")
+    assert window._pending_issue_links == [issue.id]
     assert window._side is None
 
-    # The next round carries the conversation so far.
-    window.talk.edit.setPlainText("Go deeper on that group.")
-    window.talk._send()
-    request = window._side["exchange"].request
-    assert len(request.payload["conversation"]) == 2
+    # Outcome 3: a feature request lands in the change description.
+    window._talk_start("")
+    window.exchange.check(clipboard_text=_side_envelope(window, {
+        "outcome": "feature", "request": "Add an export command."}))
+    assert _screen(window) == "describe"
+    assert window.describe.mode == "feature"
+    assert window.describe.request_edit.toPlainText() == (
+        "Add an export command.")
 
-    # Stop discards the round but keeps the settled thread.
+    # Outcome 4: no request — home, nothing recorded.
+    window._talk_start("")
+    count_before = len(window.controller.issues.load())
+    window.exchange.check(clipboard_text=_side_envelope(window, {
+        "outcome": "none"}))
+    assert _screen(window) == "home"
+    assert len(window.controller.issues.load()) == count_before
+
+    # Stop mid-exchange discards the round back to the compose screen.
+    window._talk_start("")
     window._stop_run()
     assert _screen(window) == "talk"
     assert window._side is None
-    assert len(load_talk_transcript(window.store.config)) == 3
-
-    # Restart asks, then clears the thread.
-    window._talk_restart()
-    assert load_talk_transcript(window.store.config) == []
-    assert window.talk.empty.isVisibleTo(window.talk)
 
 
 def test_discuss_flow_notes_and_severity_confirm(qt_app, tmp_path, monkeypatch):

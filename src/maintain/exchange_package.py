@@ -195,9 +195,16 @@ def _task_markdown(
             "`low`) when the evidence justifies a change. Do not return code changes."
         ),
         "talk": (
-            "Return `content.reply` as plain text that answers the person's message about "
-            "the project, grounded in the supplied code, the open issues, and the "
-            "conversation so far. Do not return code changes."
+            "Hold the discussion in the chat; produce the output file only when the person "
+            "ends the discussion or asks for the outcome. The envelope's `content.outcome` "
+            "must be `issues`, `repair`, `feature`, or `none`. With `issues`, add "
+            "`content.issues` exactly as in a scan (`title`, `severity`, `file`, `line`, "
+            "`snippet` quoted verbatim from the supplied code, ASD-STE100 `detail` for a "
+            "codebase newcomer, optional shared `group`). With `repair`, add "
+            "`content.request` (the exact fix, in plain words) and `content.issue_ids` for "
+            "any targeted ids from `payload.open_issues`. With `feature`, add "
+            "`content.request` (the exact change, addition, or removal). Do not return "
+            "code changes."
         ),
         "explain": (
             "The scene file must import from `manim` only and contain exactly one `Scene` "
@@ -250,7 +257,9 @@ def _task_markdown(
             "reply": "The grounded answer to the question.",
         },
         "talk": {
-            "reply": "The grounded answer to the message.",
+            "outcome": "repair",
+            "request": "The exact fix to make, in plain words.",
+            "issue_ids": ["id-from-open-issues"],
         },
     }
     if request.role == "implement" and request.payload.get("mode") == "issue":

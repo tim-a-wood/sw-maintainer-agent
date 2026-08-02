@@ -26,13 +26,12 @@ from maintain.explain_store import (DISCARDED as EXPLAIN_DISCARDED,
                                     is_stale, load_explain_states,
                                     restore_request, resumable_explain,
                                     save_explain_state)
-from maintain.issue_packets import (SideExchange, append_talk_entry,
-                                    build_side_packet, clear_talk_transcript,
+from maintain.issue_packets import (SideExchange, build_side_packet,
                                     discuss_reply, discuss_request,
                                     explain_dir, explain_request,
-                                    load_scan_coverage, load_talk_transcript,
-                                    save_scan_coverage, scan_candidates,
-                                    scan_request, side_packet_dir,
+                                    load_scan_coverage, save_scan_coverage,
+                                    scan_candidates, scan_request,
+                                    side_packet_dir, talk_outcome,
                                     talk_request)
 from maintain.issues import (CLOSED, IssueCandidate, display_order,
                              related_open_issues)
@@ -339,8 +338,7 @@ class MainWindow(QMainWindow):
         self.home.continue_run.connect(self._continue_run)
         self.home.continue_explain.connect(self._resume_explain)
 
-        self.talk.send.connect(self._talk_send)
-        self.talk.restart.connect(self._talk_restart)
+        self.talk.start.connect(self._talk_start)
         self.talk.back.connect(self.show_home)
 
         self.issues_list.open_issue.connect(self._open_issue)
@@ -933,6 +931,9 @@ class MainWindow(QMainWindow):
             if exchange.kind == "scan":
                 candidates = scan_candidates(response.content,
                                              self.store.config.repository)
+            elif exchange.kind == "talk":
+                outcome = talk_outcome(response.content,
+                                       self.store.config.repository)
             else:
                 parsed = discuss_reply(response.content)
         except MaintainError as exc:
@@ -968,10 +969,7 @@ class MainWindow(QMainWindow):
             self.show_screen("scan-check")
             return
         if exchange.kind == "talk":
-            append_talk_entry(self.store.config, "copilot", parsed.reply)
-            self._end_side()
-            self.toast(text("talk.applied"))
-            self.show_talk()
+            self._talk_outcome(outcome)
             return
         issue_id = exchange.issue_id
         store = self.controller.issues
@@ -996,7 +994,8 @@ class MainWindow(QMainWindow):
         chosen = [candidates[index] for index in indexes
                   if 0 <= index < len(candidates)]
         result = self.controller.issues.capture(
-            chosen, source="scan", run_id=side.get("run_id", ""))
+            chosen, source=side.get("capture_source", "scan"),
+            run_id=side.get("run_id", ""))
         self._end_side()
         self.toast(text("scan.added.one") if len(result.touched) == 1
                    else text("scan.added", count=len(result.touched)))
@@ -1007,26 +1006,20 @@ class MainWindow(QMainWindow):
         self.toast(text("scan.discarded"))
         self.show_issues()
 
-    # ----- project discussion (run-less packet loop) -----
+    # ----- project discussion (packet out, the talk happens in Copilot) -----
 
     def show_talk(self) -> None:
-        self.talk.show_thread(load_talk_transcript(self.store.config))
         self.show_screen("talk")
 
-    def _talk_send(self, message: str) -> None:
+    def _talk_start(self, topic: str) -> None:
         if self.controller.busy:
             self.toast(text("issues.busy"))
             return
         config = self.store.config
-        # The packet separates the new message (payload.request) from
-        # the discussion before it (payload.conversation).
-        prior = load_talk_transcript(config)
-        append_talk_entry(config, "you", message)
-        self.talk.show_thread(load_talk_transcript(config))
         issues = self.controller.issues.load()
         try:
             with busy_pointer():
-                request = talk_request(config, message, prior, issues)
+                request = talk_request(config, topic, issues)
                 exchange = SideExchange(
                     kind="talk", request=request,
                     directory=side_packet_dir(config, request.run_id))
@@ -1036,15 +1029,46 @@ class MainWindow(QMainWindow):
             return
         self._show_side(exchange, packet)
 
-    def _talk_restart(self) -> None:
-        if not load_talk_transcript(self.store.config):
+    def _talk_outcome(self, outcome) -> None:
+        """Route what the external discussion ended with."""
+        side = self._side
+        if outcome.outcome == "issues":
+            known = self.controller.issues.known_fingerprints()
+            fresh = [item for item in outcome.issues
+                     if item.fingerprint not in known]
+            dropped = len(outcome.issues) - len(fresh)
+            if not fresh:
+                self._end_side()
+                self.toast(text("scan.check.known.one") if dropped == 1
+                           else text("scan.check.known", count=dropped)
+                           if dropped else text("scan.added", count=0))
+                self.show_issues()
+                return
+            side["candidates"] = fresh
+            side["run_id"] = side["exchange"].request.run_id
+            side["capture_source"] = "talk"
+            self.scan_check.show_candidates(fresh, dropped)
+            self.show_screen("scan-check")
             return
-        if not self.ask_confirm(text("talk.restart.title"),
-                                text("talk.restart.body"),
-                                text("talk.restart.yes"), text("stop.no")):
+        self._end_side()
+        if outcome.outcome == "none":
+            self.toast(text("talk.none"))
+            self.show_home()
             return
-        clear_talk_transcript(self.store.config)
-        self.show_talk()
+        # A repair or feature request lands in the describe screen for
+        # review; nothing starts without the person.
+        self._new_change("issue" if outcome.outcome == "repair"
+                         else "feature")
+        self.describe.request_edit.setPlainText(outcome.request)
+        if outcome.outcome == "repair" and outcome.issue_ids:
+            linked = []
+            for issue_id in outcome.issue_ids:
+                try:
+                    linked.append(self.controller.issues.get(issue_id).id)
+                except MaintainError:
+                    self.toast(text("talk.issues.unknown"))
+            self._pending_issue_links = linked
+        self.toast(text("talk.request.applied"))
 
     # ----- explain (run-less packet loop with a local render) -----
 

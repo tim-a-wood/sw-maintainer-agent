@@ -551,11 +551,10 @@ def test_scan_and_talk_instructions_demand_readable_issue_wording():
     assert "does not know this codebase" in TALK_INSTRUCTIONS
 
 
-def test_talk_request_carries_code_issues_and_conversation(tmp_path):
-    """FR-B2: one packet holds the code, the open issues, and the talk."""
-    from maintain.issue_packets import (append_talk_entry,
-                                        clear_talk_transcript,
-                                        load_talk_transcript, talk_request)
+def test_talk_request_carries_code_and_issues(tmp_path):
+    """FR-B2: one handover packet holds the code and the open issues;
+    the conversation itself happens in Copilot."""
+    from maintain.issue_packets import talk_request
 
     repository = _repository(tmp_path)
     (repository / "quiet_module.py").write_text(
@@ -567,15 +566,11 @@ def test_talk_request_carries_code_issues_and_conversation(tmp_path):
     closed = store.add(title="Old point", file="app.py")
     store.close(closed.id, REASON_FIXED)
 
-    append_talk_entry(config, "you", "What should we refactor first?")
-    append_talk_entry(config, "copilot", "The value handling group.")
-    transcript = load_talk_transcript(config)
-    assert [entry["author"] for entry in transcript] == ["you", "copilot"]
-
-    request = talk_request(config, "Discuss the value handling group.",
-                           transcript, store.load())
+    request = talk_request(config, "The value handling group.",
+                           store.load())
     assert request.role == "talk" and request.run_id.startswith("talk-")
-    assert request.payload["conversation"][0]["text"].startswith("What")
+    assert request.payload["request"] == "The value handling group."
+    assert "conversation" not in request.payload
     listed = {item["id"] for item in request.payload["open_issues"]}
     assert listed == {open_issue.id}
     assert request.payload["open_issues"][0]["group"] == "value handling"
@@ -589,5 +584,37 @@ def test_talk_request_carries_code_issues_and_conversation(tmp_path):
     # A talk shares the discuss packet policy and documents.
     assert packet.task_key == "discuss"
 
-    clear_talk_transcript(config)
-    assert load_talk_transcript(config) == []
+
+def test_talk_outcome_validates_the_closing_envelope(tmp_path):
+    """FR-B3: the discussion ends with issues, a repair request, a
+    feature request, or nothing — validated before anything routes."""
+    from maintain.issue_packets import talk_outcome
+
+    repository = _repository(tmp_path)
+
+    raised = talk_outcome({"outcome": "issues", "issues": [
+        {"title": "The value is wrong", "severity": "high", "file": "app.py",
+         "line": 1, "snippet": 'VALUE = "before"',
+         "detail": "The value must be after."}]}, repository)
+    assert raised.outcome == "issues"
+    assert raised.issues[0].verified is True
+
+    repair = talk_outcome({"outcome": "repair",
+                           "request": "Correct the bound in app.py.",
+                           "issue_ids": ["ab12cd", "  ", 7]}, repository)
+    assert repair.outcome == "repair"
+    assert repair.request.startswith("Correct")
+    assert repair.issue_ids == ("ab12cd", "7")
+
+    feature = talk_outcome({"outcome": "Feature",
+                            "request": "Add an export command."}, repository)
+    assert feature.outcome == "feature" and feature.issue_ids == ()
+
+    assert talk_outcome({"outcome": "none"}, repository).outcome == "none"
+
+    with pytest.raises(ProviderError):
+        talk_outcome({"outcome": "verdict"}, repository)
+    with pytest.raises(ProviderError):
+        talk_outcome({"outcome": "repair", "request": "  "}, repository)
+    with pytest.raises(ProviderError):
+        talk_outcome({"outcome": "issues", "issues": []}, repository)

@@ -58,20 +58,29 @@ DISCUSS_INSTRUCTIONS = (
 )
 
 TALK_INSTRUCTIONS = (
-    "Obey the project ground rules in GLOBAL.md. This is a working "
-    "discussion about the whole project. payload.request holds the "
-    "person's message. payload.conversation holds the discussion before "
-    "this message, oldest first. payload.open_issues lists the project's "
-    "open issues with their groups. The supplied files are the project "
-    "code, and "
-    "payload.repository_map indexes every project file. Answer the "
-    "message; brainstorming, weighing options, and discussing a whole "
-    "group of issues are all in scope. Ground every claim in the supplied "
-    "code and issues; when a needed file is not supplied, name it instead "
-    "of guessing. Write short plain sentences for a reader who does not "
-    "know this codebase; when you use a name from the code, say in a few "
-    "words what it is. Return content.reply as plain text. Do not return "
-    "code changes; a repair task does that. Do not use internet tools."
+    "Obey the project ground rules in GLOBAL.md. This package starts a "
+    "working discussion about the whole project. payload.request names "
+    "the subject when the person gave one. payload.open_issues lists the "
+    "project's open issues with their groups. The supplied files are the "
+    "project code, and payload.repository_map indexes every project "
+    "file. Hold the discussion in the chat: answer, brainstorm, weigh "
+    "options, and discuss whole groups of issues. Ground every claim in "
+    "the supplied code and issues; when a needed file is not supplied, "
+    "name it instead of guessing. Write short plain sentences for a "
+    "reader who does not know this codebase; when you use a name from "
+    "the code, say in a few words what it is. Do not produce the output "
+    "file during the discussion. When the person ends the discussion or "
+    "asks for the outcome, return one envelope whose content.outcome is "
+    "issues, repair, feature, or none. For issues, add content.issues "
+    "as in a scan: each issue needs title, severity (high, medium, or "
+    "low), file, line, snippet quoted verbatim from the supplied code, "
+    "detail in ASD-STE100 for a codebase newcomer, and an optional "
+    "shared group label. For repair, add content.request as the exact "
+    "fix to make in plain words, and content.issue_ids with ids from "
+    "payload.open_issues when the fix targets tracked issues. For "
+    "feature, add content.request as the exact change, addition, or "
+    "removal to make. For none, add nothing. Do not return code "
+    "changes; a repair run does that. Do not use internet tools."
 )
 
 EXPLAIN_INSTRUCTIONS = (
@@ -247,57 +256,15 @@ def discuss_request(config: ProjectConfig, issue: Issue,
         })
 
 
-def talk_transcript_path(config: ProjectConfig) -> Path:
-    key = hashlib.sha256(
-        str(Path(config.repository).resolve()).encode()).hexdigest()[:16]
-    return Path(config.runtime_root).parent / "talk" / f"{key}.json"
-
-
-def load_talk_transcript(config: ProjectConfig) -> list[dict]:
-    try:
-        data = json.loads(
-            talk_transcript_path(config).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    entries = data.get("entries")
-    if not isinstance(entries, list):
-        return []
-    return [{"author": str(entry.get("author", "")),
-             "text": str(entry.get("text", "")),
-             "time": str(entry.get("time", ""))}
-            for entry in entries if isinstance(entry, dict)]
-
-
-def append_talk_entry(config: ProjectConfig, author: str, text: str) -> None:
-    entries = load_talk_transcript(config)
-    entries.append({"author": author, "text": text,
-                    "time": datetime.now().isoformat(timespec="seconds")})
-    rendered = json.dumps({"entries": entries}, ensure_ascii=False,
-                          indent=2) + "\n"
-    atomic_write(talk_transcript_path(config), rendered.encode())
-
-
-def clear_talk_transcript(config: ProjectConfig) -> None:
-    path = talk_transcript_path(config)
-    try:
-        path.unlink()
-    except OSError:
-        pass
-
-
-def talk_request(config: ProjectConfig, message: str,
-                 transcript: Sequence[dict],
+def talk_request(config: ProjectConfig, topic: str,
                  issues: Sequence[Issue]) -> ProviderRequest:
-    """A whole-project discussion round: code, issues, and the talk so far.
+    """One handover packet for a discussion held in Copilot itself.
 
     Disclosure fills the packet budget from the whole inventory, the
-    files that match the message first, so the conversation always
-    carries as much of the codebase as one packet holds."""
+    files that match the topic first, so the conversation carries as
+    much of the codebase as one packet holds."""
     selector = _selector(config)
-    disclosed = _fill_wave(_ranked_inventory(selector, message), _WAVE_BYTES)
-    conversation = [{"author": entry.get("author", ""),
-                     "text": entry.get("text", "")}
-                    for entry in list(transcript)[-24:]]
+    disclosed = _fill_wave(_ranked_inventory(selector, topic), _WAVE_BYTES)
     return ProviderRequest(
         schema_version=1,
         run_id=f"talk-{_stamp()}-{secrets.token_hex(2)}",
@@ -306,8 +273,7 @@ def talk_request(config: ProjectConfig, message: str,
         instructions=f"{PROVIDER_SAFETY_HEADER}\n\n{TALK_INSTRUCTIONS}",
         payload={
             "mode": "talk",
-            "request": message.strip(),
-            "conversation": conversation,
+            "request": topic.strip(),
             "open_issues": [
                 {"id": issue.id, "title": issue.title,
                  "severity": issue.severity, "status": issue.status,
@@ -318,6 +284,47 @@ def talk_request(config: ProjectConfig, message: str,
                 {"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
                  "content": x.content} for x in disclosed],
         })
+
+
+TALK_OUTCOMES = ("issues", "repair", "feature", "none")
+
+
+@dataclass(frozen=True)
+class TalkOutcome:
+    """What the external discussion ended with."""
+
+    outcome: str                            # one of TALK_OUTCOMES
+    request: str = ""                       # repair and feature
+    issue_ids: tuple[str, ...] = ()         # repair, optional
+    issues: tuple[IssueCandidate, ...] = ()   # issues outcome
+
+
+def talk_outcome(content: dict, repository: Path) -> TalkOutcome:
+    """Validate the discussion's closing envelope."""
+    outcome = str(content.get("outcome", "")).strip().casefold()
+    if outcome not in TALK_OUTCOMES:
+        raise ProviderError(
+            "The reply must contain content.outcome as issues, repair, "
+            "feature, or none.")
+    if outcome == "issues":
+        candidates = scan_candidates(content, repository)
+        if not candidates:
+            raise ProviderError(
+                "The issues outcome needs content.issues with at least "
+                "one issue.")
+        return TalkOutcome(outcome="issues", issues=tuple(candidates))
+    if outcome in {"repair", "feature"}:
+        request = str(content.get("request", "")).strip()
+        if not request:
+            raise ProviderError(
+                "The request outcome needs content.request as text.")
+        raw_ids = content.get("issue_ids", [])
+        issue_ids = (tuple(str(x).strip() for x in raw_ids if str(x).strip())
+                     if isinstance(raw_ids, list) and outcome == "repair"
+                     else ())
+        return TalkOutcome(outcome=outcome, request=request,
+                           issue_ids=issue_ids)
+    return TalkOutcome(outcome="none")
 
 
 def explain_request(config: ProjectConfig, files: Sequence[str], goal: str,

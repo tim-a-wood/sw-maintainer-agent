@@ -1751,10 +1751,13 @@ class ScanCheckScreen(Screen):
 
 
 class TalkScreen(Screen):
-    """The whole-project discussion: one thread, one input, one send."""
+    """Start a discussion: one packet out, the conversation in Copilot.
 
-    send = Signal(str)
-    restart = Signal()
+    The talk ends there with an outcome envelope — issues raised, a
+    repair request, a feature request, or nothing — and that reply
+    comes back through the exchange screen."""
+
+    start = Signal(str)   # topic (may be empty)
     back = Signal()
 
     def __init__(self) -> None:
@@ -1762,45 +1765,17 @@ class TalkScreen(Screen):
         self.add(label("PROJECT DISCUSSION", "Eyebrow"))
         self.add(label(text("talk.title"), "Title"))
         self.add(label(text("talk.lead"), "Lead"))
-        self._thread = QVBoxLayout()
-        self._thread.setSpacing(7)
-        thread_holder = QWidget()
-        thread_holder.setLayout(self._thread)
-        self.add(thread_holder)
-        self.empty = label(text("talk.empty"), "Hint")
-        self.add(self.empty)
+        self.add(label(text("talk.topic").upper(), "Eyebrow"))
         self.edit = QPlainTextEdit()
-        self.edit.setPlaceholderText(text("talk.placeholder"))
+        self.edit.setPlaceholderText(text("talk.topic.placeholder"))
         self.edit.setFixedHeight(76)
         self.add(self.edit)
+        self.add(label(text("talk.outcomes"), "Hint"))
+        self.add_gap(2)
         self.add_row(
-            button(text("talk.send"), "Primary", self._send),
-            button(text("talk.restart"), "Secondary", self.restart.emit),
+            button(text("talk.start"), "Primary",
+                   lambda: self.start.emit(self.edit.toPlainText().strip())),
             button(text("history.back"), "Ghost", self.back.emit))
-
-    def show_thread(self, entries: list) -> None:
-        self.clear_layout(self._thread)
-        self.empty.setVisible(not entries)
-        for entry in entries:
-            card = QFrame()
-            card.setObjectName("Card")
-            box = QVBoxLayout(card)
-            box.setContentsMargins(12, 9, 12, 9)
-            box.setSpacing(2)
-            author = text("talk.you" if entry.get("author") == "you"
-                          else "talk.copilot")
-            stamp = str(entry.get("time", ""))[:16].replace("T", " ")
-            box.addWidget(label(f"{author} · {stamp}" if stamp else author,
-                                "Hint"))
-            box.addWidget(label(str(entry.get("text", ""))))
-            self._thread.addWidget(card)
-
-    def _send(self) -> None:
-        value = self.edit.toPlainText().strip()
-        if not value:
-            return
-        self.edit.setPlainText("")
-        self.send.emit(value)
 
 
 class ExplainScreen(Screen):

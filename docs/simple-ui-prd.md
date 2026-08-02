@@ -1368,22 +1368,31 @@ packet that was built but never carried to Copilot claims nothing.
 
 The issue-level discussion existed; what was missing was the wide
 one — brainstorm over the whole codebase, or talk through an
-entire group of issues at once. A "Discuss the project" card on
-the home screen opens one thread per project.
+entire group of issues at once. The first cut looped every reply
+back into an in-app thread, one packet per message. The person
+corrected it: the conversation belongs in Copilot. The tool's job
+is one handover packet out and one outcome in.
 
-- FR-B1. The thread persists beside the runs and survives visits
-  and restarts of the app; "Start a new discussion" clears it
-  after a labeled confirm.
-- FR-B2. Each round's packet carries the person's message, the
-  discussion before it, the open issues with their groups, the
-  repository map, and as much project code as one packet holds —
-  the files that match the message first. Asking "discuss the
-  error-handling group" therefore lands with the group's issues
-  and the code in the same packet.
-- FR-B3. The reply joins the thread and the screen returns to the
-  conversation. Stop discards only the round in flight; the
-  settled messages stay.
-- FR-B4. A talk shares the discuss packet policy and documents.
-  Replies are plain text, grounded in the supplied code and
-  issues, written for a reader who does not know the codebase —
-  and never code changes; repairs stay in repair runs.
+- FR-B1. A "Discuss the project" card on the home screen opens a
+  small compose step: an optional subject, one "Create the
+  package" button. The packet carries the open issues with their
+  groups, the repository map, and as much project code as one
+  packet holds — subject-matching files first. Naming a group of
+  issues as the subject lands its issues and its code together.
+- FR-B2. The discussion itself happens in Copilot, at any length,
+  with no round trips through the tool. The packet tells Copilot
+  to hold the talk in chat — grounded in the supplied code and
+  issues, in plain words for a codebase newcomer — and to produce
+  the output file only when the person ends the discussion or
+  asks for the outcome.
+- FR-B3. The discussion ends in exactly one of four outcomes, and
+  the closing envelope routes each one: issues raised go through
+  the same accept gate as a scan (snippet-verified, deduplicated,
+  recorded with the Discussion source); a repair request lands in
+  the fault description with any named tracker issues linked, so
+  the run that follows closes them; a feature request lands in
+  the change description; no request goes home with a word. A
+  routed request starts nothing by itself — the person reviews
+  the description and starts the run.
+- FR-B4. A talk shares the discuss packet policy and documents,
+  and never returns code changes; repairs stay in repair runs.
