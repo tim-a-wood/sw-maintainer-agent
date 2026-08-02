@@ -967,10 +967,15 @@ class StepTicker(QWidget):
         self._active.setText(DOTS_FRAMES[self._frame])
 
     def hideEvent(self, event) -> None:  # noqa: N802
-        self._timer.stop()
+        # Teardown can deliver one last hide after the Python side is
+        # cleared; a missing timer must not print a traceback.
+        timer = getattr(self, "_timer", None)
+        if timer is not None:
+            timer.stop()
         super().hideEvent(event)
 
     def showEvent(self, event) -> None:  # noqa: N802
-        if self._active is not None:
-            self._timer.start()
+        timer = getattr(self, "_timer", None)
+        if getattr(self, "_active", None) is not None and timer is not None:
+            timer.start()
         super().showEvent(event)
