@@ -1450,3 +1450,31 @@ not need it.
   the pinned tag — and starts the app again. The helper ships
   inside the package, and the Windows workflow exercises it
   end to end against the checked-out source.
+
+### 14.43 The lag: build once, reuse everywhere
+
+From the field: the project-management surfaces felt very laggy.
+Measured with a heavy fixture — 180 past runs, 60 issues, six
+projects — the causes were all one habit: rebuild everything on
+every look.
+
+- The history screen rebuilt one row widget per run on every
+  visit: 420 to 540 ms each time.
+- The tracker rebuilt every row on every visit, every tab click,
+  and every search keystroke: 120 to 200 ms per event — typing a
+  six-letter filter froze the screen six times.
+- The home screen re-read and re-parsed every run record on every
+  navigation, with two path resolutions per record.
+
+One repair pattern, three places. Run summaries now cache against
+each record file's stamp, so a home visit re-parses only changed
+records (18 ms to 2 ms warm). History and tracker rows now live in
+a cache keyed by id and pinned to the fields they render: a visit,
+a tab, or a keystroke detaches and re-attaches the same widgets,
+rebuilds only rows whose fields changed, and drops rows whose
+items vanished (history revisit 450 ms to 4 ms; tracker tab click
+155 ms to 0.7 ms). The first build of a big list still costs its
+construction once; every look after that is close to free.
+Deterministic guards pin the behavior: unchanged records return
+the same summary objects, and a filter round trip returns the
+same row widgets.

@@ -76,42 +76,68 @@ def run_phase(state: str, tasks: list) -> str:
     return _PHASES.get(state, "")
 
 
+# Parsed summaries, keyed by runtime root then run id, each pinned to
+# its record file's stamp. A home visit re-reads only changed records;
+# with hundreds of runs the difference is a screenful of file reads
+# and path resolutions on every navigation.
+_SUMMARY_CACHE: dict[str, dict[str, tuple[int, int, str, RunSummary]]] = {}
+
+
 def list_runs(runtime_root: Path, repository: Path | None = None) -> list[RunSummary]:
     """Newest-first run summaries for one repository."""
     root = Path(runtime_root).expanduser()
     if not root.is_dir():
         return []
+    cache = _SUMMARY_CACHE.setdefault(str(root), {})
+    target = str(Path(repository).resolve()) if repository is not None else None
     summaries: list[RunSummary] = []
+    seen: set[str] = set()
     for run_dir in root.iterdir():
         record_path = run_dir / "run.json"
-        if not run_dir.is_dir() or not record_path.is_file():
-            continue
         try:
-            record = json.loads(record_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            stamp = record_path.stat()
+        except OSError:
             continue
-        if repository is not None:
+        if not run_dir.is_dir():
+            continue
+        seen.add(run_dir.name)
+        cached = cache.get(run_dir.name)
+        if (cached is not None and cached[0] == stamp.st_mtime_ns
+                and cached[1] == stamp.st_size):
+            resolved_repository, summary = cached[2], cached[3]
+        else:
             try:
-                if Path(str(record.get("repository", ""))).resolve() != Path(
-                        repository).resolve():
-                    continue
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            try:
+                resolved_repository = str(
+                    Path(str(record.get("repository", ""))).resolve())
             except OSError:
                 continue
-        evidence = record.get("evidence", {})
-        changed = evidence.get("changed_files", []) if isinstance(evidence, dict) else []
-        summaries.append(RunSummary(
-            run_id=str(record.get("run_id", run_dir.name)),
-            mode=str(record.get("mode", "feature")),
-            request=str(record.get("request", "")),
-            state=str(record.get("state", "")),
-            updated_at=str(record.get("updated_at", "")),
-            created_at=str(record.get("created_at", "")),
-            repository=str(record.get("repository", "")),
-            changed_files=len(changed) if isinstance(changed, list) else 0,
-            name=str(record.get("name", "")),
-            phase=run_phase(str(record.get("state", "")),
-                            record.get("tasks") or []),
-        ))
+            evidence = record.get("evidence", {})
+            changed = (evidence.get("changed_files", [])
+                       if isinstance(evidence, dict) else [])
+            summary = RunSummary(
+                run_id=str(record.get("run_id", run_dir.name)),
+                mode=str(record.get("mode", "feature")),
+                request=str(record.get("request", "")),
+                state=str(record.get("state", "")),
+                updated_at=str(record.get("updated_at", "")),
+                created_at=str(record.get("created_at", "")),
+                repository=str(record.get("repository", "")),
+                changed_files=len(changed) if isinstance(changed, list) else 0,
+                name=str(record.get("name", "")),
+                phase=run_phase(str(record.get("state", "")),
+                                record.get("tasks") or []),
+            )
+            cache[run_dir.name] = (stamp.st_mtime_ns, stamp.st_size,
+                                   resolved_repository, summary)
+        if target is not None and resolved_repository != target:
+            continue
+        summaries.append(summary)
+    for stale in set(cache) - seen:
+        del cache[stale]
     summaries.sort(key=lambda item: item.updated_at, reverse=True)
     return summaries
 

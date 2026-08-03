@@ -596,6 +596,17 @@ def test_tracker_never_hides_new_issues(qt_app, tmp_path, monkeypatch):
                for issue in window.controller.issues.load())
     assert window.issues_list._rows.count() == 20   # 19 open + the new one
 
+    # Tab clicks reuse the row widgets: rebuilding the whole list on
+    # every filter change was the tracker lag.
+    screen = window.issues_list
+    kept = screen._rows.itemAt(0).widget()
+    kept_id = next(iter(screen._row_cache))
+    before = screen._row_cache[kept_id][1]
+    screen.set_filter("in_work")
+    screen.set_filter("open")
+    assert screen._row_cache[kept_id][1] is before
+    assert kept.parent() is not None   # alive and re-attached, not rebuilt
+
 
 def test_repair_bridge_prefills_and_links_the_run(qt_app, tmp_path, monkeypatch):
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))

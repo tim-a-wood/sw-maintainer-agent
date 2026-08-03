@@ -1423,6 +1423,11 @@ class IssuesScreen(Screen):
             button(text("issues.add"), "Secondary", self.add_issue.emit))
         self.add_gap()
         self.add_row(button(text("history.back"), "Ghost", self.back.emit))
+        # Row widgets by issue id, pinned to the fields they render.
+        # A tab click or a search keystroke reuses the rows instead of
+        # rebuilding the whole list.
+        self._row_cache: dict[str, tuple[tuple, IssueRowWidget]] = {}
+        self._shown: list[tuple[str, tuple]] | None = None
 
     def set_filter(self, key: str) -> None:
         self._filter = key
@@ -1467,7 +1472,6 @@ class IssuesScreen(Screen):
             base = text("issues.filter." + key)
             control.setText(f"{base} {counts.get(key, 0)}"
                             if self._issues else base)
-        self.clear_layout(self._rows)
         shown = [issue for issue in self._issues if self._matches(issue)]
         closed = sum(1 for issue in self._issues if issue.status == "closed")
         none_open = not any(issue.status != "closed"
@@ -1477,11 +1481,34 @@ class IssuesScreen(Screen):
         else:
             self.empty.setText(text("issues.empty"))
         self.empty.setVisible(not shown)
+        self._render_rows(shown)
+
+    @staticmethod
+    def _signature(issue) -> tuple:
+        return (issue.title, issue.severity, issue.status, issue.source,
+                issue.file, issue.line, issue.group, issue.external_ref)
+
+    def _render_rows(self, shown: list) -> None:
+        order = [(issue.id, self._signature(issue)) for issue in shown]
+        if order == self._shown:
+            return
+        _detach_rows(self._rows)
         for issue in shown:
-            row = IssueRowWidget(issue)
-            row.clicked.connect(
-                lambda issue_id=issue.id: self.open_issue.emit(issue_id))
-            self._rows.addWidget(row)
+            signature = self._signature(issue)
+            cached = self._row_cache.get(issue.id)
+            if cached is None or cached[0] != signature:
+                if cached is not None:
+                    cached[1].deleteLater()
+                row = IssueRowWidget(issue)
+                row.clicked.connect(
+                    lambda issue_id=issue.id: self.open_issue.emit(issue_id))
+                self._row_cache[issue.id] = (signature, row)
+            self._rows.addWidget(self._row_cache[issue.id][1])
+        # Filtered-out rows stay cached; only vanished issues drop.
+        alive = {issue.id for issue in self._issues}
+        for stale in set(self._row_cache) - alive:
+            self._row_cache.pop(stale)[1].deleteLater()
+        self._shown = order
 
 
 class IssueDetailScreen(Screen):
@@ -2174,6 +2201,15 @@ class ExplainSettingsPage(Screen):
         return self.command_edit.text().strip() or "manim"
 
 
+def _detach_rows(layout) -> None:
+    """Empty the layout but keep the widgets alive for reuse."""
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.setParent(None)
+
+
 class HistoryScreen(Screen):
     open_run = Signal(str)
     back = Signal()
@@ -2190,15 +2226,38 @@ class HistoryScreen(Screen):
         self.add(self.empty)
         self.add_gap()
         self.add_row(button(text("history.back"), "Ghost", self.back.emit))
+        # Row widgets by run id, pinned to the summary they render.
+        # Hundreds of runs rebuilt on every visit was the history lag;
+        # a revisit now reuses every unchanged row.
+        self._row_cache: dict[str, tuple[tuple, HistoryRow]] = {}
+        self._shown: list[tuple[str, tuple]] = []
+
+    @staticmethod
+    def _signature(summary: RunSummary) -> tuple:
+        return (summary.name, summary.request, summary.updated_at,
+                summary.display_state, summary.mode)
 
     def show_runs(self, runs: list[RunSummary]) -> None:
-        self.clear_layout(self._rows)
         self.empty.setVisible(not runs)
+        shown = [(summary.run_id, self._signature(summary))
+                 for summary in runs]
+        if shown == self._shown:
+            return
+        _detach_rows(self._rows)
         for summary in runs:
-            row = HistoryRow(summary)
-            row.clicked.connect(
-                lambda run_id=summary.run_id: self.open_run.emit(run_id))
-            self._rows.addWidget(row)
+            signature = self._signature(summary)
+            cached = self._row_cache.get(summary.run_id)
+            if cached is None or cached[0] != signature:
+                if cached is not None:
+                    cached[1].deleteLater()
+                row = HistoryRow(summary)
+                row.clicked.connect(
+                    lambda run_id=summary.run_id: self.open_run.emit(run_id))
+                self._row_cache[summary.run_id] = (signature, row)
+            self._rows.addWidget(self._row_cache[summary.run_id][1])
+        for stale in set(self._row_cache) - {run_id for run_id, _ in shown}:
+            self._row_cache.pop(stale)[1].deleteLater()
+        self._shown = shown
 
 
 class RunDetailScreen(Screen):

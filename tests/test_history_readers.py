@@ -47,6 +47,43 @@ def test_list_runs_skips_what_it_cannot_read(tmp_path):
     assert scoped[0].closed is True
 
 
+def test_list_runs_reuses_unchanged_records(tmp_path):
+    """The summary cache: only a changed record file gets re-parsed.
+
+    Hundreds of runs re-read on every home visit was measurable lag;
+    the stamp check makes a revisit cost one stat per run."""
+    import os
+
+    root = tmp_path / "runtime"
+    root.mkdir()
+    for n in range(3):
+        _record_dir(root, f"r-{n}", {
+            "run_id": f"r-{n}", "state": "delivered",
+            "repository": str(tmp_path),
+            "updated_at": f"2026-07-3{n}T10:00:00+00:00"})
+
+    first = {item.run_id: item for item in list_runs(root)}
+    second = {item.run_id: item for item in list_runs(root)}
+    for run_id in first:
+        assert second[run_id] is first[run_id]
+
+    # A rewritten record returns fresh; the others stay cached.
+    changed = root / "r-1" / "run.json"
+    record = json.loads(changed.read_text(encoding="utf-8"))
+    record["name"] = "Renamed"
+    changed.write_text(json.dumps(record), encoding="utf-8")
+    os.utime(changed, ns=(1, 1))   # force a different stamp either way
+    third = {item.run_id: item for item in list_runs(root)}
+    assert third["r-1"] is not first["r-1"]
+    assert third["r-1"].name == "Renamed"
+    assert third["r-0"] is first["r-0"] and third["r-2"] is first["r-2"]
+
+    # A removed run leaves the list and the cache.
+    (root / "r-2" / "run.json").unlink()
+    (root / "r-2").rmdir()
+    assert sorted(item.run_id for item in list_runs(root)) == ["r-0", "r-1"]
+
+
 def test_run_timeline_survives_missing_and_bad_ledgers(tmp_path):
     assert run_timeline(tmp_path, "absent") == []
     run_dir = tmp_path / "run-1"
