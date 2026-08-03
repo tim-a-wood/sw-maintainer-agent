@@ -1106,6 +1106,10 @@ class MainWindow(QMainWindow):
         self._end_side()
         self.toast(text("scan.added.one") if len(result.touched) == 1
                    else text("scan.added", count=len(result.touched)))
+        # The sweep's thread survives the accept: say what is left.
+        left = int(side.get("scan_left", 0))
+        if left:
+            self.toast(text("scan.more", left=left))
         self.show_issues()
 
     def _scan_discard(self) -> None:

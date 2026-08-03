@@ -1478,3 +1478,32 @@ construction once; every look after that is close to free.
 Deterministic guards pin the behavior: unchanged records return
 the same summary objects, and a filter round trip returns the
 same row widgets.
+
+### 14.44 Round four: every scenario, one story, one gap
+
+A full usability pass drove every known scenario. The three
+earlier walkthrough rounds ran again on the current code — the
+core run loop with its gates, stops, resumes, and go-backs; the
+tracker lifecycles; the explain lifecycle; the error and settings
+corners — all clean. A fourth round drove what this branch added:
+a real two-wave scan at the true packet budget with a focus
+change, the coverage lines, and the cycle restart; all four
+discussion outcomes; the update card with skip and re-offer; the
+tracker and history caches under edits, outside renames, searches
+typed one key at a time, theme switches with detached rows, and a
+narrow window; and project isolation across a switch (each project
+its own tracker, discussion, and sweep position).
+
+Then one story end to end, crossing every seam at once: a scan
+raised the issue, the discussion returned a repair request naming
+it, the fault flow arrived prefilled and linked, the run repaired
+it through plan, build, review, and save, the delivery closed the
+issue with reason fixed, the done screen said "Closed 1 issue in
+the tracker.", and the issue's detail linked the run that fixed
+it. Every step held.
+
+One gap found and repaired: after accepting a wave's issues, the
+"files not scanned" reminder lived only on the accept screen, so
+the sweep lost its thread the moment the person moved on. The
+accept now also says it as a toast: "2 project files are not
+scanned. Select Scan again for the next part."
