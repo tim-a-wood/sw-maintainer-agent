@@ -1,19 +1,29 @@
 name: Release
 
-# One release ritual, two entries, the same result:
-# - Start it by hand on a branch: it reads the version, runs the
-#   suite, creates the missing v-tag itself, and publishes.
-# - Push a v-tag (from a clone or from the GitHub release page):
-#   it verifies the tag, runs the suite, and publishes.
-# Publishing tolerates a release that already exists.
+# One release ritual, three entries, the same result:
+# - Push a commit that changes pyproject.toml on a release branch:
+#   when the version has no tag yet, this run creates it.
+# - Start it by hand from the Actions tab (once it is on main).
+# - Push a v-tag from a clone or from the GitHub release page.
+# Every entry runs the suite before anything publishes, and
+# publishing tolerates a release that already exists.
 on:
   push:
     tags:
       - "v*"
+    branches:
+      - main
+      - "claude/maintain-simple-ui-m7ih2n"
+    paths:
+      - "pyproject.toml"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
