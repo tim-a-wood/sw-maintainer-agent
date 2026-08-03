@@ -27,6 +27,7 @@ from .errors import (
 from .gates import WorkflowGates
 from .models import ProviderRequest, RunRecord, RunState
 from .locking import FileLock
+from .proc import hidden
 from .policy import transition
 from .presenter import Presenter
 from .provider_factory import build_provider
@@ -563,6 +564,7 @@ class WorkflowEngine:
                                 "sys.exit(0 if importlib.util.find_spec('pytest') else 1)"
                             ),
                         ],
+                        **hidden(),
                         cwd=self.config.repository,
                         capture_output=True,
                         check=False,

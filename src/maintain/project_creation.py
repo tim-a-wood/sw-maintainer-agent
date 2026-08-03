@@ -12,6 +12,7 @@ from pathlib import Path
 from .audit import atomic_write
 from .config import CONFIG_NAME, ProjectConfig, default_config
 from .errors import ConfigurationError, MaintainError
+from .proc import hidden
 
 
 SUPPORTED_PROVIDERS = frozenset(
@@ -69,6 +70,7 @@ def _run_git(
             encoding="utf-8",
             errors="replace",
             check=False,
+            **hidden(),
         )
     except OSError as exc:
         raise MaintainError(f"Git could not be started: {exc}") from exc

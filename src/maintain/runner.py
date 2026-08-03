@@ -394,8 +394,11 @@ class CommandRunner:
             argv = launch.argv
             popen_options: dict[str, object] = {}
             if os.name == "nt":
-                popen_options["creationflags"] = getattr(
-                    subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                # The group flag alone leaves the console visible: every
+                # check would flash a command window at the person.
+                popen_options["creationflags"] = (
+                    getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                    | getattr(subprocess, "CREATE_NO_WINDOW", 0))
             else:
                 popen_options["start_new_session"] = True
             process = subprocess.Popen(

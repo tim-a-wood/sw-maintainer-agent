@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil, subprocess, tempfile
 from pathlib import Path
 from ..artifacts.contracts import ImplementationArtifact
+from ..proc import hidden
 from ..artifacts.validation import validate_repository_path
 from ..workspace import DiffEvidence, WorkspaceManager, git
 
@@ -14,7 +15,7 @@ class AttemptWorkspace:
         base=git(self.run_worktree,"rev-parse","HEAD"); self.root.mkdir(parents=True,exist_ok=True)
         attempt=Path(tempfile.mkdtemp(prefix="attempt-",dir=self.root)); branch=f"maintain-attempt-{attempt.name}"
         try:
-            r=subprocess.run(["git","-C",str(self.repository),"worktree","add","--detach",str(attempt),base],text=True,encoding="utf-8",errors="replace",capture_output=True)
+            r=subprocess.run(["git","-C",str(self.repository),"worktree","add","--detach",str(attempt),base],text=True,encoding="utf-8",errors="replace",capture_output=True,**hidden())
             if r.returncode: raise RuntimeError((r.stderr or r.stdout).strip())
             declared=[]
             for op in artifact.operations:
@@ -36,5 +37,5 @@ class AttemptWorkspace:
             if set(diff.paths)!=set(declared): raise ValueError("Actual changed paths differ from declared operations.")
             return diff
         finally:
-            subprocess.run(["git","-C",str(self.repository),"worktree","remove","--force",str(attempt)],capture_output=True)
+            subprocess.run(["git","-C",str(self.repository),"worktree","remove","--force",str(attempt)],capture_output=True,**hidden())
             shutil.rmtree(attempt,ignore_errors=True)

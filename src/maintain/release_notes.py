@@ -24,6 +24,11 @@ NOTES: dict[str, tuple[str, ...]] = {
         "After you accept scan findings, the app tells which files are not scanned.",
         "Many small repairs from a full walk of every screen.",
     ),
+    "0.9.4": (
+        "Command windows do not flash during the start or during project work.",
+        "The app shows this list of changes after each update.",
+        "If the app cannot start, it shows the cause and writes a log file.",
+    ),
 }
 
 

@@ -13,6 +13,7 @@ from maintain.errors import ProviderError
 from maintain.models import ProviderCapabilities, ProviderRequest
 from maintain.security import assert_no_secrets
 
+from ..proc import hidden
 from .base import Provider
 from .command import parse_response
 
@@ -32,7 +33,7 @@ class CodexProvider(Provider):
         if not self.executable:
             raise ProviderError("Codex is not installed.")
         result = subprocess.run([self.executable, "login", "status"], capture_output=True,
-                                timeout=15, check=False)
+                                timeout=15, check=False, **hidden())
         if result.returncode:
             raise ProviderError("Codex is not signed in.")
 
@@ -49,7 +50,8 @@ class CodexProvider(Provider):
             command.append(prompt)
             result = subprocess.run(command, text=True, encoding="utf-8",
                                     errors="replace", capture_output=True,
-                                    timeout=self.timeout_seconds, check=False)
+                                    timeout=self.timeout_seconds,
+                                    check=False, **hidden())
             if result.returncode or not output.is_file():
                 raise ProviderError(f"Codex failed: {(result.stderr or result.stdout)[-600:]}")
             return self._parse_or_repair(output.read_text(encoding="utf-8"), request, Path(directory))
@@ -75,8 +77,9 @@ class CodexProvider(Provider):
             command.append(prompt)
             try:
                 result = subprocess.run(command, text=True, encoding="utf-8",
-                                    errors="replace", capture_output=True,
-                                        timeout=self.timeout_seconds, check=False)
+                                        errors="replace", capture_output=True,
+                                        timeout=self.timeout_seconds,
+                                        check=False, **hidden())
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise ProviderError(f"Codex implementation stopped: {exc}") from exc
             if result.returncode or not output.is_file():
@@ -120,7 +123,8 @@ class CodexProvider(Provider):
                        "--cd", str(working_directory), "--output-last-message", str(output), prompt]
             result = subprocess.run(command, text=True, encoding="utf-8",
                                     errors="replace", capture_output=True,
-                                    timeout=self.timeout_seconds, check=False)
+                                    timeout=self.timeout_seconds,
+                                    check=False, **hidden())
             if result.returncode or not output.is_file():
                 raise ProviderError("Codex schema repair failed.")
             repaired = output.read_text(encoding="utf-8")

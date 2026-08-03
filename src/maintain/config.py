@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .errors import ConfigurationError, PolicyError
+from .proc import hidden
 from .security import assert_no_secrets
 
 CONFIG_NAME = ".maintain.json"
@@ -532,7 +533,7 @@ def default_config(repository: Path, provider: str = "codex") -> dict[str, Any]:
                  ["git", "-C", str(repository), "branch", "--show-current"]):
         result = subprocess.run(argv, text=True, encoding="utf-8",
                                 errors="replace", capture_output=True,
-                                check=False)
+                                check=False, **hidden())
         if result.returncode == 0 and result.stdout.strip():
             branch = result.stdout.strip().removeprefix("origin/")
             break

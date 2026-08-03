@@ -1527,3 +1527,28 @@ modal does, once.
 A style test enforces the ASD-STE100 rules on every note line, and
 a ritual guard fails the suite — and therefore the release — when
 a version bump ships without its notes.
+
+### 14.46 No console windows, enforced on the source
+
+Command windows flashed again during the start and during project
+work. The rule was old — every child process passes `**hidden()`,
+which carries the no-window flag — but the rule lived only in a
+docstring, so new code kept missing it. A source audit found
+eleven calls without the flag, on exactly the paths the person
+touches most: the repository probe that runs at every start and
+every project action, the project creation commands, the branch
+detection in project setup, the Windows folder picker, the
+worktree add and remove, and the engine's tool probe. The check
+runner had its own version of the fault: it set the process group
+flag and no window flag, so every check flashed.
+
+All eleven are repaired. The rule is now enforced where it cannot
+rot: a test reads every subprocess call in the source and fails
+when one neither passes `**hidden()` nor appears in a short
+allowance list with its reason. A second test keeps the
+allowances honest — each must still point at code that exists and
+still sets its own flags. Three allowances stand: the check runner
+(which adds the no-window flag to its process group flag), its
+stop path, and the updater, which shows its console on purpose
+because the app is closing and a silent reinstall would look like
+nothing happened.

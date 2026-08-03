@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import ConfigurationError
+from .proc import hidden
 
 SETTINGS_SCHEMA_VERSION = 2
 
@@ -59,6 +60,7 @@ def repository_root(path: Path) -> Path | None:
         encoding="utf-8",
         errors="replace",
         check=False,
+        **hidden(),
     )
     if completed.returncode:
         return None
@@ -571,6 +573,7 @@ def _run_windows_picker(script: str, kind: str) -> Path | None:
                 "-Command",
                 script,
             ],
+            **hidden(),
             capture_output=True,
             text=True,
             encoding="utf-8",
