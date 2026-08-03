@@ -504,6 +504,23 @@ def test_launch_entry_point_paths(qt_app, tmp_path, monkeypatch):
     # The remembered project opens again without the picker.
     assert ui_main([]) == 0
 
+    # A crash inside the start never dies silently: the report lands
+    # in a log file and a visible dialog, and the exit code says so.
+    import maintain.ui.main as main_module
+    reported: list[tuple] = []
+    fake_home = tmp_path / "home"
+    with monkeypatch.context() as scoped:
+        scoped.setattr(main_module, "_run", lambda argv=None: 1 / 0)
+        scoped.setattr(main_module, "_report_startup_failure",
+                       lambda detail, log: reported.append((detail, log)))
+        scoped.setattr(main_module.Path, "home",
+                       staticmethod(lambda: fake_home))
+        assert ui_main([]) == 1
+    assert reported and "ZeroDivisionError" in reported[0][0]
+    crash_log = fake_home / ".maintain" / "logs" / "maintain-ui-crash.log"
+    assert crash_log.is_file()
+    assert "ZeroDivisionError" in crash_log.read_text(encoding="utf-8")
+
     # Answering No to the set-up question leaves without writing.
     fresh = tmp_path / "fresh"
     fresh.mkdir()

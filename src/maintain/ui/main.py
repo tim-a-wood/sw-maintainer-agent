@@ -38,7 +38,45 @@ def _ensure_config(repository: Path) -> Path:
     return ensure_config(repository)
 
 
+def _report_startup_failure(detail: str, log_path: Path) -> None:
+    """A last-resort dialog. The words are literals on purpose: this
+    path must not depend on the string catalog it may have failed in."""
+    try:
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        app = QApplication.instance() or QApplication([])
+        box = QMessageBox()
+        box.setWindowTitle("Maintain")
+        box.setText("Maintain could not start.")
+        box.setInformativeText(
+            f"The full report is in:\n{log_path}\n\n{detail[-900:]}")
+        box.exec()
+        del app
+    except Exception:   # noqa: BLE001 - nothing below this can help
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    """The desktop app has no console: a crash with no window would
+    look like nothing happened. Every startup failure must land in a
+    log file and a visible dialog."""
+    try:
+        return _run(argv)
+    except SystemExit:
+        raise
+    except Exception:   # noqa: BLE001 - the report is the handling
+        import traceback
+        detail = traceback.format_exc()
+        log_path = Path.home() / ".maintain" / "logs" / "maintain-ui-crash.log"
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(detail, encoding="utf-8")
+        except OSError:
+            pass
+        _report_startup_failure(detail, log_path)
+        return 1
+
+
+def _run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="maintain-ui")
     parser.add_argument("--repo", help="Project repository path")
     args = parser.parse_args(argv)
