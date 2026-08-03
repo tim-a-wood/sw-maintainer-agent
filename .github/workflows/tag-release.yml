@@ -1,0 +1,34 @@
+name: Tag release
+
+# Creates the release tag for the checked-out ref: reads the version
+# from pyproject.toml and pushes v<version>. A tag pushed by the
+# Actions token does not start the Release workflow; push the tag
+# from a personal clone when the published zip matters.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Create and push the version tag
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)"
+          if [ -z "$version" ]; then
+            echo "pyproject.toml has no version." >&2
+            exit 1
+          fi
+          git config user.name "Maintain CI"
+          git config user.email "ci@example.invalid"
+          git tag -a "v$version" -m "Maintain $version"
+          git push origin "v$version"
+          echo "Tagged v$version"
