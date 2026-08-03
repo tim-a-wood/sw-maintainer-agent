@@ -1507,3 +1507,23 @@ One gap found and repaired: after accepting a wave's issues, the
 the sweep lost its thread the moment the person moved on. The
 accept now also says it as a toast: "2 project files are not
 scanned. Select Scan again for the next part."
+
+### 14.45 The first start after an update says what changed (FR-U5)
+
+The update loop closed silently: the app came back on the new
+version and nothing named what the person just received. Now one
+modal does, once.
+
+- FR-U5. Release notes ship inside the package, one short ASD-STE100
+  section per version, so the modal needs no network. The app
+  remembers the last version the person saw; on the first start
+  after the version changed, one modal lists every noted version
+  between — an update that jumped versions catches the person up —
+  with one Continue button. A fresh install records the version
+  and stays quiet: there is nothing "new" for a first-time person.
+  An update from a build older than this feature shows the current
+  version's notes alone.
+
+A style test enforces the ASD-STE100 rules on every note line, and
+a ritual guard fails the suite — and therefore the release — when
+a version bump ships without its notes.

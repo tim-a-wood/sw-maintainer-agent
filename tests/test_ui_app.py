@@ -494,6 +494,44 @@ def test_issue_crud_from_the_screens(qt_app, tmp_path, monkeypatch):
     assert window.controller.issues.load() == []
 
 
+def test_release_notes_show_once_after_an_update(qt_app, tmp_path, monkeypatch):
+    """FR-U5: the first start after an update names what changed;
+    later starts and fresh installs stay quiet."""
+    from maintain import __version__
+    from maintain.repository_memory import (load_ui_settings,
+                                            save_ui_settings)
+
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    save_ui_settings({"last_seen_version": "0.9.1", "theme": "dark"})
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    shown: list = []
+    window._show_release_notes = shown.append
+
+    window._maybe_show_release_notes()
+    assert len(shown) == 1
+    versions = [version for version, _ in shown[0]]
+    assert versions[0] == "0.9.2" and versions[-1] == __version__
+    assert load_ui_settings().get("last_seen_version") == __version__
+
+    # The same version again: nothing shows.
+    window._maybe_show_release_notes()
+    assert len(shown) == 1
+
+    # A fresh install records the version and stays quiet.
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "fresh.json"))
+    window._maybe_show_release_notes()
+    assert len(shown) == 1
+    assert load_ui_settings().get("last_seen_version") == __version__
+
+    # A build from before the notes existed: the current notes show.
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "old.json"))
+    save_ui_settings({"theme": "dark"})
+    window._maybe_show_release_notes()
+    assert len(shown) == 2
+    assert [version for version, _ in shown[1]] == [__version__]
+
+
 def test_update_prompt_applies_or_skips(qt_app, tmp_path, monkeypatch):
     """FR-U2..U4: the ready-release card, the confirm, the detached
     helper, and the skip memory."""

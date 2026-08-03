@@ -45,6 +45,8 @@ from maintain.scene_check import scene_class_name
 from maintain.scene_probe import probe_scene
 from maintain.scene_quality import quality_findings
 from maintain.providers.manual_ui import PacketHandoff
+from maintain import __version__
+from maintain.release_notes import notes_since
 from maintain.repository_memory import load_ui_settings, save_ui_settings
 from maintain.update_check import update_available
 from maintain.zip_package import PacketBuild
@@ -151,6 +153,9 @@ class MainWindow(QMainWindow):
                 and not os.environ.get("MAINTAIN_NO_UPDATE_CHECK")):
             QTimer.singleShot(15_000, self._check_for_update)
             self._update_timer.start()
+        # FR-U5: the first start after an update names what changed.
+        if not os.environ.get("MAINTAIN_NO_UPDATE_CHECK"):
+            QTimer.singleShot(600, self._maybe_show_release_notes)
 
         central = QWidget()
         column = QVBoxLayout(central)
@@ -634,6 +639,35 @@ class MainWindow(QMainWindow):
             self.show_error(str(exc))
             return
         self.close()
+
+    def _maybe_show_release_notes(self) -> None:
+        """FR-U5: one modal on the first start after the version
+        changed. A fresh install records the version and stays
+        quiet — there is nothing "new" for a first-time person."""
+        values = load_ui_settings()
+        last_seen = str(values.get("last_seen_version", ""))
+        if last_seen == __version__:
+            return
+        fresh_install = not values
+        sections = [] if fresh_install else notes_since(last_seen)
+        values["last_seen_version"] = __version__
+        save_ui_settings(values)
+        if sections:
+            self._show_release_notes(sections)
+
+    def _show_release_notes(self, sections: list) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle(text("app.title"))
+        box.setText(text("notes.title", version=sections[-1][0]))
+        parts = []
+        for version, lines in sections:
+            bullets = "\n".join(f"•  {line}" for line in lines)
+            parts.append(bullets if len(sections) == 1 else
+                         f"{text('notes.version', version=version)}\n{bullets}")
+        box.setInformativeText("\n\n".join(parts))
+        box.addButton(text("notes.continue"),
+                      QMessageBox.ButtonRole.AcceptRole)
+        box.exec()
 
     def _show_settings(self) -> None:
         self.settings.set_updates_checked(
