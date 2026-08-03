@@ -1,9 +1,16 @@
 name: Release
 
+# One release ritual, two entries, the same result:
+# - Start it by hand on a branch: it reads the version, runs the
+#   suite, creates the missing v-tag itself, and publishes.
+# - Push a v-tag (from a clone or from the GitHub release page):
+#   it verifies the tag, runs the suite, and publishes.
+# Publishing tolerates a release that already exists.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,23 +23,28 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
-      - name: Check the tag against the project version
+      - name: Resolve the release tag
+        id: meta
         shell: pwsh
         run: |
-          $tag = "$env:GITHUB_REF_NAME"
           $text = Get-Content -LiteralPath "pyproject.toml" -Raw
           $match = [regex]::Match($text, '(?m)^version\s*=\s*"(?<v>[^"]+)"\s*$')
           if (-not $match.Success) { throw "pyproject.toml has no version." }
           $version = $match.Groups["v"].Value
-          if ($tag -ne "v$version") {
-            throw "Tag $tag does not match project version $version."
+          $tag = "v$version"
+          if ("$env:GITHUB_REF" -like "refs/tags/*" -and
+              "$env:GITHUB_REF_NAME" -ne $tag) {
+            throw "Tag $env:GITHUB_REF_NAME does not match project version $version."
           }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Install test runtime
         shell: pwsh
@@ -55,20 +67,43 @@ jobs:
             "tests/test_cli_history.py::test_selectable_history_shows_details_and_back_does_not_resume"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Create the tag when the run started from a branch
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $existing = (& git ls-remote --tags origin $tag | Out-String).Trim()
+          if ($existing) {
+            Write-Host "Tag $tag already exists."
+            git fetch --quiet origin "refs/tags/${tag}:refs/tags/${tag}"
+            exit 0
+          }
+          git config user.name "Maintain CI"
+          git config user.email "ci@example.invalid"
+          git tag -a $tag -m "Maintain $tag"
+          git push origin $tag
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build the release zip
         shell: pwsh
         run: |
-          $tag = "$env:GITHUB_REF_NAME"
+          $tag = "${{ steps.meta.outputs.tag }}"
           git archive --format=zip --prefix="maintain-$tag/" `
             -o "maintain-$tag.zip" $tag
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Create the GitHub release
+      - name: Publish the GitHub release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "$env:GITHUB_REF_NAME"
-          gh release create $tag "maintain-$tag.zip" `
-            --title "Maintain $tag" --generate-notes --verify-tag
+          $tag = "${{ steps.meta.outputs.tag }}"
+          & gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag "maintain-$tag.zip" --clobber
+          }
+          else {
+            gh release create $tag "maintain-$tag.zip" `
+              --title "Maintain $tag" --generate-notes --verify-tag
+          }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
