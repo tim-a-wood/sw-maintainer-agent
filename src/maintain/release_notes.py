@@ -29,6 +29,13 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The app shows this list of changes after each update.",
         "If the app cannot start, it shows the cause and writes a log file.",
     ),
+    "0.9.5": (
+        "You can close an issue again. The reasons are in a menu that always fits.",
+        "The issue screen shows your place in the list, for example Issue 3 of 24.",
+        "Previous and Next move through the issues. The arrow keys do the same.",
+        "After you close an issue, the next one opens. The list does not interrupt you.",
+        "A return to the list keeps your position in it.",
+    ),
 }
 
 
