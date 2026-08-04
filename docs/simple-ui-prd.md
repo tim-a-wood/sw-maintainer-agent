@@ -1620,3 +1620,33 @@ terminal — the one place this app exists to avoid.
 A journey test drives a whole run to Save, proves the project file
 still holds the old content, presses the step, and proves the file
 holds the new content on the person's own branch.
+
+### 14.49 The offer that ended with the screen (FR-D11)
+
+FR-D10 put the step on the Done screen only. The field report that
+followed shows why that is not enough: "It's the worktree at the
+end. I'm on main but don't know how to merge the worktree in."
+
+The Done screen is one screen, seen once. A person who closes the
+app, presses Home, or starts the next change loses the only route
+back into their files. The commit is safe on `maintain/<run-id>`,
+but the only remaining route is a terminal — the thing this app
+exists to remove.
+
+- FR-D11. The run detail screen, opened from the history, carries
+  the same offer. A saved run with a commit that is not yet in the
+  files shows "Add the change to my files". A run already in the
+  files says "The change is in your files, on branch main." and
+  offers nothing. A run still in work offers nothing.
+- The step is one shared handler for both screens, so the two
+  routes cannot drift apart. It targets `source_branch`, and every
+  refusal reaches the person as words.
+- The run detail screen also carries "Copy the merge command", so
+  the words "Use the merge command below" stay true on the screen
+  that says them.
+- Reading a run from the history never makes it the open run: the
+  history reads with `_peek_record`, which has no side effect.
+
+A journey test opens a saved run from the history, proves the offer
+is there, presses it, proves the fast-forward targets the person's
+branch, and proves an integrated run offers nothing.

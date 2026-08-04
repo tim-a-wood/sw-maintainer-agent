@@ -1492,10 +1492,15 @@ def _interactive_history(
             presenter.verification_results(_verification_rows(record))
             presenter.console.print()
             presenter.console.print("SAVED EVIDENCE", style="muted")
+            # A path is copied, not read. Wrapping breaks it at the
+            # spaces inside folder names, so keep it on one line.
             presenter.console.print(
                 str(AuditStore(config.runtime_root, record.run_id).run_dir),
                 style="label",
                 markup=False,
+                no_wrap=True,
+                overflow="ignore",
+                crop=False,
             )
         except (MaintainError, OSError, ValueError) as exc:
             presenter.error(str(exc), "This saved run could not be inspected.")

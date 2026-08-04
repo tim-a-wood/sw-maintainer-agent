@@ -2357,6 +2357,8 @@ class RunDetailScreen(Screen):
     go_back_to = Signal(int)    # sequence
     undo_last = Signal()
     copy_note = Signal()
+    copy_merge = Signal()
+    apply_change = Signal()
     back = Signal()
 
     def __init__(self) -> None:
@@ -2368,7 +2370,29 @@ class RunDetailScreen(Screen):
         self.undo_button = button(text("run.undo"), "Secondary", self.undo_last.emit)
         self.note_button = button(text("done.note"), "Secondary",
                                   self.copy_note.emit)
-        self.add_row(self.undo_button, self.note_button)
+        self.merge_button = button(text("done.merge"), "Secondary",
+                                   self.copy_merge.emit)
+        self.add_row(self.undo_button, self.note_button, self.merge_button)
+        # FR-D11: a saved run keeps the offer to go into the project
+        # files. The person can leave the last screen, come back days
+        # later, and still add the change without a terminal.
+        self.apply_hint = label(text("done.apply.sub"), "Hint")
+        self.apply_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.add(self.apply_hint)
+        apply_row = QHBoxLayout()
+        apply_row.addStretch(1)
+        self.apply_button = button(text("done.apply"), "Primary",
+                                   self.apply_change.emit)
+        apply_row.addWidget(self.apply_button)
+        apply_row.addStretch(1)
+        self._apply_holder = QWidget()
+        self._apply_holder.setLayout(apply_row)
+        self.add(self._apply_holder)
+        self.apply_note = label("", "Ok")
+        self.apply_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.add(self.apply_note)
+        self.message = StatusLine()
+        self.add(self.message)
         self._rows = QVBoxLayout()
         self._rows.setSpacing(0)
         holder = QWidget()
@@ -2393,6 +2417,8 @@ class RunDetailScreen(Screen):
         self.undo_button.setVisible(live)
         self.undo_button.setEnabled(self.undo_target >= 0)
         self.note_button.setVisible(summary.state == "delivered")
+        self.merge_button.setVisible(summary.state == "delivered")
+        self.message.set_state("plain", "")
         self.clear_layout(self._rows)
         last_index = len(timeline) - 1
         for index, event in enumerate(timeline):
@@ -2441,6 +2467,22 @@ class RunDetailScreen(Screen):
             grid.addWidget(pad, 2, 1)
             grid.setColumnStretch(1, 1)
             self._rows.addWidget(row)
+
+    def set_apply(self, delivered: bool, applied: bool,
+                  branch: str = "") -> None:
+        """FR-D11: show the step, the result, or neither.
+
+        Only a saved run with a commit can offer it. A run that is
+        already in the person's files says so and offers nothing."""
+        self.apply_hint.setVisible(delivered and not applied)
+        self._apply_holder.setVisible(delivered and not applied)
+        self.apply_note.setVisible(delivered and applied)
+        self.apply_note.setText(text("done.apply.here", branch=branch)
+                                if delivered and applied else "")
+
+    def set_applied(self, applied: bool, branch: str = "") -> None:
+        """The shared name the apply step calls after it wins."""
+        self.set_apply(True, applied, branch)
 
 
 class BusyScreen(Screen):

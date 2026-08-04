@@ -451,6 +451,8 @@ class MainWindow(QMainWindow):
         self.history.back.connect(self.show_home)
         self.run_detail.back.connect(self.show_history)
         self.run_detail.copy_note.connect(self._copy_run_note)
+        self.run_detail.apply_change.connect(self._apply_run_change)
+        self.run_detail.copy_merge.connect(self._copy_run_merge)
         self.run_detail.go_back_to.connect(self._go_back_to)
         self.run_detail.undo_last.connect(
             lambda: self._go_back_to(self.run_detail.undo_target))
@@ -648,27 +650,36 @@ class MainWindow(QMainWindow):
         The run commits on its own branch inside an isolated worktree,
         so the project folder does not change until this step. Without
         it the whole run looks like it did nothing."""
-        run_id = getattr(self, "_done_run_id", "")
-        branch = getattr(self, "_done_branch", "")
+        self._apply_commit(getattr(self, "_done_run_id", ""),
+                           getattr(self, "_done_branch", ""), self.done)
+
+    def _apply_run_change(self) -> None:
+        """FR-D11: the same step, from a saved run in the history."""
+        self._apply_commit(getattr(self, "_open_run_id", ""),
+                           getattr(self, "_open_run_branch", ""),
+                           self.run_detail)
+
+    def _apply_commit(self, run_id: str, branch: str, screen) -> None:
+        """Fast-forward the person's branch, and say what happened."""
         if not run_id or not branch:
             return
         current = self.controller.current_branch()
         if current and current != branch:
-            self.done.message.set_state("bad", text(
+            screen.message.set_state("bad", text(
                 "done.apply.branch", current=current, wanted=branch))
             return
         try:
             with busy_pointer():
                 self.controller.integrate(run_id, branch)
         except MaintainError as exc:
-            self.done.message.set_state("bad", self._apply_words(str(exc)))
+            screen.message.set_state("bad", self._apply_words(str(exc), branch))
             return
-        self.done.set_applied(True, branch)
-        self.done.message.set_state("good",
-                                    text("done.apply.done", branch=branch))
+        screen.set_applied(True, branch)
+        screen.message.set_state("good",
+                                 text("done.apply.done", branch=branch))
         self.toast(text("done.apply.done", branch=branch))
 
-    def _apply_words(self, reason: str) -> str:
+    def _apply_words(self, reason: str, branch: str = "") -> str:
         """The engine's refusals, in words about the person's project."""
         lowered = reason.lower()
         if "not clean" in lowered:
@@ -676,7 +687,7 @@ class MainWindow(QMainWindow):
         if "changed after the maintenance run" in lowered or \
                 "fast-forward" in lowered:
             return text("done.apply.moved",
-                        branch=getattr(self, "_done_branch", ""))
+                        branch=branch or getattr(self, "_done_branch", ""))
         return reason
 
     def _maybe_show_release_notes(self) -> None:
@@ -1720,15 +1731,20 @@ class MainWindow(QMainWindow):
             self._set_run_footer(True, run_id)
             self.show_busy()
 
-    def _load_record(self, run_id: str) -> RunRecord | None:
+    def _peek_record(self, run_id: str) -> RunRecord | None:
+        """Read a run from disk without making it the open run."""
         import json
         path = self.store.config.runtime_root / run_id / "run.json"
         try:
-            record = RunRecord.from_dict(
+            return RunRecord.from_dict(
                 json.loads(path.read_text(encoding="utf-8")))
         except (OSError, ValueError, TypeError):
             return None
-        self.current_record = record
+
+    def _load_record(self, run_id: str) -> RunRecord | None:
+        record = self._peek_record(run_id)
+        if record is not None:
+            self.current_record = record
         return record
 
     # ----- bridge: packets -----
@@ -2091,6 +2107,15 @@ class MainWindow(QMainWindow):
             QGuiApplication.clipboard().setText(self._change_note(record))
             self.toast(text("done.note.done"))
 
+    def _copy_run_merge(self) -> None:
+        """The command that joins the run's branch, for a terminal."""
+        record = (self._peek_record(self._open_run_id)
+                  if getattr(self, "_open_run_id", "") else None)
+        if record is not None and record.branch:
+            QGuiApplication.clipboard().setText(
+                f"git merge --no-ff {record.branch}")
+            self.run_detail.message.set_state("ok", text("done.merge.done"))
+
     def _run_duration(self, record: RunRecord) -> str:
         from datetime import datetime
         try:
@@ -2170,6 +2195,19 @@ class MainWindow(QMainWindow):
         timeline = self.controller.timeline(run_id)
         self.run_detail.show_timeline(summary, timeline, live=not summary.closed)
         self._open_run_id = run_id
+        # FR-D11: the offer to put the commit into the person's files
+        # outlives the last screen of the run.
+        record = self._peek_record(run_id)
+        delivery = dict(record.evidence.get("delivery", {})) if record else {}
+        delivered = bool(delivery.get("commit")) and (
+            record.state in {str(RunState.DELIVERED),
+                             str(RunState.NEEDS_HUMAN_DELIVERY)})
+        self._open_run_branch = str(
+            (record.evidence.get("source_branch") if record else "")
+            or self.controller.current_branch())
+        self.run_detail.set_apply(delivered,
+                                  bool(delivery.get("integrated_commit")),
+                                  self._open_run_branch)
         self.show_screen("run")
 
     def _go_back_to(self, sequence: int) -> None:

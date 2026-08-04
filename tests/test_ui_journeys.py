@@ -520,6 +520,67 @@ def test_delivered_change_reaches_the_project_files(qt_app, tmp_path,
     assert "experiment" in window.done.message.text()
 
 
+def test_saved_run_still_offers_its_change(qt_app, tmp_path, monkeypatch):
+    """FR-D11: the person leaves the last screen, then comes back through
+    the history. The offer to add the change is still there."""
+    import json
+
+    from maintain.models import RunRecord, RunState
+
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    repository = Path(config.repository)
+
+    record = RunRecord(
+        run_id="f-0207", mode="feature", request="Change the value",
+        repository=str(repository),
+        state=str(RunState.DELIVERED), branch="maintain/f-0207",
+        worktree=str(repository), base_commit="",
+        evidence={"source_branch": "main", "changed_files": ["app.py"],
+                  "delivery": {"commit": "abc123"}})
+    run_dir = Path(config.runtime_root) / record.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run.json").write_text(json.dumps(record.to_dict()),
+                                      encoding="utf-8")
+
+    from maintain.history import RunSummary
+    summary = RunSummary(run_id=record.run_id, mode=record.mode,
+                         request=record.request, state=record.state,
+                         updated_at="", created_at="",
+                         repository=str(repository), changed_files=1)
+    monkeypatch.setattr(window.controller, "runs", lambda: [summary])
+    monkeypatch.setattr(window.controller, "timeline", lambda run_id: [])
+    monkeypatch.setattr(window.controller, "current_branch", lambda: "main")
+    calls: list = []
+    monkeypatch.setattr(window.controller, "integrate",
+                        lambda run_id, branch: calls.append((run_id, branch)))
+
+    window._open_run(record.run_id)
+    assert window.run_detail._apply_holder.isVisibleTo(window.run_detail)
+
+    # Reading a run from the history never steals the open run.
+    assert getattr(window, "current_record", None) is None
+
+    window.run_detail.apply_change.emit()
+    assert calls == [("f-0207", "main")]
+    assert not window.run_detail._apply_holder.isVisibleTo(window.run_detail)
+    assert "main" in window.run_detail.apply_note.text()
+
+    # The terminal route stays, for a branch that moved since the run.
+    window.run_detail.copy_merge.emit()
+    from PySide6.QtGui import QGuiApplication
+    assert QGuiApplication.clipboard().text() == "git merge --no-ff maintain/f-0207"
+
+    # A run already in the files offers nothing and says so.
+    record.evidence["delivery"]["integrated_commit"] = "def456"
+    (run_dir / "run.json").write_text(json.dumps(record.to_dict()),
+                                      encoding="utf-8")
+    window._open_run(record.run_id)
+    assert not window.run_detail._apply_holder.isVisibleTo(window.run_detail)
+    assert window.run_detail.apply_note.isVisibleTo(window.run_detail)
+
+
 def test_launch_entry_point_paths(qt_app, tmp_path, monkeypatch):
     from PySide6 import QtWidgets
 
