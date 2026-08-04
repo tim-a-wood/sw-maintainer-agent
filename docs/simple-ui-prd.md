@@ -1646,7 +1646,13 @@ exists to remove.
   that says them.
 - Reading a run from the history never makes it the open run: the
   history reads with `_peek_record`, which has no side effect.
+- The home screen names the state instead of waiting to be asked:
+  "Saved, but not in your files: <name>". The card opens that run,
+  where the step waits. `RunSummary` carries `awaiting_files`, set
+  while the record parses, so the home visit costs no extra reads.
 
 A journey test opens a saved run from the history, proves the offer
 is there, presses it, proves the fast-forward targets the person's
-branch, and proves an integrated run offers nothing.
+branch, and proves an integrated run offers nothing. A second test
+proves the home card appears, names the run, and disappears once
+the change is in the files.

@@ -73,6 +73,8 @@ STR: dict[str, str] = {
     "home.continue.sub": "{activity} — {phase}. The tool waits for you.",
     "activity.feature": "Change",
     "activity.issue": "Repair",
+    "home.pending": "Saved, but not in your files: {name}",
+    "home.pending.sub": "The change is on its own branch. Open it to add it.",
     "home.explain.continue": "Continue the explanation",
     "home.explain.continue.sub": "The tool waits for the scene reply.",
     "foot.home": "Home",

@@ -19,6 +19,8 @@ class RunSummary:
     changed_files: int
     name: str = ""
     phase: str = ""    # Plan, Build, Review, Test, or Save
+    # FR-D11: a saved commit that the person's files do not have yet.
+    awaiting_files: bool = False
 
     @property
     def display_state(self) -> str:
@@ -118,6 +120,15 @@ def list_runs(runtime_root: Path, repository: Path | None = None) -> list[RunSum
             evidence = record.get("evidence", {})
             changed = (evidence.get("changed_files", [])
                        if isinstance(evidence, dict) else [])
+            delivery = (evidence.get("delivery", {})
+                        if isinstance(evidence, dict) else {})
+            if not isinstance(delivery, dict):
+                delivery = {}
+            awaiting = bool(
+                delivery.get("commit")
+                and not delivery.get("integrated_commit")
+                and str(record.get("state", "")) in {
+                    "delivered", "needs_human_delivery"})
             summary = RunSummary(
                 run_id=str(record.get("run_id", run_dir.name)),
                 mode=str(record.get("mode", "feature")),
@@ -130,6 +141,7 @@ def list_runs(runtime_root: Path, repository: Path | None = None) -> list[RunSum
                 name=str(record.get("name", "")),
                 phase=run_phase(str(record.get("state", "")),
                                 record.get("tasks") or []),
+                awaiting_files=awaiting,
             )
             cache[run_dir.name] = (stamp.st_mtime_ns, stamp.st_size,
                                    resolved_repository, summary)

@@ -544,17 +544,21 @@ def test_saved_run_still_offers_its_change(qt_app, tmp_path, monkeypatch):
     (run_dir / "run.json").write_text(json.dumps(record.to_dict()),
                                       encoding="utf-8")
 
-    from maintain.history import RunSummary
-    summary = RunSummary(run_id=record.run_id, mode=record.mode,
-                         request=record.request, state=record.state,
-                         updated_at="", created_at="",
-                         repository=str(repository), changed_files=1)
-    monkeypatch.setattr(window.controller, "runs", lambda: [summary])
-    monkeypatch.setattr(window.controller, "timeline", lambda run_id: [])
+    # The real history reads the record: no stub decides what it says.
+    summary = next(item for item in window.controller.runs()
+                   if item.run_id == record.run_id)
+    assert summary.awaiting_files
+
     monkeypatch.setattr(window.controller, "current_branch", lambda: "main")
     calls: list = []
     monkeypatch.setattr(window.controller, "integrate",
                         lambda run_id, branch: calls.append((run_id, branch)))
+
+    # The home screen names it, so nobody has to remember the history.
+    window.show_home()
+    assert window.home._pending_change.isVisibleTo(window.home)
+    window.home._pending_change.clicked.emit()
+    assert window.stack.currentWidget() is window.run_detail
 
     window._open_run(record.run_id)
     assert window.run_detail._apply_holder.isVisibleTo(window.run_detail)
@@ -579,6 +583,10 @@ def test_saved_run_still_offers_its_change(qt_app, tmp_path, monkeypatch):
     window._open_run(record.run_id)
     assert not window.run_detail._apply_holder.isVisibleTo(window.run_detail)
     assert window.run_detail.apply_note.isVisibleTo(window.run_detail)
+
+    # And the home screen stops asking.
+    window.show_home()
+    assert not window.home._pending_change.isVisibleTo(window.home)
 
 
 def test_launch_entry_point_paths(qt_app, tmp_path, monkeypatch):

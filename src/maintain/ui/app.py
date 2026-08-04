@@ -361,6 +361,7 @@ class MainWindow(QMainWindow):
         self.home.open_talk.connect(self.show_talk)
         self.home.continue_run.connect(self._continue_run)
         self.home.continue_explain.connect(self._resume_explain)
+        self.home.open_saved_change.connect(self._open_run)
 
         self.talk.start.connect(self._talk_start)
         self.talk.back.connect(self.show_home)
@@ -570,6 +571,8 @@ class MainWindow(QMainWindow):
         self._pending_issue_links = []
         runs = self.controller.runs()   # one scan feeds the whole screen
         self.home.set_resumable(self.controller.resumable_run(runs))
+        self.home.set_pending_change(
+            next((item for item in runs if item.awaiting_files), None))
         self.home.set_resumable_explain(
             None if self._side is not None
             else resumable_explain(self.store.config))

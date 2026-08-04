@@ -172,6 +172,7 @@ class HomeScreen(Screen):
     open_talk = Signal()
     continue_run = Signal(str)   # run_id
     continue_explain = Signal(str)   # explain run_id
+    open_saved_change = Signal(str)  # run_id
     update_clicked = Signal()
     update_skipped = Signal()
 
@@ -196,6 +197,14 @@ class HomeScreen(Screen):
         self._continue_explain.clicked.connect(self._emit_continue_explain)
         self._continue_explain_id = ""
         self.add(self._continue_explain)
+        # FR-D11: a saved change that the files do not have yet. The
+        # card carries the person to the run, where the step waits.
+        self._pending_change = ChoiceButton("file-text", "", "",
+                                            accent_kind="warn")
+        self._pending_change.setVisible(False)
+        self._pending_change.clicked.connect(self._emit_saved_change)
+        self._pending_change_id = ""
+        self.add(self._pending_change)
         # A ready release: one card to update, one small way to skip.
         self._update_card = ChoiceButton("download", "", "",
                                          accent_kind="warn")
@@ -279,6 +288,26 @@ class HomeScreen(Screen):
             "home.continue.sub", activity=activity,
             phase=summary.phase or summary.display_state))
         self._continue.setVisible(True)
+
+    def set_pending_change(self, summary: RunSummary | None) -> None:
+        """FR-D11: name the saved change that the files do not have.
+
+        Without this the person must remember to go to the history.
+        The field report says they do not."""
+        if summary is None:
+            self._pending_change.setVisible(False)
+            return
+        self._pending_change_id = summary.run_id
+        request = " ".join(summary.request.split())[:52]
+        self._pending_change.set_texts(
+            text("home.pending", name=summary.name or request
+                 or summary.run_id),
+            text("home.pending.sub"))
+        self._pending_change.setVisible(True)
+
+    def _emit_saved_change(self) -> None:
+        if self._pending_change_id:
+            self.open_saved_change.emit(self._pending_change_id)
 
     def set_resumable_explain(self, state: dict | None) -> None:
         """The waiting explanation, back on the home screen (FR-X2)."""
