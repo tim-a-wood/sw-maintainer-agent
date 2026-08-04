@@ -467,6 +467,59 @@ def _proxy_app(qt_app):
     return AppProxy
 
 
+def test_delivered_change_reaches_the_project_files(qt_app, tmp_path,
+                                                    monkeypatch):
+    """FR-D10: the field fault — a finished run left the project files
+    untouched, because the commit lives on its own branch inside an
+    isolated worktree. The Done screen now brings it home."""
+    from maintain.models import RunRecord, RunState
+
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    repository = Path(config.repository)
+
+    calls: list = []
+    monkeypatch.setattr(window.controller, "integrate",
+                        lambda run_id, branch: calls.append((run_id, branch)))
+    monkeypatch.setattr(window.controller, "current_branch", lambda: "main")
+
+    record = RunRecord(
+        run_id="f-0143", mode="feature", request="Change the value",
+        repository=str(repository),
+        state=str(RunState.DELIVERED), branch="maintain/f-0143",
+        worktree=str(repository), base_commit="",
+        evidence={"source_branch": "main", "changed_files": ["app.py"],
+                  "delivery": {"commit": "abc123"}})
+    window.done.show_record(record, files=["app.py"])
+    window._done_run_id = record.run_id
+    window._done_branch = str(record.evidence["source_branch"])
+    window.done.set_applied(False, "main")
+    assert window.done._apply_holder.isVisibleTo(window.done)
+
+    # The step targets the branch the person started from, never the
+    # maintenance branch the run committed on.
+    window.done.apply_change.emit()
+    assert calls == [("f-0143", "main")]
+    assert not window.done._apply_holder.isVisibleTo(window.done)
+
+    # A refusal reaches the person as words about their project.
+    window.done.set_applied(False, "main")
+    def refuse(run_id, branch):
+        from maintain.errors import DeliveryError
+        raise DeliveryError("The target working tree is not clean.")
+    monkeypatch.setattr(window.controller, "integrate", refuse)
+    window.done.apply_change.emit()
+    assert "not committed" in window.done.message.text()
+    assert window.done._apply_holder.isVisibleTo(window.done)
+
+    # Standing on another branch is named before anything runs.
+    monkeypatch.setattr(window.controller, "current_branch",
+                        lambda: "experiment")
+    window.done.apply_change.emit()
+    assert "experiment" in window.done.message.text()
+
+
 def test_launch_entry_point_paths(qt_app, tmp_path, monkeypatch):
     from PySide6 import QtWidgets
 

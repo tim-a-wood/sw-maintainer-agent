@@ -227,6 +227,21 @@ class Controller(QObject):
                 return summary
         return None
 
+    def current_branch(self) -> str:
+        from maintain.workspace import git
+        try:
+            return git(self.config.repository, "branch", "--show-current")
+        except Exception:   # noqa: BLE001 - display only
+            return ""
+
+    def integrate(self, run_id: str, branch: str) -> None:
+        """Fast-forward the person's branch onto the delivered commit.
+
+        The engine refuses when the working tree is dirty, when another
+        branch is checked out, or when the branch moved since the run
+        started. Every refusal reaches the person as words."""
+        self.engine.integrate(run_id, branch, confirmed=True)
+
     def diff_text(self, record: RunRecord) -> str:
         """The verified diff, read from the newest recorded artifact so the
         UI thread never waits on a git subprocess; git is the fallback."""

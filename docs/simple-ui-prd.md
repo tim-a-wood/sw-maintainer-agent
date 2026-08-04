@@ -1584,3 +1584,39 @@ twenty round trips.
 Together these make one sweep possible: open the first issue,
 decide, decide, decide, until the list is empty. A test drives that
 sweep from end to end.
+
+### 14.48 The change that never reached the files (FR-D10)
+
+The worst fault of all, from the field: a full run finished, the
+Done screen said "The change is saved.", and the project files did
+not change.
+
+Nothing was lost. The engine works in an isolated worktree and
+makes its verified commit on a branch of its own,
+`maintain/<run-id>`. The person's folder stays on their own branch,
+so their files keep the old content. That isolation is correct: no
+run touches the person's working tree without permission.
+
+The fault was the missing last step. The engine has always had one
+— `integrate`, which fast-forwards the person's branch onto the
+delivered commit, and which refuses when the working tree is
+dirty, when another branch is checked out, or when the branch moved
+after the run started. No screen ever called it. The Done screen
+offered only "Copy the merge command", which sends the person to a
+terminal — the one place this app exists to avoid.
+
+- FR-D10. The Done screen names the state plainly ("The change is
+  a commit on its own branch. Your project files do not have it
+  yet.") and offers one action: "Add the change to my files". It
+  targets the branch the run started from, which the record keeps
+  as `source_branch` — never the maintenance branch the commit
+  sits on. After it succeeds the screen says "The change is in
+  your files, on branch main." and the offer goes away. A run
+  whose change is already integrated never shows the offer.
+- Each refusal reaches the person as words about their project,
+  not as a git message: uncommitted changes, a different branch
+  checked out, or a branch that moved and needs the merge command.
+
+A journey test drives a whole run to Save, proves the project file
+still holds the old content, presses the step, and proves the file
+holds the new content on the person's own branch.

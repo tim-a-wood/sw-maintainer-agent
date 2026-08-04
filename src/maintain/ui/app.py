@@ -445,6 +445,7 @@ class MainWindow(QMainWindow):
         self.done.new_change.connect(lambda: self._new_change("feature"))
         self.done.open_history.connect(self.show_history)
         self.done.explain_change.connect(self._explain_delivered_change)
+        self.done.apply_change.connect(self._apply_delivered_change)
 
         self.history.open_run.connect(self._open_run)
         self.history.back.connect(self.show_home)
@@ -640,6 +641,43 @@ class MainWindow(QMainWindow):
             self.show_error(str(exc))
             return
         self.close()
+
+    def _apply_delivered_change(self) -> None:
+        """FR-D10: put the delivered commit into the person's files.
+
+        The run commits on its own branch inside an isolated worktree,
+        so the project folder does not change until this step. Without
+        it the whole run looks like it did nothing."""
+        run_id = getattr(self, "_done_run_id", "")
+        branch = getattr(self, "_done_branch", "")
+        if not run_id or not branch:
+            return
+        current = self.controller.current_branch()
+        if current and current != branch:
+            self.done.message.set_state("bad", text(
+                "done.apply.branch", current=current, wanted=branch))
+            return
+        try:
+            with busy_pointer():
+                self.controller.integrate(run_id, branch)
+        except MaintainError as exc:
+            self.done.message.set_state("bad", self._apply_words(str(exc)))
+            return
+        self.done.set_applied(True, branch)
+        self.done.message.set_state("good",
+                                    text("done.apply.done", branch=branch))
+        self.toast(text("done.apply.done", branch=branch))
+
+    def _apply_words(self, reason: str) -> str:
+        """The engine's refusals, in words about the person's project."""
+        lowered = reason.lower()
+        if "not clean" in lowered:
+            return text("done.apply.dirty")
+        if "changed after the maintenance run" in lowered or \
+                "fast-forward" in lowered:
+            return text("done.apply.moved",
+                        branch=getattr(self, "_done_branch", ""))
+        return reason
 
     def _maybe_show_release_notes(self) -> None:
         """FR-U5: one modal on the first start after the version
@@ -1984,6 +2022,14 @@ class MainWindow(QMainWindow):
                 first=delivered == 1,
                 note=self._change_note(record, iterations=iterations),
                 issues_closed=issues_closed)
+            self._done_run_id = record.run_id
+            # The run commits on maintain/<run-id> inside its worktree.
+            # Integration targets the branch the person started from.
+            self._done_branch = str(record.evidence.get("source_branch")
+                                    or self.controller.current_branch())
+            self.done.set_applied(
+                bool(record.evidence.get("delivery", {})
+                     .get("integrated_commit")), record.branch)
             self._set_run_footer(False)
             self._set_stage(5)
             self.stage_header.setVisible(False)

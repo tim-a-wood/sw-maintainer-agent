@@ -1081,6 +1081,7 @@ class DoneScreen(Screen):
     new_change = Signal()
     open_history = Signal()
     explain_change = Signal()
+    apply_change = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -1129,6 +1130,20 @@ class DoneScreen(Screen):
         self.first_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.first_note.setVisible(False)
         self.add(self.first_note)
+        # FR-D10: the run makes a commit on its own branch. Without this
+        # step the person's files never change, and the work looks lost.
+        self.apply_hint = label(text("done.apply.sub"), "Hint")
+        self.apply_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.add(self.apply_hint)
+        apply_row = QHBoxLayout()
+        apply_row.addStretch(1)
+        self.apply_button = button(text("done.apply"), "Primary",
+                                   self.apply_change.emit)
+        apply_row.addWidget(self.apply_button)
+        apply_row.addStretch(1)
+        self._apply_holder = QWidget()
+        self._apply_holder.setLayout(apply_row)
+        self.add(self._apply_holder)
         self.message = StatusLine()
         self.add(self.message)
         self.add_gap()
@@ -1158,6 +1173,13 @@ class DoneScreen(Screen):
         self.add(holder2)
         self._branch = ""
         self._note = ""
+
+    def set_applied(self, applied: bool, branch: str = "") -> None:
+        """Show the step, or say the files already have the change."""
+        self._apply_holder.setVisible(not applied)
+        self.apply_hint.setText(
+            text("done.apply.here", branch=branch) if applied
+            else text("done.apply.sub"))
 
     def show_record(self, record: RunRecord, files: list[str] = (),
                     checks: int = 0, iterations: int = 0,
