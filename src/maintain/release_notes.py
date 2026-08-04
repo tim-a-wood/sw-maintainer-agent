@@ -36,6 +36,12 @@ NOTES: dict[str, tuple[str, ...]] = {
         "After you close an issue, the next one opens. The list does not interrupt you.",
         "A return to the list keeps your position in it.",
     ),
+    "0.9.6": (
+        "A saved change can go into your project files with one button.",
+        "Before this, the change stayed on its own branch and your files did not change.",
+        "The last screen tells you if your files have the change.",
+        "If the app cannot add the change, it tells you the cause in plain words.",
+    ),
 }
 
 
