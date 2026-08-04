@@ -42,6 +42,12 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The last screen tells you if your files have the change.",
         "If the app cannot add the change, it tells you the cause in plain words.",
     ),
+    "0.9.7": (
+        "The home screen names a saved change that your files do not have.",
+        "The button to add it is also on each saved run in the history.",
+        "Before this, the button was only on the last screen of the run.",
+        "The saved run also gives you the merge command, if you want a terminal.",
+    ),
 }
 
 
