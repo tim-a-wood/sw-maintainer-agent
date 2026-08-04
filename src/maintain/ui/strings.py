@@ -318,6 +318,10 @@ STR: dict[str, str] = {
     "issues.source.import": "Import",
     "issues.source.described": "Described",
     "issues.source.talk": "Discussion",
+    "issue.previous": "‹ Previous",
+    "issue.next": "Next ›",
+    "issue.position": "Issue {index} of {total}",
+    "issue.walk.end": "That was the last issue.",
     "issues.busy": "First stop the run. Then work on the issues.",
 
     # Issue detail

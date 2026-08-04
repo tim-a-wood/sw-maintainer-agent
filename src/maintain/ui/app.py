@@ -377,6 +377,7 @@ class MainWindow(QMainWindow):
         self.issue_detail.open_run.connect(self._open_run)
         self.issue_detail.reopen.connect(self._reopen_issue)
         self.issue_detail.remove.connect(self._remove_issue)
+        self.issue_detail.step.connect(self._step_issue)
         # Back from a detail keeps the person's tab; every entry from
         # outside the tracker starts on the open work.
         self.issue_detail.back.connect(
@@ -860,6 +861,9 @@ class MainWindow(QMainWindow):
             keep_filter=keep_filter)
         self._set_run_footer(False)
         self.show_screen("issues")
+        if keep_filter:
+            # A return from one issue keeps the row in view.
+            self.issues_list.restore_place()
 
     def _open_issue(self, issue_id: str) -> None:
         try:
@@ -870,7 +874,64 @@ class MainWindow(QMainWindow):
         run_name = (self._run_name_on_disk(issue.runs[-1]) or ""
                     if issue.runs else "")
         self.issue_detail.load(issue, run_name=run_name)
+        # FR-I10: the detail knows its place in the list on the screen,
+        # so the person can walk the issues without a trip back.
+        self.issues_list.keep_place()
+        self._issue_walk = self.issues_list.shown_ids()
+        self._show_walk_position(issue_id)
         self.show_screen("issue")
+
+    def _show_walk_position(self, issue_id: str) -> None:
+        walk = getattr(self, "_issue_walk", [])
+        index = walk.index(issue_id) if issue_id in walk else -1
+        self.issue_detail.set_position(index, len(walk))
+
+    def _step_issue(self, direction: int) -> None:
+        """Previous or next in the list the person is walking."""
+        walk = getattr(self, "_issue_walk", [])
+        current = self.issue_detail.issue_id
+        if current not in walk:
+            return
+        target = walk.index(current) + direction
+        if 0 <= target < len(walk):
+            self._open_issue_in_walk(walk[target], walk)
+
+    def _open_issue_in_walk(self, issue_id: str, walk: list) -> None:
+        """Open one issue without rebuilding the walk under the person."""
+        try:
+            issue = self.controller.issues.get(issue_id)
+        except MaintainError as exc:
+            self.toast(str(exc))
+            return
+        run_name = (self._run_name_on_disk(issue.runs[-1]) or ""
+                    if issue.runs else "")
+        self.issue_detail.load(issue, run_name=run_name)
+        self._issue_walk = walk
+        self._show_walk_position(issue_id)
+        self.show_screen("issue")
+
+    def _advance_after_action(self, issue_id: str) -> bool:
+        """After a decision, go to the issue that took its place.
+
+        Triage is a sweep: a decision should move the person forward,
+        not return them to the list to find their place again. When the
+        issue stays on the screen (the tab still shows it) the detail
+        stays with it."""
+        walk = getattr(self, "_issue_walk", [])
+        if issue_id not in walk:
+            return False
+        position = walk.index(issue_id)
+        self.issues_list.show_issues(
+            display_order(self.controller.issues.load()), keep_filter=True)
+        remaining = self.issues_list.shown_ids()
+        if issue_id in remaining:
+            self._open_issue_in_walk(issue_id, remaining)
+            return True
+        if not remaining:
+            return False
+        following = remaining[min(position, len(remaining) - 1)]
+        self._open_issue_in_walk(following, remaining)
+        return True
 
     def _new_issue(self) -> None:
         self.issue_detail.load(None)
@@ -904,12 +965,14 @@ class MainWindow(QMainWindow):
     def _close_issue_with(self, issue_id: str, reason: str) -> None:
         self.controller.issues.close(issue_id, reason)
         self.toast(text("issue.closed", id=issue_id))
-        self.show_issues(keep_filter=True)
+        if not self._advance_after_action(issue_id):
+            self.show_issues(keep_filter=True)
 
     def _reopen_issue(self, issue_id: str) -> None:
         self.controller.issues.reopen(issue_id)
         self.toast(text("issue.reopened", id=issue_id))
-        self._open_issue(issue_id)
+        if not self._advance_after_action(issue_id):
+            self._open_issue(issue_id)
 
     def _remove_issue(self, issue_id: str) -> None:
         if not self.ask_confirm(text("issue.remove.title", id=issue_id),
@@ -918,7 +981,8 @@ class MainWindow(QMainWindow):
             return
         self.controller.issues.delete(issue_id)
         self.toast(text("issue.removed", id=issue_id))
-        self.show_issues(keep_filter=True)
+        if not self._advance_after_action(issue_id):
+            self.show_issues(keep_filter=True)
 
     def _repair_issue(self, issue_id: str) -> None:
         """FR-I9: picking one issue offers its relatives — the issues

@@ -589,6 +589,63 @@ def test_update_prompt_applies_or_skips(qt_app, tmp_path, monkeypatch):
     assert window._update_timer.isActive()
 
 
+def test_issue_triage_walks_the_list(qt_app, tmp_path, monkeypatch):
+    """FR-I10: the field faults — the close reasons sat off the screen
+    in a row too wide for the window, and every decision threw the
+    person back to the list to find their place again."""
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    for n in range(6):
+        window.controller.issues.add(title=f"Fault {n}", file=f"m{n}.py")
+    window.show_issues()
+
+    order = window.issues_list.shown_ids()
+    window._open_issue(order[0])
+    detail = window.issue_detail
+    assert _screen(window) == "issue"
+    assert detail._walk_holder.isVisibleTo(detail)
+    assert "1" in detail.position.text() and "6" in detail.position.text()
+    assert not detail.previous_button.isEnabled()
+
+    # Next and Previous move without a trip back to the list.
+    detail.step.emit(1)
+    assert detail.issue_id == order[1]
+    assert detail.previous_button.isEnabled()
+    detail.step.emit(-1)
+    assert detail.issue_id == order[0]
+    detail.step.emit(-1)      # already first: nothing moves
+    assert detail.issue_id == order[0]
+
+    # The close reasons live in a menu, so no width can hide them.
+    from maintain.issues import REASONS
+    menu = detail.reason_menu()
+    labels = [action.text() for action in menu.actions() if action.text()]
+    assert len(labels) == len(REASONS) + 1     # the reasons and the question
+    choices = [action for action in menu.actions()
+               if action.text() and action.isEnabled()]
+    assert len(choices) == len(REASONS)
+
+    # Choosing a reason closes that issue, and the decision advances
+    # to the issue that took its place.
+    closing = detail.issue_id
+    choices[0].trigger()
+    menu.deleteLater()
+    closed = window.controller.issues.get(closing)
+    assert closed.status == "closed" and closed.closed_reason == REASONS[0]
+    assert _screen(window) == "issue"
+    assert detail.issue_id == order[1]
+
+    # The sweep runs to the end, then lands on the list.
+    for _ in range(10):
+        if _screen(window) != "issue":
+            break
+        window._close_issue_with(detail.issue_id, "fixed")
+    assert _screen(window) == "issues"
+    assert not [x for x in window.controller.issues.load()
+                if x.status != "closed"]
+
+
 def test_tracker_never_hides_new_issues(qt_app, tmp_path, monkeypatch):
     """The field bug: the tracker said "Open 20" and showed nothing.
 

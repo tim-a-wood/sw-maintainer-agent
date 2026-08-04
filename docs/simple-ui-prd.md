@@ -1552,3 +1552,35 @@ still sets its own flags. Three allowances stand: the check runner
 stop path, and the updater, which shows its console on purpose
 because the app is closing and a silent reinstall would look like
 nothing happened.
+
+### 14.47 Triage: the close that could not be clicked (FR-I10)
+
+Two faults from the field, one cause between them: the tracker was
+built for one issue at a time, but the person uses it as a list.
+
+The first fault stopped work. The close reasons appeared as one row
+of five buttons. That row needs 588 pixels. The window gives 588 at
+its default width and less when it is narrower, and the page
+scrolls only up and down. So the last reasons sat off the screen,
+and the person could not select any of them. The reasons are now a
+menu under the Close button. A menu never runs out of width, it
+fits any window, and the keyboard reaches every line.
+
+The second fault was the cost of each decision. To act on one
+issue the person opened it, decided, went back to the list, found
+their place again, and opened the next one. Twenty issues cost
+twenty round trips.
+
+- FR-I10. The issue screen knows its place in the list on the
+  screen. One line says "Issue 3 of 24". Previous and Next move
+  through exactly the rows the current tab and filter show, and
+  the left and right arrow keys do the same when the person is
+  not typing. A decision — close, reopen, or remove — moves to the
+  issue that took its place instead of returning to the list; when
+  no issues remain, the list comes back. A return to the list
+  keeps the scroll position, so the row the person left is still
+  in view.
+
+Together these make one sweep possible: open the first issue,
+decide, decide, decide, until the list is empty. A test drives that
+sweep from end to end.

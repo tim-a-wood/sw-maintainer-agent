@@ -5,11 +5,11 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, QTimer, Qt, Signal
+from PySide6.QtCore import QPoint, QSignalBlocker, QTimer, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QKeySequence, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QFrame,
                                QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QPlainTextEdit, QPushButton, QRadioButton,
+                               QMenu, QPlainTextEdit, QPushButton, QRadioButton,
                                QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
 from maintain.downloads import default_downloads
@@ -1437,6 +1437,21 @@ class IssuesScreen(Screen):
         self._query = value.strip().lower()
         self._render()
 
+    def _scroller(self):
+        found = self.findChildren(QScrollArea)
+        return found[0] if found else None
+
+    def keep_place(self) -> None:
+        """Remember the scroll position before a trip into an issue."""
+        scroller = self._scroller()
+        self._place = scroller.verticalScrollBar().value() if scroller else 0
+
+    def restore_place(self) -> None:
+        """Come back to the row the person left, not to the top."""
+        scroller = self._scroller()
+        if scroller is not None and getattr(self, "_place", 0):
+            scroller.verticalScrollBar().setValue(self._place)
+
     def show_issues(self, issues: list, keep_filter: bool = False) -> None:
         self._issues = list(issues)
         # A fresh visit starts on the open work; a stale status tab or
@@ -1449,6 +1464,13 @@ class IssuesScreen(Screen):
             self.search.setText("")   # triggers one render through the slot
             return
         self._render()
+
+    def shown_ids(self) -> list[str]:
+        """The ids on the screen now, in the order the person sees.
+
+        The issue detail walks exactly this sequence, so Next means
+        the next row and not a surprise from another filter."""
+        return [issue.id for issue in self._issues if self._matches(issue)]
 
     def _matches(self, issue) -> bool:
         if self._filter != "all" and issue.status != self._filter:
@@ -1519,11 +1541,31 @@ class IssueDetailScreen(Screen):
     open_run = Signal(str)
     reopen = Signal(str)
     remove = Signal(str)
+    step = Signal(int)                # -1 previous, +1 next
     back = Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self.issue_id = ""
+        # FR-I10: the tracker is a list you walk. One line says where
+        # you are; two buttons move without a trip back to the list.
+        walk = QHBoxLayout()
+        walk.setSpacing(8)
+        self.previous_button = button(text("issue.previous"), "Ghost",
+                                      lambda: self.step.emit(-1))
+        self.next_button = button(text("issue.next"), "Ghost",
+                                  lambda: self.step.emit(1))
+        self.position = label("", "Hint")
+        for control in (self.previous_button, self.next_button):
+            control.setStyleSheet("padding: 3px 9px; font-size: 12px;")
+        walk.addWidget(self.previous_button)
+        walk.addWidget(self.next_button)
+        walk.addWidget(self.position)
+        walk.addStretch(1)
+        self._walk_holder = QWidget()
+        self._walk_holder.setLayout(walk)
+        self._walk_holder.setVisible(False)
+        self.add(self._walk_holder)
         self.eyebrow = label("", "Eyebrow")
         self.add(self.eyebrow)
         head = QHBoxLayout()
@@ -1543,7 +1585,7 @@ class IssueDetailScreen(Screen):
             text("issue.discuss"), "Secondary",
             lambda: self.note_panel.open(text("discuss.ask.body")))
         self.close_button = button(text("issue.close"), "Secondary",
-                                   self._toggle_reasons)
+                                   self._pick_reason)
         self.reopen_button = button(text("issue.reopen"), "Secondary",
                                     lambda: self.reopen.emit(self.issue_id))
         self.remove_button = button(text("issue.remove"), "Danger",
@@ -1559,20 +1601,6 @@ class IssueDetailScreen(Screen):
             actions.addWidget(control)
         actions.addStretch(1)
         self.add(self._actions_holder)
-        self._reasons_holder = QWidget()
-        reasons = QHBoxLayout(self._reasons_holder)
-        reasons.setSpacing(6)
-        reasons.setContentsMargins(0, 0, 0, 0)
-        reasons.addWidget(label(text("issue.close.pick"), "Hint"))
-        for reason in REASONS:
-            control = button(text("issues.reason." + reason), "Secondary",
-                             lambda r=reason: self.close_reason.emit(
-                                 self.issue_id, r))
-            control.setStyleSheet("padding: 4px 10px; font-size: 12px;")
-            reasons.addWidget(control)
-        reasons.addStretch(1)
-        self._reasons_holder.setVisible(False)
-        self.add(self._reasons_holder)
         self.repair_hint = label(text("issue.repair.sub"), "Hint")
         self.add(self.repair_hint)
         self.run_button = button("", "Ghost",
@@ -1629,8 +1657,42 @@ class IssueDetailScreen(Screen):
             button(text("issue.save"), "Primary", self.save.emit),
             button(text("history.back"), "Ghost", self.back.emit))
 
-    def _toggle_reasons(self) -> None:
-        self._reasons_holder.setVisible(not self._reasons_holder.isVisible())
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        """The arrow keys walk the list, unless the person is typing."""
+        typing = isinstance(QApplication.focusWidget(),
+                            (QLineEdit, QPlainTextEdit))
+        if not typing and self._walk_holder.isVisible():
+            if event.key() == Qt.Key.Key_Left:
+                self.step.emit(-1)
+                return
+            if event.key() == Qt.Key.Key_Right:
+                self.step.emit(1)
+                return
+        super().keyPressEvent(event)
+
+    def reason_menu(self) -> QMenu:
+        """The close reasons as a menu.
+
+        A row of five reason buttons needed more width than the window
+        had, so the last reasons sat off the screen and the person
+        could not select them. A menu never runs out of width, and the
+        keyboard reaches every line. Building and showing are separate
+        so a test can read the menu without a modal loop."""
+        menu = QMenu(self)
+        menu.addAction(text("issue.close.pick")).setEnabled(False)
+        menu.addSeparator()
+        for reason in REASONS:
+            action = menu.addAction(text("issues.reason." + reason))
+            action.triggered.connect(
+                lambda checked=False, value=reason:
+                self.close_reason.emit(self.issue_id, value))
+        return menu
+
+    def _pick_reason(self) -> None:
+        menu = self.reason_menu()
+        menu.aboutToHide.connect(menu.deleteLater)
+        menu.popup(self.close_button.mapToGlobal(
+            QPoint(0, self.close_button.height())))
 
     def severity(self) -> str:
         if self.radio_high.isChecked():
@@ -1639,13 +1701,22 @@ class IssueDetailScreen(Screen):
             return "low"
         return "medium"
 
+    def set_position(self, index: int, total: int) -> None:
+        """Where this issue sits in the list the person is walking."""
+        walking = total > 1 and index >= 0
+        self._walk_holder.setVisible(walking)
+        if walking:
+            self.position.setText(
+                text("issue.position", index=index + 1, total=total))
+            self.previous_button.setEnabled(index > 0)
+            self.next_button.setEnabled(index < total - 1)
+
     def load(self, issue, run_name: str = "") -> None:
         """issue=None starts a new, human-entered issue."""
         existing = issue is not None
         self.issue_id = issue.id if existing else ""
         self.message.set_state("plain", "")
         self._actions_holder.setVisible(existing)
-        self._reasons_holder.setVisible(False)
         self.note_panel.hide()
         runs = list(issue.runs) if existing else []
         self._run_id = runs[-1] if runs else ""
