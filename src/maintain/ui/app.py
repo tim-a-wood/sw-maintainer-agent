@@ -571,8 +571,13 @@ class MainWindow(QMainWindow):
         self._pending_issue_links = []
         runs = self.controller.runs()   # one scan feeds the whole screen
         self.home.set_resumable(self.controller.resumable_run(runs))
-        self.home.set_pending_change(
-            next((item for item in runs if item.awaiting_files), None))
+        # A hand merge leaves no mark on the record, so ask git before
+        # the card claims the change is still waiting.
+        pending = next((item for item in runs if item.awaiting_files), None)
+        if pending is not None and self.controller.in_files(
+                pending.delivered_commit):
+            pending = None
+        self.home.set_pending_change(pending)
         self.home.set_resumable_explain(
             None if self._side is not None
             else resumable_explain(self.store.config))
@@ -2205,12 +2210,12 @@ class MainWindow(QMainWindow):
         delivered = bool(delivery.get("commit")) and (
             record.state in {str(RunState.DELIVERED),
                              str(RunState.NEEDS_HUMAN_DELIVERY)})
+        applied = bool(delivery.get("integrated_commit")) or (
+            delivered and self.controller.in_files(str(delivery["commit"])))
         self._open_run_branch = str(
             (record.evidence.get("source_branch") if record else "")
             or self.controller.current_branch())
-        self.run_detail.set_apply(delivered,
-                                  bool(delivery.get("integrated_commit")),
-                                  self._open_run_branch)
+        self.run_detail.set_apply(delivered, applied, self._open_run_branch)
         self.show_screen("run")
 
     def _go_back_to(self, sequence: int) -> None:

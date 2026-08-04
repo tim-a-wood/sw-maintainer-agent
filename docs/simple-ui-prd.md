@@ -1650,6 +1650,11 @@ exists to remove.
   "Saved, but not in your files: <name>". The card opens that run,
   where the step waits. `RunSummary` carries `awaiting_files`, set
   while the record parses, so the home visit costs no extra reads.
+- The record is not the only truth. A person who merges by hand
+  leaves no mark on it, and a card that nags forever is worse than
+  no card. Both screens ask git as well — one
+  `git merge-base --is-ancestor` per candidate — and stay quiet
+  when the branch already has the commit.
 
 A journey test opens a saved run from the history, proves the offer
 is there, presses it, proves the fast-forward targets the person's

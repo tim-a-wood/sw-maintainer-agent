@@ -21,6 +21,7 @@ class RunSummary:
     phase: str = ""    # Plan, Build, Review, Test, or Save
     # FR-D11: a saved commit that the person's files do not have yet.
     awaiting_files: bool = False
+    delivered_commit: str = ""
 
     @property
     def display_state(self) -> str:
@@ -142,6 +143,7 @@ def list_runs(runtime_root: Path, repository: Path | None = None) -> list[RunSum
                 phase=run_phase(str(record.get("state", "")),
                                 record.get("tasks") or []),
                 awaiting_files=awaiting,
+                delivered_commit=str(delivery.get("commit", "")),
             )
             cache[run_dir.name] = (stamp.st_mtime_ns, stamp.st_size,
                                    resolved_repository, summary)

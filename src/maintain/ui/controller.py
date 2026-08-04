@@ -234,6 +234,22 @@ class Controller(QObject):
         except Exception:   # noqa: BLE001 - display only
             return ""
 
+    def in_files(self, commit: str) -> bool:
+        """True when the checked-out branch already has this commit.
+
+        A person who merged by hand leaves no mark on the record, so
+        the record alone would say the change is still waiting. Git
+        knows the truth, and one ancestor test asks it."""
+        if not commit:
+            return False
+        from maintain.workspace import git
+        try:
+            git(self.config.repository, "merge-base", "--is-ancestor",
+                commit, "HEAD")
+        except Exception:   # noqa: BLE001 - a no means a no
+            return False
+        return True
+
     def integrate(self, run_id: str, branch: str) -> None:
         """Fast-forward the person's branch onto the delivered commit.
 

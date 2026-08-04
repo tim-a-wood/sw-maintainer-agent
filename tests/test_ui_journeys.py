@@ -548,6 +548,14 @@ def test_saved_run_still_offers_its_change(qt_app, tmp_path, monkeypatch):
     summary = next(item for item in window.controller.runs()
                    if item.run_id == record.run_id)
     assert summary.awaiting_files
+    assert summary.delivered_commit == "abc123"
+
+    # The ancestor test answers about the real repository.
+    from maintain.workspace import git as run_git
+    head = run_git(repository, "rev-parse", "HEAD")
+    assert window.controller.in_files(head)
+    assert not window.controller.in_files("abc123")
+    assert not window.controller.in_files("")
 
     monkeypatch.setattr(window.controller, "current_branch", lambda: "main")
     calls: list = []
@@ -587,6 +595,18 @@ def test_saved_run_still_offers_its_change(qt_app, tmp_path, monkeypatch):
     # And the home screen stops asking.
     window.show_home()
     assert not window.home._pending_change.isVisibleTo(window.home)
+
+    # A hand merge leaves no mark on the record, so git is asked too:
+    # the record says the change waits, the branch already has it.
+    del record.evidence["delivery"]["integrated_commit"]
+    (run_dir / "run.json").write_text(json.dumps(record.to_dict()),
+                                      encoding="utf-8")
+    assert window.controller.runs()[0].awaiting_files
+    monkeypatch.setattr(window.controller, "in_files", lambda commit: True)
+    window.show_home()
+    assert not window.home._pending_change.isVisibleTo(window.home)
+    window._open_run(record.run_id)
+    assert not window.run_detail._apply_holder.isVisibleTo(window.run_detail)
 
 
 def test_launch_entry_point_paths(qt_app, tmp_path, monkeypatch):
