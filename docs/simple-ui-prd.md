@@ -1891,3 +1891,29 @@ correction package that is smaller than the first, carries the
 cause and the reworded note, and drops the project context; the
 good reply then lands; a step back reaches the plan gate; and the
 run still ends with the change in the person's own files.
+
+### 14.58 A notice can be closed (FR-H1)
+
+Two cards on the home screen speak without being asked: the run in
+work, and a ready release. Neither could be closed, so a change the
+person no longer wants sat there for good, and an update they are
+not ready for spoke at every visit.
+
+Both now carry a close mark in the corner. What the mark means
+differs, because the two notices differ:
+
+- FR-H1a. The update notice closes for now. Nothing is written
+  down, so the next look finds the same release and offers it
+  again. This is not the same as "Skip this version", which
+  remembers the version and stays quiet until a newer one arrives.
+  Both are kept: one is "not now", the other is "not this one".
+- FR-H1b. The continue notice closes for good, and that deletes
+  the change. A deletion cannot be taken back, so the app asks
+  first, and names the change in the question. A refusal keeps the
+  run exactly as it was.
+- The close mark is its own control. A press on it never opens the
+  card behind it.
+
+A test drives both: the update notice closes and returns at the
+next look; the continue notice keeps the run when the question is
+refused, and the run reads as discarded when it is accepted.

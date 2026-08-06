@@ -443,12 +443,18 @@ def run_state_chip(display_state: str) -> StateChip:
 
 
 class ChoiceButton(QFrame):
-    """A large choice card: an icon square, a bold title, and a sub line."""
+    """A large choice card: an icon square, a bold title, and a sub line.
+
+    A notice card carries a close mark in its corner. What the close
+    means belongs to the owner: some notices go away for now, some go
+    away for good.
+    """
 
     clicked = Signal()
+    dismissed = Signal()
 
     def __init__(self, icon_name: str, title: str, sub: str,
-                 accent_kind: str = "accent") -> None:
+                 accent_kind: str = "accent", closable: bool = False) -> None:
         super().__init__()
         self.setObjectName("Choice")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -471,6 +477,15 @@ class ChoiceButton(QFrame):
         column.addWidget(self.title_label)
         column.addWidget(self.sub_label)
         row.addLayout(column, 1)
+        self.close_button: QPushButton | None = None
+        if closable:
+            self.close_button = QPushButton("✕")
+            self.close_button.setObjectName("CardClose")
+            self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.close_button.setFixedSize(22, 22)
+            self.close_button.clicked.connect(self.dismissed.emit)
+            row.addWidget(self.close_button,
+                          alignment=Qt.AlignmentFlag.AlignTop)
 
     def set_texts(self, title: str, sub: str) -> None:
         self.title_label.setText(title)
@@ -484,6 +499,13 @@ class ChoiceButton(QFrame):
         style.polish(self)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        # The close mark is its own control. A press on it must not
+        # also open the card behind it.
+        if (self.close_button is not None
+                and self.close_button.geometry().contains(
+                    event.position().toPoint())):
+            super().mouseReleaseEvent(event)
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mouseReleaseEvent(event)

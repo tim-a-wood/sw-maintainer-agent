@@ -363,6 +363,8 @@ class MainWindow(QMainWindow):
         self.home.open_settings.connect(self._show_settings)
         self.home.update_clicked.connect(self._update_clicked)
         self.home.update_skipped.connect(self._skip_update)
+        self.home.update_hidden.connect(self._hide_update)
+        self.home.drop_run.connect(self._drop_run)
         self.settings.updates_toggled.connect(self._updates_toggled)
         self.home.open_projects.connect(self.show_projects)
         self.home.open_issues.connect(self.show_issues)
@@ -635,6 +637,31 @@ class MainWindow(QMainWindow):
                                 text("update.confirm.no")):
             return
         self._apply_update(tag)
+
+    def _hide_update(self) -> None:
+        """FR-H1: close the update notice for now. The next look finds
+        the same release and offers it again; nothing is remembered."""
+        self._update_tag = ""
+        self.home.set_update("")
+        self.toast(text("update.hidden"))
+
+    def _drop_run(self, run_id: str) -> None:
+        """FR-H1: close the continue notice for good. The run is
+        discarded, so the question must be asked first."""
+        if not run_id or self.controller.busy:
+            return
+        summary = next((item for item in self.controller.runs()
+                        if item.run_id == run_id), None)
+        name = (summary.name or " ".join(summary.request.split())[:52]
+                or run_id) if summary is not None else run_id
+        if not self.ask_confirm(text("drop.title"),
+                                text("drop.body", name=name),
+                                text("drop.yes"), text("discard.no")):
+            return
+        if self.controller.discard(run_id):
+            self.controller.wait_settled(10.0)
+        self.toast(text("drop.done"))
+        self.show_home()
 
     def _skip_update(self) -> None:
         tag = self._update_tag

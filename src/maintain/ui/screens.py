@@ -175,6 +175,8 @@ class HomeScreen(Screen):
     open_saved_change = Signal(str)  # run_id
     update_clicked = Signal()
     update_skipped = Signal()
+    update_hidden = Signal()          # FR-H1: hide now, look again later
+    drop_run = Signal(str)            # FR-H1: run_id, deleted for good
 
     def __init__(self, project_name: str, project_path: str) -> None:
         super().__init__()
@@ -191,7 +193,11 @@ class HomeScreen(Screen):
         self.momentum.setVisible(False)
         self.add(self.momentum)
         self.add_gap(4)
-        self._continue = ChoiceButton("play", "", "", accent_kind="warn")
+        # FR-H1: a notice can be closed. The run notice goes for good
+        # after a question; the update notice returns on the next look.
+        self._continue = ChoiceButton("play", "", "", accent_kind="warn",
+                                      closable=True)
+        self._continue.dismissed.connect(self._emit_drop_run)
         self._continue.setVisible(False)
         self._continue.clicked.connect(self._emit_continue)
         self._continue_run_id = ""
@@ -212,7 +218,8 @@ class HomeScreen(Screen):
         self.add(self._pending_change)
         # A ready release: one card to update, one small way to skip.
         self._update_card = ChoiceButton("download", "", "",
-                                         accent_kind="warn")
+                                         accent_kind="warn", closable=True)
+        self._update_card.dismissed.connect(self.update_hidden.emit)
         self._update_card.setVisible(False)
         self._update_card.clicked.connect(self.update_clicked.emit)
         self.add(self._update_card)
@@ -359,6 +366,10 @@ class HomeScreen(Screen):
             text("home.explain.continue"),
             goal or text("home.explain.continue.sub"))
         self._continue_explain.setVisible(True)
+
+    def _emit_drop_run(self) -> None:
+        if self._continue_run_id:
+            self.drop_run.emit(self._continue_run_id)
 
     def _emit_continue(self) -> None:
         if self._continue_run_id:

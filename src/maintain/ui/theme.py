@@ -143,6 +143,9 @@ QFrame#Choice {{ border: 1px solid {p.edge}; border-radius: 9px;
 QFrame#Choice:hover, QFrame#Choice:focus {{
     border-color: {p.accent}; background: {p.accent_soft}; }}
 QFrame#Choice[active="true"] {{ border-color: {p.accent}; }}
+QPushButton#CardClose {{ border: none; background: transparent;
+    color: {p.faint}; font-size: 13px; padding: 0; }}
+QPushButton#CardClose:hover {{ color: {p.ink}; }}
 QLabel#ChoiceTitle {{ font-size: 14px; font-weight: 600; }}
 QLabel#ChoiceSub {{ font-size: 12px; color: {p.dim}; }}
 

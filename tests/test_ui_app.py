@@ -1932,3 +1932,58 @@ def test_fault_flow_ties_into_the_issue_tracker(qt_app, tmp_path, monkeypatch):
     wait_until(qt_app, lambda: not window.controller.busy,
                message="stop grouped")
     assert not errors, errors
+
+
+def test_home_notices_can_be_closed(qt_app, tmp_path, monkeypatch):
+    """FR-H1: both notices carry a close mark. The update notice goes
+    away for now and returns at the next look. The continue notice
+    deletes the change, and only after a question."""
+    from maintain.ui import app as app_module
+
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(app_module, "update_available",
+                        lambda *args, **kwargs: "")
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    toasts: list[str] = []
+    window.toast = toasts.append
+    window.show_home()
+
+    # The update notice: closed now, offered again at the next look.
+    window._offer_update("v9.9.9")
+    assert window.home._update_card.isVisibleTo(window.home)
+    assert window.home._update_card.close_button is not None
+    window.home._update_card.dismissed.emit()
+    assert not window.home._update_card.isVisibleTo(window.home)
+    assert any("shows again" in item for item in toasts)
+    window._offer_update("v9.9.9")
+    assert window.home._update_card.isVisibleTo(window.home), (
+        "a closed update notice must return at the next look")
+
+    # The continue notice: a question first, and a no keeps the run.
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="packet")
+    run_id = window.current_handoff.request.run_id
+    window.controller.stop()
+    wait_until(qt_app, lambda: not window.controller.busy, message="paused")
+    window.show_home()
+    assert window.home._continue.isVisibleTo(window.home)
+    assert window.home._continue.close_button is not None
+
+    window.ask_confirm = lambda *args, **kwargs: False
+    window.home._continue.dismissed.emit()
+    assert any(item.run_id == run_id for item in window.controller.runs())
+
+    # A yes deletes the change for good, and the notice goes.
+    window.ask_confirm = lambda *args, **kwargs: True
+    window.home._continue.dismissed.emit()
+    wait_until(qt_app, lambda: not window.controller.busy, message="deleted")
+    window.show_home()
+    assert any("deleted" in item for item in toasts)
+    gone = next(item for item in window.controller.runs()
+                if item.run_id == run_id)
+    assert gone.display_state == "Discarded"
+    assert window.controller.resumable_run() is None
+    assert not window.home._continue.isVisibleTo(window.home)
