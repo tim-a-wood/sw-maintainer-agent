@@ -12,7 +12,7 @@ from __future__ import annotations
 STR: dict[str, str] = {
     # Application
     "app.title": "Maintain",
-    "app.footer": "Isolated workspace",
+    "app.footer": "A change is in work",
     "app.footer.side": "Read-only exchange",
     "app.footer.tip": "Run {run}. The work happens in an isolated copy "
                       "of the repository.",
@@ -54,6 +54,7 @@ STR: dict[str, str] = {
     "update.confirm.yes": "Update now",
     "update.confirm.no": "Not now",
     "update.missing": "The update helper is not in this build.",
+    "update.stuck": "The last update did not take. Try again. If this repeats, install again from the GitHub page.",
     "notes.title": "What is new in version {version}",
     "notes.version": "Version {version}:",
     "notes.continue": "Continue",
@@ -137,6 +138,7 @@ STR: dict[str, str] = {
     "send.lead": "Give this package to Copilot. Use one of the ways below.",
     "send.drag": "Drag this package into Copilot.",
     "send.copy_file": "Copy the package",
+    "send.copy_again": "Copy again",
     "send.export": "Export…",
     "send.attachments": "Attachments — go into this packet",
     "send.attach.add": "Add files…",
@@ -165,6 +167,11 @@ STR: dict[str, str] = {
     "exchange.sent": "Sent · {name}",
     "exchange.sent.show": "Show",
     "exchange.newest": "Open the newest download",
+    "exchange.reply.hint": "You can also paste the reply, or drop the file on this window.",
+    "exchange.more": "More …",
+    "exchange.show.task": "Show the task text",
+    "exchange.show.global": "Show the project rules",
+    "exchange.reply.file": "Select the reply file…",
     "exchange.newest.none": "No new file is in the Downloads folder.",
     "exchange.newest.wrong": "The newest download is not the reply: {name}",
     "exchange.drop.sub": "Or click to select the file.",

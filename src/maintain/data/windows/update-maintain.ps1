@@ -57,10 +57,12 @@ try {
     }
 
     # The release's installer resolves, verifies, and installs the same
-    # reference itself, unless the environment already pins a package
-    # source (the CI path).
-    if ([string]::IsNullOrWhiteSpace(
-            [Environment]::GetEnvironmentVariable("MAINTAIN_PACKAGE_SOURCE"))) {
+    # reference itself. A pinned MAINTAIN_PACKAGE_SOURCE is CI's tool
+    # for offline installs; outside CI a leftover pin would make every
+    # update silently reinstall the pinned old build, so the update
+    # clears it and names its own release.
+    if ([string]::IsNullOrEmpty($env:CI)) {
+        $env:MAINTAIN_PACKAGE_SOURCE = $null
         $env:MAINTAIN_PACKAGE_REF = $Reference
     }
     & $installer

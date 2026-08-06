@@ -282,12 +282,15 @@ class HomeScreen(Screen):
         self.momentum.setText(value)
         self.momentum.setVisible(bool(value))
 
-    def set_update(self, version: str) -> None:
-        """FR-U2: a ready release shows as one card; empty hides it."""
+    def set_update(self, version: str, stuck: bool = False) -> None:
+        """FR-U2: a ready release shows as one card; empty hides it.
+
+        With stuck, the card says the last update did not take —
+        repeating the plain offer would hide a real fault."""
         if version:
             self._update_card.set_texts(
                 text("update.ready", version=version),
-                text("update.ready.sub"))
+                text("update.stuck") if stuck else text("update.ready.sub"))
         self._update_card.setVisible(bool(version))
         self._update_skip.setVisible(bool(version))
         self._update_skip.parentWidget().setVisible(bool(version))
@@ -556,7 +559,13 @@ class DescribeScreen(Screen):
 
 
 class ExchangeScreen(Screen):
-    """One screen for the whole exchange: the packet out, the reply in."""
+    """One screen for the whole exchange: the packet out, the reply in.
+
+    Two things happen here, so two things show: the package, already
+    in the clipboard, and the one button that brings the reply back.
+    Every other control waits inside the More menu. The window itself
+    takes a pasted or dropped reply on any screen, so the screen
+    carries no zones of its own."""
 
     reply_submitted = Signal(object)   # ManualReply
     kept_attachment = Signal(list)     # list[Path]
@@ -567,36 +576,39 @@ class ExchangeScreen(Screen):
     import_attachments = Signal()
     export_requested = Signal()
     scan_focus = Signal(str)
+    show_task = Signal()
+    show_global = Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self.handoff: PacketHandoff | None = None
         self.reply_open = False
         self.package_style = "markdown"
-        self.column.setContentsMargins(26, 14, 26, 16)
-        self.column.setSpacing(8)
+        self.column.setContentsMargins(30, 18, 30, 16)
+        self.column.setSpacing(9)
         self.eyebrow = label("", "Eyebrow")
         self.add(self.eyebrow)
         self.title = label("", "Title")
         self.add(self.title)
-
-        # ---- the send region ----
-        send_frame = QFrame()
-        send_frame.setObjectName("SendRegion")
-        send_column = QVBoxLayout(send_frame)
-        send_column.setContentsMargins(14, 10, 14, 10)
-        send_column.setSpacing(7)
-        send_head = QLabel(text("exchange.send.head").upper())
-        send_head.setObjectName("SendHead")
-        send_column.addWidget(send_head)
-        self._send_full = QWidget()
-        full_column = QVBoxLayout(self._send_full)
-        full_column.setContentsMargins(0, 0, 0, 0)
-        full_column.setSpacing(7)
-        send_column.addWidget(self._send_full)
-        send_column = full_column
-        self.send_lead = label(text("send.lead"), "Lead")
-        send_column.addWidget(self.send_lead)
+        self.add_gap(4)
+        self.card = PacketCard()
+        self.add(self.card)
+        clip_row = QHBoxLayout()
+        clip_row.setSpacing(10)
+        self.clip_line = label(text("send.file.copied"), "Ok")
+        clip_row.addWidget(self.clip_line, 1)
+        self.copy_button = button(text("send.copy_again"), "Ghost",
+                                  self._copy_file)
+        self.copy_button.setStyleSheet("padding: 2px 8px; font-size: 11px;")
+        clip_row.addWidget(self.copy_button,
+                           alignment=Qt.AlignmentFlag.AlignTop)
+        clip_holder = QWidget()
+        clip_holder.setLayout(clip_row)
+        self.add(clip_holder)
+        self.chips = FileChips()
+        self.chips.removed.connect(self.remove_attachment.emit)
+        self.add(self.chips)
+        # The sweep controls appear on a scan only.
         focus_row = QHBoxLayout()
         focus_row.setSpacing(8)
         self.focus_edit = QLineEdit()
@@ -607,106 +619,56 @@ class ExchangeScreen(Screen):
                                    self._emit_focus))
         self._focus_holder = QWidget()
         self._focus_holder.setLayout(focus_row)
-        send_column.addWidget(self._focus_holder)
-        # The sweep position: which part of the project this scan holds.
+        self.add(self._focus_holder)
         self.scan_note = label("", "Hint")
         self.scan_note.setVisible(False)
-        send_column.addWidget(self.scan_note)
-        self.card = PacketCard()
-        self.card.drag_started.connect(self._mark_sent)
-        send_column.addWidget(self.card)
-        self.contents = label("", "Hint")
-        send_column.addWidget(self.contents)
-        self.show_global_button = button("GLOBAL.md", "Ghost", None)
-        self.show_prompt_button = button("TASK.md", "Ghost", None)
-        for control in (self.show_global_button, self.show_prompt_button):
-            control.setStyleSheet("padding: 2px 6px; font-size: 11px;")
-        contents_label = label(text("send.contents"), "Hint")
-        contents_label.setWordWrap(False)
-        contents_row = QHBoxLayout()
-        contents_row.setSpacing(4)
-        for widget in (contents_label, self.show_global_button,
-                       self.show_prompt_button):
-            contents_row.addWidget(widget)
-        contents_row.addStretch(1)
-        contents_holder = QWidget()
-        contents_holder.setLayout(contents_row)
-        send_column.addWidget(contents_holder)
-        self.chips = FileChips()
-        self.chips.removed.connect(self.remove_attachment.emit)
-        send_column.addWidget(self.chips)
-        attach_zone = DropZone(text("send.attach.drop"), slim=True)
-        attach_zone.files_dropped.connect(self.add_attachments.emit)
-        attach_zone.clicked.connect(self.import_attachments.emit)
-        send_column.addWidget(attach_zone)
-        buttons_row = QHBoxLayout()
-        buttons_row.setSpacing(10)
-        for widget in (button(text("send.copy_file"), "Primary",
-                              self._copy_file),
-                       button(text("send.export"), "Secondary",
-                              self.export_requested.emit)):
-            buttons_row.addWidget(widget)
-        buttons_row.addStretch(1)
-        buttons_holder = QWidget()
-        buttons_holder.setLayout(buttons_row)
-        send_column.addWidget(buttons_holder)
-        outer_send = self._send_full.parentWidget().layout()
-        summary_row = QHBoxLayout()
-        summary_row.setSpacing(10)
-        self.sent_label = label("", "Dim")
-        summary_row.addWidget(self.sent_label)
-        summary_row.addWidget(button(text("exchange.sent.show"), "Ghost",
-                                     self._unfold))
-        summary_row.addStretch(1)
-        self._send_summary = QWidget()
-        self._send_summary.setLayout(summary_row)
-        self._send_summary.setVisible(False)
-        outer_send.addWidget(self._send_summary)
-        self.send_status = StatusLine()
-        outer_send.addWidget(self.send_status)
-        self.add(send_frame)
-        self.add_gap(1)
-
-        # ---- the receive region ----
-        receive_frame = QFrame()
-        receive_frame.setObjectName("ReceiveRegion")
-        receive_column = QVBoxLayout(receive_frame)
-        receive_column.setContentsMargins(14, 10, 14, 10)
-        receive_column.setSpacing(7)
-        receive_head = QLabel(text("exchange.receive.head").upper())
-        receive_head.setObjectName("ReceiveHead")
-        receive_column.addWidget(receive_head)
-        self.waiting_label = label("", "Hint")
-        receive_column.addWidget(self.waiting_label)
+        self.add(self.scan_note)
+        self.add_gap(12)
         self.lead = label("", "Lead")
-        receive_column.addWidget(self.lead)
-        # One row holds both receive actions; the screen fits the window.
+        self.add(self.lead)
         self.newest_button = button(text("exchange.newest"), "Primary",
                                     self.newest_download.emit)
-        self.paste_button = button(text("receive.paste"), "Secondary",
-                                   self._paste)
-        actions_row = QHBoxLayout()
-        actions_row.setSpacing(10)
-        actions_row.addWidget(self.newest_button)
-        actions_row.addWidget(self.paste_button)
-        actions_row.addStretch(1)
-        actions_holder = QWidget()
-        actions_holder.setLayout(actions_row)
-        receive_column.addWidget(actions_holder)
-        reply_zone = DropZone(text("receive.drop"), text("exchange.drop.sub"),
-                              slim=True)
-        reply_zone.setMinimumHeight(64)
-        reply_zone.files_dropped.connect(self._dropped)
-        reply_zone.clicked.connect(self.import_reply.emit)
-        receive_column.addWidget(reply_zone)
+        self.newest_button.setMinimumHeight(46)
+        self.add(self.newest_button)
+        self.reply_hint = label(text("exchange.reply.hint"), "Hint")
+        self.add(self.reply_hint)
+        self.waiting_label = label("", "Dim")
+        self.add(self.waiting_label)
         self.status = StatusLine()
-        receive_column.addWidget(self.status)
-        self.add(receive_frame)
-        self.add(label(text("exchange.copy.key"), "Hint"))
+        self.add(self.status)
+        more_row = QHBoxLayout()
+        more_row.addStretch(1)
+        self.more_button = button(text("exchange.more"), "Ghost",
+                                  self._show_more)
+        self.more_button.setStyleSheet("padding: 3px 10px; font-size: 12px;")
+        more_row.addWidget(self.more_button)
+        more_holder = QWidget()
+        more_holder.setLayout(more_row)
+        self.add(more_holder)
         self._wait_start = 0.0
         self._wait_timer = QTimer(self)
         self._wait_timer.setInterval(1000)
         self._wait_timer.timeout.connect(self._tick_waiting)
+
+    def more_menu(self) -> QMenu:
+        """The rare actions, out of sight until they are wanted."""
+        menu = QMenu(self)
+        menu.addAction(text("send.attach.add"), self.import_attachments.emit)
+        menu.addAction(text("send.export"), self.export_requested.emit)
+        menu.addSeparator()
+        menu.addAction(text("exchange.show.task"), self.show_task.emit)
+        menu.addAction(text("exchange.show.global"), self.show_global.emit)
+        menu.addSeparator()
+        menu.addAction(text("receive.paste"), self._paste)
+        menu.addAction(text("exchange.reply.file"), self.import_reply.emit)
+        return menu
+
+    def _show_more(self) -> None:
+        menu = self.more_menu()
+        menu.aboutToHide.connect(menu.deleteLater)
+        corner = self.more_button.mapToGlobal(QPoint(0, 0))
+        menu.popup(QPoint(corner.x(),
+                          corner.y() - menu.sizeHint().height() - 4))
 
     def show_handoff(self, handoff: PacketHandoff, attachment_names: list[str],
                      document_count: int, scan: bool = False,
@@ -729,11 +691,7 @@ class ExchangeScreen(Screen):
                     else "receive.lead.scene" if handoff.reply_kind == "scene"
                     else "receive.lead.json")
         self.lead.setText(text(lead_key))
-        # FR-V4: the build step takes a pasted Markdown reply too.
-        self.paste_button.setVisible(True)
         self.reply_open = True
-        self._unfold()
-        self.send_status.set_state("plain", "")
         self.status.set_state("plain", "")
         self._wait_start = time.monotonic()
         self._tick_waiting()
@@ -774,40 +732,22 @@ class ExchangeScreen(Screen):
         shown = packet_for_style(zip_path, self.package_style)
         size = shown.stat().st_size if shown.is_file() else 0
         self.card.set_packet(shown, size)
-        documents = (f"documents/ — {document_count} · " if document_count else "")
-        self.contents.setText(
-            "TASK.md · GLOBAL.md · CODEBASE.md · MANIFEST.json · "
-            f"{documents}attachments/ — {len(attachment_names)}")
         self.chips.set_files(attachment_names)
 
     def _emit_focus(self) -> None:
         self.scan_focus.emit(self.focus_edit.text().strip())
 
-    def _mark_sent(self) -> None:
-        """FR-F2: the packet left; the send region folds to one row."""
-        if self.handoff is not None:
-            self.sent_label.setText(text(
-                "exchange.sent", name=self.handoff.zip_path.name))
-        self._send_full.setVisible(False)
-        self._send_summary.setVisible(True)
-
-    def _unfold(self) -> None:
-        self._send_full.setVisible(True)
-        self._send_summary.setVisible(False)
-
     # ---- send side ----
 
     def auto_copy(self) -> None:
         """FR-P2: the packet is in the clipboard the moment it appears.
-        The region stays open — attachments and the scan focus are
-        still at hand; a copy by hand folds it (FR-F2)."""
-        if self._clipboard_packet():
-            self.send_status.set_state("ok", text("send.file.copied"))
+        The line under the card says so; no press is needed."""
+        self.clip_line.setVisible(self._clipboard_packet())
 
     def _copy_file(self) -> None:
         if self._clipboard_packet():
-            self.send_status.set_state("ok", text("send.file.copied"))
-            self._mark_sent()
+            self.clip_line.setVisible(True)
+            self.status.set_state("ok", text("send.file.copied"))
 
     def _clipboard_packet(self) -> bool:
         if self.handoff is None:
@@ -819,8 +759,7 @@ class ExchangeScreen(Screen):
         return True
 
     def mark_exported(self, name: str) -> None:
-        self.send_status.set_state("ok", text("send.exported", name=name))
-        self._mark_sent()
+        self.status.set_state("ok", text("send.exported", name=name))
 
     # ---- receive side ----
 
@@ -845,10 +784,6 @@ class ExchangeScreen(Screen):
                 self.check(path=paths[0])
                 return
         self.check(clipboard_text=QGuiApplication.clipboard().text())
-
-    def _dropped(self, paths: list[Path]) -> None:
-        if paths:
-            self.check(path=paths[0])
 
     def check(self, *, clipboard_text: str = "", path: Path | None = None) -> None:
         from .bridge import check_reply

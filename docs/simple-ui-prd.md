@@ -1708,3 +1708,55 @@ the project file on the person's own branch, a discard puts the
 file back, a cleanup leaves the project alone, the branch chip
 makes and opens branches, and the state line counts changes and
 commits to push.
+
+### 14.51 The exchange screen holds two actions (FR-P10)
+
+The field report: "I mostly just use the copy button and the open
+the newest download button. Right now there's so much clutter on
+screen it's a chore to use."
+
+The old screen showed two framed regions with headings, two drop
+zones, five buttons, a contents line, and a preview row — eighteen
+elements for a task with two moves. The person copies the package,
+talks to Copilot, and brings one file back. The screen now shows
+that and nothing else:
+
+- The package card, with the file's name and size. The package is
+  in the clipboard the moment the card appears, and one green line
+  says so. A small "Copy again" refills the clipboard.
+- One line that says what Copilot replies with, and one large
+  button: "Open the newest download".
+- One hint: the reply can also be pasted or dropped on the window.
+  Both already work on every screen, so the local paste button and
+  both drop zones carried no ability of their own.
+- The waiting clock, the status line, and "More …".
+
+Everything else moved into the More menu, losing nothing: add
+files to the package, export it, show the task text, show the
+project rules, paste the reply, select the reply file. Attachment
+chips appear only when attachments exist; the scan focus row
+appears only on a scan. The fold-after-send machinery (FR-F2) is
+gone — there is nothing left worth folding.
+
+Also in this round: the foot bar said "Isolated workspace" during
+a run, which 14.50 made untrue. It now says "A change is in work".
+
+### 14.52 The update that never took (FR-U6)
+
+The field report: after taking an update, the app keeps offering
+the same update.
+
+`MAINTAIN_PACKAGE_SOURCE` pins the package source so CI can
+install offline. The updater honored a pin from any environment,
+and the installer skips its version check when the pin is set — so
+a leftover pin on a person's machine made every update silently
+reinstall the pinned old build, forever. Two changes close it:
+
+- FR-U6a. The updater honors the pin only inside CI. On a person's
+  machine it clears the pin and names its own release, which also
+  restores the installer's version verification.
+- FR-U6b. The app remembers each update attempt (tag and the
+  version it started from). When the next start still runs the same
+  version and still sees the same tag, the card stops repeating
+  itself and says: "The last update did not take. Try again. If
+  this repeats, install again from the GitHub page."

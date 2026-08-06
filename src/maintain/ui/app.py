@@ -423,8 +423,8 @@ class MainWindow(QMainWindow):
         self.describe.open_checks.connect(
             lambda: self._open_settings_page("checks"))
 
-        self.exchange.show_global_button.clicked.connect(self._show_global_text)
-        self.exchange.show_prompt_button.clicked.connect(self._show_prompt_text)
+        self.exchange.show_global.connect(self._show_global_text)
+        self.exchange.show_task.connect(self._show_prompt_text)
         self.exchange.add_attachments.connect(self._add_packet_files)
         self.exchange.remove_attachment.connect(self._remove_packet_file)
         self.exchange.import_attachments.connect(self._import_packet_files)
@@ -609,10 +609,16 @@ class MainWindow(QMainWindow):
         threading.Thread(target=probe, daemon=True).start()
 
     def _offer_update(self, tag: str) -> None:
-        if tag == str(load_ui_settings().get("update_skip", "")):
+        values = load_ui_settings()
+        if tag == str(values.get("update_skip", "")):
             return
         self._update_tag = tag
-        self.home.set_update(tag.lstrip("v"))
+        # The same offer after an applied update means the install did
+        # not take. Repeating the card unchanged would hide that; the
+        # card must say it instead.
+        stuck = (tag == str(values.get("update_attempted_tag", ""))
+                 and __version__ == str(values.get("update_attempted_from", "")))
+        self.home.set_update(tag.lstrip("v"), stuck=stuck)
 
     def _update_clicked(self) -> None:
         tag = self._update_tag
@@ -650,6 +656,13 @@ class MainWindow(QMainWindow):
         staged = Path(tempfile.gettempdir()) / (
             f"maintain-update-{os.getpid()}.ps1")
         shutil.copyfile(source, staged)
+        # Remember the attempt. If the next start still runs this
+        # version and still sees this tag, the install did not take,
+        # and the card will say so instead of repeating itself.
+        values = load_ui_settings()
+        values["update_attempted_tag"] = tag
+        values["update_attempted_from"] = __version__
+        save_ui_settings(values)
         creation = (subprocess.CREATE_NEW_CONSOLE
                     if os.name == "nt" else 0)
         try:

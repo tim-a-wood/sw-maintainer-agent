@@ -160,11 +160,17 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     with zipfile.ZipFile(handoff.zip_path) as archive:
         assert "attachments/extra.txt" in set(archive.namelist())
 
-    # One screen, two visible regions, no Continue gate.
-    from PySide6.QtWidgets import QFrame
-    assert window.exchange.findChild(QFrame, "SendRegion") is not None
-    assert window.exchange.findChild(QFrame, "ReceiveRegion") is not None
+    # One minimal screen: the package card, the one reply button, and
+    # the rare actions folded into a menu. No Continue gate.
+    assert window.exchange.card.isVisibleTo(window.exchange)
+    assert window.exchange.newest_button.isVisibleTo(window.exchange)
     assert not hasattr(window.exchange, "continue_button")
+    actions = [item.text() for item in window.exchange.more_menu().actions()
+               if item.text()]
+    for expected in ("Add files…", "Export…", "Show the task text",
+                     "Show the project rules", "Paste reply",
+                     "Select the reply file…"):
+        assert expected in actions, actions
 
     # A wrong reply is refused and the screen stays open.
     assert _screen(window) == "exchange"
@@ -576,6 +582,17 @@ def test_update_prompt_applies_or_skips(qt_app, tmp_path, monkeypatch):
     assert len(spawned) == 1
     assert "refs/tags/v9.9.9" in spawned[0]
     assert spawned[0][spawned[0].index("-AppProcessId") + 1].isdigit()
+
+    # The attempt is remembered. The same offer on the same version
+    # means the install did not take, and the card says so instead of
+    # repeating itself (the field fault: an endless update loop).
+    assert load_ui_settings().get("update_attempted_tag") == "v9.9.9"
+    window._offer_update("v9.9.9")
+    assert "did not take" in window.home._update_card.sub_label.text()
+    # A different offer is not the failed one; the plain words return.
+    window._offer_update("v9.9.10")
+    assert "did not take" not in window.home._update_card.sub_label.text()
+    window._offer_update("v9.9.9")
 
     # Declining spawns nothing and keeps the card.
     window.ask_confirm = lambda *args, **kwargs: False
@@ -1239,8 +1256,9 @@ def test_toasts_notes_hints_and_round_context(qt_app, tmp_path, monkeypatch):
     assert window.explain.audience_edit.text() == "the safety board"
 
 
-def test_send_region_folds_after_the_packet_leaves(qt_app, tmp_path, monkeypatch):
-    """FR-F2: the send region collapses once the packet is out."""
+def test_exchange_screen_stays_minimal(qt_app, tmp_path, monkeypatch):
+    """The two used actions stand alone; a copy by hand confirms in
+    the status line. Nothing folds and nothing competes."""
     monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
     config = _project(tmp_path)
     window = MainWindow(config)
@@ -1249,13 +1267,12 @@ def test_send_region_folds_after_the_packet_leaves(qt_app, tmp_path, monkeypatch
     window.describe._start()
     wait_until(qt_app, lambda: _screen(window) == "exchange", message="packet")
 
-    assert window.exchange._send_full.isVisibleTo(window.exchange)
+    # The packet is in the clipboard on arrival, and the line says so.
+    assert window.exchange.clip_line.isVisibleTo(window.exchange)
     window.exchange._copy_file()
-    assert not window.exchange._send_full.isVisibleTo(window.exchange)
-    assert window.exchange._send_summary.isVisibleTo(window.exchange)
-    assert "Sent" in window.exchange.sent_label.text()
-    window.exchange._unfold()
-    assert window.exchange._send_full.isVisibleTo(window.exchange)
+    assert "clipboard" in window.exchange.status.text()
+    # The scan controls stay away from a plain change.
+    assert not window.exchange._focus_holder.isVisibleTo(window.exchange)
     window.controller.stop()
     wait_until(qt_app, lambda: not window.controller.busy, message="paused")
 

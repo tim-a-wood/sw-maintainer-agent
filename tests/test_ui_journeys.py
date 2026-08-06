@@ -1284,11 +1284,8 @@ def test_packet_lands_in_the_clipboard_on_arrival(qt_app, tmp_path,
     assert mime.hasUrls(), "the packet file is not in the clipboard"
     copied = Path(mime.urls()[0].toLocalFile())
     assert copied.suffix == ".md" and copied.is_file()
-    assert window.exchange.send_status.text() == ui_text("send.file.copied")
-    # The region stays open — attachments are still at hand; only a
-    # copy by hand folds it to the one-line summary (FR-F2).
-    exchange = window.exchange
-    assert exchange._send_full.isVisibleTo(exchange)
+    assert window.exchange.clip_line.isVisibleTo(window.exchange)
+    assert window.exchange.clip_line.text() == ui_text("send.file.copied")
     window._stop_run()
     wait_until(qt_app, lambda: not window.controller.busy, message="stopped")
     assert not errors, errors

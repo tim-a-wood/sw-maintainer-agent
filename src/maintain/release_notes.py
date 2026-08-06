@@ -55,6 +55,9 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The bottom bar shows your branch. Click it to change branch or make one.",
         "The home screen shows the branch, the changed files, and the commits to push.",
         "A start still needs a clean project. A discard puts your files back.",
+        "The Copilot screen is simple now: the package, and one button for the reply.",
+        "The other controls are in one small More menu.",
+        "An update that does not install now says so, and updates cannot stay stuck.",
     ),
 }
 
