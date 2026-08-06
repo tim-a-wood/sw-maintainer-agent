@@ -74,6 +74,11 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The Copilot screen has no card to drag. The package is one line under Send.",
         "The installer now takes a Python that can run the video feature.",
     ),
+    "0.9.11": (
+        "The notices on the home screen have a close mark in the corner.",
+        "The update notice closes for now. It shows again at the next look.",
+        "The continue notice deletes that change. The app asks you first.",
+    ),
 }
 
 
