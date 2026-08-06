@@ -65,11 +65,11 @@ Download and extract this repository, then double-click:
 install-or-update-windows.cmd
 ```
 
-The script resolves the current `main` branch to one immutable Git commit,
-checks out that exact commit, and verifies that the installed private runtime
-reports the version declared by that source. It will stop with an error instead
-of silently reinstalling an older extracted copy when the online update is
-unavailable. The installer also installs Chromium, adds `maintain` to the user
+The script finds the newest published release, resolves its tag to one
+immutable Git commit, checks out that exact commit, and verifies that the
+installed private runtime reports the version declared by that source. It will
+stop with an error instead of silently reinstalling an older extracted copy when
+the online update is unavailable. The installer also installs Chromium, adds `maintain` to the user
 PATH, and creates desktop and Start Menu shortcuts with the Maintain robot icon.
 It asks Windows to pin the shortcut to the taskbar. Some company policies block
 automatic taskbar pinning; if that happens, the installer gives the single

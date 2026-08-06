@@ -11,7 +11,11 @@ $iconPath = Join-Path $installRoot "maintain.ico"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $iconSource = Join-Path $repoRoot "assets\maintain.ico.b64"
 $repositoryUrl = "https://github.com/tim-a-wood/sw-maintainer-agent.git"
-$repositoryRef = "refs/heads/main"
+# An installer installs the newest release, never a branch tip. A
+# branch default installed whatever that branch held, which is how a
+# fresh install landed on an old version while releases moved on.
+# The newest v1.2.3 tag is resolved below, once Git is found.
+$repositoryRef = ""
 # The self-updater pins one release: MAINTAIN_PACKAGE_REF names the
 # tag (refs/tags/v1.2.3) that this install must resolve and verify.
 $repositoryRefOverride = [Environment]::GetEnvironmentVariable("MAINTAIN_PACKAGE_REF")
@@ -66,6 +70,37 @@ function Find-Git {
     & $git.Source --version | Out-Host
     Assert-NativeCommand -Action "Checking Git"
     return $git.Source
+}
+
+function Resolve-LatestReleaseTag {
+    param(
+        [string]$GitPath,
+        [string]$Repository
+    )
+    # The newest v1.2.3 tag in the repository. Annotated tags appear
+    # twice, once peeled with ^{}; both name the same release.
+    $result = (& $GitPath ls-remote --tags $Repository | Out-String).Trim()
+    Assert-NativeCommand -Action "Looking for the newest Maintain release"
+    $best = $null
+    $bestName = ""
+    foreach ($line in ($result -split "`n")) {
+        $match = [regex]::Match(
+            $line.Trim(),
+            "^[0-9a-fA-F]{40}\s+refs/tags/(?<tag>v\d+(\.\d+)*)(\^\{\})?$"
+        )
+        if (-not $match.Success) { continue }
+        $name = $match.Groups["tag"].Value
+        $parsed = $null
+        if (-not [Version]::TryParse($name.Substring(1), [ref]$parsed)) { continue }
+        if ($null -eq $best -or $parsed -gt $best) {
+            $best = $parsed
+            $bestName = $name
+        }
+    }
+    if (-not $bestName) {
+        throw "This repository has no published Maintain release to install."
+    }
+    return "refs/tags/$bestName"
 }
 
 function Resolve-RemoteCommit {
@@ -238,6 +273,11 @@ try {
     Write-Host "Python: $pythonCommand $($pythonPrefix -join ' ')"
     Write-Host "Git: $gitCommand"
     if (-not $packageSourceOverridden) {
+        if ([string]::IsNullOrWhiteSpace($repositoryRef)) {
+            $repositoryRef = Resolve-LatestReleaseTag `
+                -GitPath $gitCommand -Repository $repositoryUrl
+        }
+        Write-Host "Release: $repositoryRef"
         $resolvedCommit = Resolve-RemoteCommit `
             -GitPath $gitCommand -Repository $repositoryUrl -Reference $repositoryRef
         $sourceRoot = New-SourceCheckout `

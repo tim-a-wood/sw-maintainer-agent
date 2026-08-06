@@ -1774,3 +1774,30 @@ reinstall the pinned old build, forever. Two changes close it:
   version and still sees the same tag, the card stops repeating
   itself and says: "The last update did not take. Try again. If
   this repeats, install again from the GitHub page."
+
+### 14.53 The installer installed an old version (FR-U7)
+
+The field report: "The install script is installing an old version
+it seems."
+
+It was. The installer's default source was `refs/heads/main` — a
+branch tip, not a release. Development happens on a feature branch
+and the release ritual tags from there, so `main` stayed at 0.9.1
+while the releases went to 0.9.8. Every fresh install from the
+script therefore installed 0.9.1.
+
+This is also the better explanation of 14.52's repeating update
+prompt. An install from the script gave 0.9.1, the app then found
+tag v0.9.x, offered it, and the update installed 0.9.1 again.
+
+- FR-U7. The installer installs the newest release. It reads the
+  repository's tags, takes the highest `v1.2.3`, and resolves that
+  tag to one commit as before. No branch is named anywhere in the
+  install path, so no branch can go stale under it.
+- `MAINTAIN_PACKAGE_REF` still wins when set, so the self-updater
+  keeps pinning the exact release it downloaded.
+- With no published release the installer stops and says so,
+  instead of quietly installing a branch.
+
+A test holds the rule: no `refs/heads/main` default, the newest-tag
+resolver is present, and the pin is read before it.

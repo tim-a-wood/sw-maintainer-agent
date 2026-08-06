@@ -59,6 +59,7 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The card whose turn it is has the blue edge. A sent card shows a green check.",
         "The other controls are in one small More menu.",
         "An update that does not install now says so, and updates cannot stay stuck.",
+        "The install script now installs the newest release. Before, it installed an old one.",
     ),
 }
 

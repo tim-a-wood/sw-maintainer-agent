@@ -29,6 +29,21 @@ def test_windows_installer_verifies_the_installed_version() -> None:
     assert "Source commit: $resolvedCommit" in script
 
 
+def test_windows_installer_installs_the_newest_release_by_default() -> None:
+    """The field fault: the installer defaulted to a branch tip, so a
+    fresh install landed on whatever that branch held — an old version
+    — while the releases moved on without it."""
+    script = _installer_text()
+
+    assert '$repositoryRef = "refs/heads/main"' not in script
+    assert "function Resolve-LatestReleaseTag" in script
+    assert "ls-remote --tags $Repository" in script
+    # The pin from the self-updater still wins over the newest tag.
+    assert "MAINTAIN_PACKAGE_REF" in script
+    resolve = script.index("$repositoryRef = Resolve-LatestReleaseTag")
+    assert script.index("$repositoryRefOverride.Trim()") < resolve
+
+
 def test_windows_installer_does_not_silently_fallback_to_stale_local_source() -> None:
     script = _installer_text()
 
