@@ -65,6 +65,15 @@ NOTES: dict[str, tuple[str, ...]] = {
         "Before this, it installed an old version, and each update installed it again.",
         "If you are on an old version, install again from the GitHub releases page.",
     ),
+    "0.9.10": (
+        "A reply the tool cannot use no longer asks you for the same package again and again.",
+        "The run stays on its step and sends a small package that asks only for the correction.",
+        "The screen tells you the attempt and the cause.",
+        "You can reword the request or the plan for that step. Your words go with the package.",
+        "Previous step and Next step move between steps, so you can do one again.",
+        "The Copilot screen has no card to drag. The package is one line under Send.",
+        "The installer now takes a Python that can run the video feature.",
+    ),
 }
 
 
