@@ -44,6 +44,21 @@ def test_windows_installer_installs_the_newest_release_by_default() -> None:
     assert script.index("$repositoryRefOverride.Trim()") < resolve
 
 
+def test_windows_installer_prefers_a_python_that_runs_every_feature() -> None:
+    """The field fault: `py -3` takes the newest Python. On a computer
+    with 3.14 the private runtime had no Manim, so Explain code could
+    only ever report that Manim is absent."""
+    script = _installer_text()
+
+    for wanted in ('"-3.13"', '"-3.12"', '"-3.11"'):
+        assert wanted in script, wanted
+    # The supported versions are tried before the newest-wins fallback.
+    assert script.index('"-3.13"') < script.index('@("-3")')
+    # And a 3.14 runtime says what it costs, instead of staying quiet.
+    assert '[Version]"3.14"' in script
+    assert "cannot run the video feature" in script
+
+
 def test_windows_installer_does_not_silently_fallback_to_stale_local_source() -> None:
     script = _installer_text()
 

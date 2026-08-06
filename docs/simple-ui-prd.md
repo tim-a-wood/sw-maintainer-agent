@@ -1801,3 +1801,28 @@ tag v0.9.x, offered it, and the update installed 0.9.1 again.
 
 A test holds the rule: no `refs/heads/main` default, the newest-tag
 resolver is present, and the pin is read before it.
+
+### 14.54 Explain always said Manim is absent (FR-U8)
+
+The field report: "I get the manim is absent error when I try to
+explain."
+
+Manim publishes no build for Python 3.14, so `pyproject.toml`
+installs it only below that version. The installer chose its Python
+with `py -3`, which takes the *newest* one on the computer. On a
+computer with 3.14 the private runtime therefore never had Manim,
+and Explain code could only ever report it absent. The in-app
+install offer is silent on 3.14 as well, by design, because pip
+cannot satisfy it — so the person met a dead end with no route out.
+
+- FR-U8. The installer tries `py -3.13`, `py -3.12`, `py -3.11`
+  before `py -3`. A version that carries every feature wins; the
+  newest is taken only when none of them is on the computer.
+- When the chosen runtime is 3.14 or later, the installer says what
+  it costs and how to get the feature back, instead of installing
+  a half-featured app in silence.
+
+Two CI steps, added in the same round, cover the installer itself:
+every `.ps1` must parse, and the newest-release resolver runs for
+real against GitHub. Neither existed before; the smoke install pins
+`MAINTAIN_PACKAGE_SOURCE`, so it never ran the default path.

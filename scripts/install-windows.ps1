@@ -45,9 +45,17 @@ function Test-PythonCandidate {
 }
 
 function Find-Python {
+    # Manim publishes no wheels for Python 3.14, so a 3.14 runtime
+    # installs the app without its video feature and Explain code can
+    # only report that Manim is absent. Take a version that carries
+    # every feature first; fall back to the newest only when none of
+    # them is on the computer.
     $candidates = @()
     $launcher = Get-Command "py.exe" -ErrorAction SilentlyContinue
     if ($null -ne $launcher) {
+        foreach ($wanted in @("-3.13", "-3.12", "-3.11")) {
+            $candidates += @{ Command = $launcher.Source; Prefix = @($wanted) }
+        }
         $candidates += @{ Command = $launcher.Source; Prefix = @("-3") }
     }
     $python = Get-Command "python.exe" -ErrorAction SilentlyContinue
@@ -270,8 +278,21 @@ try {
     $pythonCommand = $python.Command
     $pythonPrefix = $python.Prefix
     $gitCommand = Find-Git
-    Write-Host "Python: $pythonCommand $($pythonPrefix -join ' ')"
+    $pythonVersion = (& $pythonCommand @pythonPrefix -c `
+        "import sys; print('%d.%d' % sys.version_info[:2])" | Out-String).Trim()
+    Assert-NativeCommand -Action "Reading the Python version"
+    Write-Host "Python: $pythonCommand $($pythonPrefix -join ' ') ($pythonVersion)"
     Write-Host "Git: $gitCommand"
+    if ([Version]$pythonVersion -ge [Version]"3.14") {
+        Write-Host ""
+        Write-Host "Note: Python $pythonVersion cannot run the video feature (Explain code)." `
+            -ForegroundColor Yellow
+        Write-Host "      Manim has no build for this version of Python." `
+            -ForegroundColor Yellow
+        Write-Host "      Install Python 3.13, then run this installer again." `
+            -ForegroundColor Yellow
+        Write-Host ""
+    }
     if (-not $packageSourceOverridden) {
         if ([string]::IsNullOrWhiteSpace($repositoryRef)) {
             $repositoryRef = Resolve-LatestReleaseTag `
