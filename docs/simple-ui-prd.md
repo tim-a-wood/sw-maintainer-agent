@@ -1741,6 +1741,20 @@ gone — there is nothing left worth folding.
 Also in this round: the foot bar said "Isolated workspace" during
 a run, which 14.50 made untrue. It now says "A change is in work".
 
+Second iteration, from the next field report ("It should be a user
+action type thing, like send and receive buttons"): the screen is
+now two large action cards in the home screen's own style.
+
+- "Send to Copilot", with the packet receipt indented under it as
+  its detail, still draggable. The card's sub line says the package
+  is already in the clipboard. Selecting it copies again.
+- "Receive the reply", which opens the newest download.
+- The accent walks the flow: Send carries it first; after a send
+  the card flips to a green check, "Sent to Copilot", and the
+  accent moves to Receive. The person always sees whose turn it is.
+- A send confirms by its own state change; the status line does not
+  repeat it.
+
 ### 14.52 The update that never took (FR-U6)
 
 The field report: after taking an update, the app keeps offering

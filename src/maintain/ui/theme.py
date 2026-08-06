@@ -141,6 +141,7 @@ QFrame#Choice {{ border: 1px solid {p.edge}; border-radius: 9px;
                  background: {p.surface}; }}
 QFrame#Choice:hover, QFrame#Choice:focus {{
     border-color: {p.accent}; background: {p.accent_soft}; }}
+QFrame#Choice[active="true"] {{ border-color: {p.accent}; }}
 QLabel#ChoiceTitle {{ font-size: 14px; font-weight: 600; }}
 QLabel#ChoiceSub {{ font-size: 12px; color: {p.dim}; }}
 
@@ -148,9 +149,9 @@ QFrame#Card {{ border: 1px solid {p.edge}; border-radius: 9px;
                background: {p.surface}; }}
 QFrame#Finding {{ border: 1px solid {p.edge}; border-left: 3px solid {p.warn};
                   border-radius: 8px; background: {p.surface}; }}
-QFrame#PacketCard {{ border: 1px solid {p.accent}; border-radius: 10px;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                stop:0 {p.accent_soft}, stop:1 {p.surface}); }}
+QFrame#PacketCard {{ border: 1px solid {p.edge}; border-radius: 10px;
+                     background: {p.surface}; }}
+QFrame#PacketCard:hover {{ border-color: {p.accent}; }}
 QLabel#PacketName {{ font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono",
                      monospace; font-size: 12px; font-weight: 600; }}
 QLabel#PacketGrip {{ color: {p.faint}; font-size: 14px; }}

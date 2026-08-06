@@ -61,6 +61,7 @@ ICONS: dict[str, str] = {
              '<path d="M7.5 5v14M16.5 5v14"/>'
              '<path d="M3.5 9.5h4M3.5 14.5h4M16.5 9.5h4M16.5 14.5h4"/>'),
     "download": '<path d="M12 4.5v10.5M7.2 11.2 12 16l4.8-4.8M5 19.5h14"/>',
+    "upload": '<path d="M12 16V5.5M7.2 9.3 12 4.5l4.8 4.8M5 19.5h14"/>',
     "zip": ('<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 '
             '2H6a2 2 0 0 1-2-2z"/><path d="M12 10v1m0 2v1m0 2v1"/>'),
     "file": ('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 '
@@ -130,6 +131,13 @@ class IconSquare(QWidget):
         self.setFixedSize(size, size)
         self._renderer: QSvgRenderer | None = None
         self._rendered = ""
+
+    def set_icon(self, name: str = "", kind: str = "") -> None:
+        """Change the symbol or its color in place; a state change on
+        the owning card must not rebuild the card."""
+        self._name = name or self._name
+        self._kind = kind or self._kind
+        self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
@@ -448,7 +456,8 @@ class ChoiceButton(QFrame):
         row = QHBoxLayout(self)
         row.setContentsMargins(16, 13, 16, 13)
         row.setSpacing(14)
-        row.addWidget(IconSquare(icon_name, kind=accent_kind))
+        self.icon_square = IconSquare(icon_name, kind=accent_kind)
+        row.addWidget(self.icon_square)
         column = QVBoxLayout()
         column.setSpacing(1)
         self.title_label = QLabel(title)
@@ -466,6 +475,13 @@ class ChoiceButton(QFrame):
     def set_texts(self, title: str, sub: str) -> None:
         self.title_label.setText(title)
         self.sub_label.setText(sub)
+
+    def set_active(self, active: bool) -> None:
+        """The accent border marks the step whose turn it is."""
+        self.setProperty("active", "true" if active else "false")
+        style = self.style()
+        style.unpolish(self)
+        style.polish(self)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:

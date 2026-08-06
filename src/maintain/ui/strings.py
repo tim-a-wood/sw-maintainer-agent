@@ -149,15 +149,14 @@ STR: dict[str, str] = {
     "send.updated": "The package is updated.",
 
     # Receive
-    "exchange.send.head": "Send to Copilot",
-    "exchange.receive.head": "Receive from Copilot",
-    "receive.lead.zip": "Copilot replies with one Markdown file, or with "
-                        "maintain-output.zip. Download it in Copilot, then "
-                        "select Open the newest download. Or paste the "
-                        "reply.",
-    "receive.lead.json": "Copilot replies with one reply file. Download "
-                         "it in Copilot, then select Open the newest "
-                         "download.",
+    "exchange.send.title": "Send to Copilot",
+    "exchange.send.done": "Sent to Copilot",
+    "exchange.send.done.sub": "The package stays in the clipboard. Select this to copy it again.",
+    "exchange.receive.title": "Receive the reply",
+    "receive.lead.zip": "Download the reply in Copilot — one Markdown "
+                        "file or maintain-output.zip — then select this.",
+    "receive.lead.json": "Download the reply file in Copilot, then "
+                         "select this.",
     "exchange.accepted.plan": "The plan is in.",
     "exchange.accepted.build": "The code is in.",
     "exchange.accepted.repair": "The repair is in.",
@@ -422,9 +421,8 @@ STR: dict[str, str] = {
 
     # Explain
     "send.explain.title": "Copilot writes the scene.",
-    "receive.lead.scene": "Copilot replies with one scene file. Download "
-                          "it in Copilot, then select Open the newest "
-                          "download. "
+    "receive.lead.scene": "Download the scene file in Copilot, then "
+                          "select this. "
                           "Copy the full reply. Then select Paste reply.",
     "explain.last": "Last video: {when}. Open the folder.",
     "explain.title": "Explain code",

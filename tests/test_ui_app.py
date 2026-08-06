@@ -160,10 +160,11 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     with zipfile.ZipFile(handoff.zip_path) as archive:
         assert "attachments/extra.txt" in set(archive.namelist())
 
-    # One minimal screen: the package card, the one reply button, and
-    # the rare actions folded into a menu. No Continue gate.
+    # One minimal screen: two action cards and the packet receipt,
+    # with the rare actions folded into a menu. No Continue gate.
     assert window.exchange.card.isVisibleTo(window.exchange)
-    assert window.exchange.newest_button.isVisibleTo(window.exchange)
+    assert window.exchange.send_button.isVisibleTo(window.exchange)
+    assert window.exchange.receive_button.isVisibleTo(window.exchange)
     assert not hasattr(window.exchange, "continue_button")
     actions = [item.text() for item in window.exchange.more_menu().actions()
                if item.text()]
@@ -1267,12 +1268,21 @@ def test_exchange_screen_stays_minimal(qt_app, tmp_path, monkeypatch):
     window.describe._start()
     wait_until(qt_app, lambda: _screen(window) == "exchange", message="packet")
 
-    # The packet is in the clipboard on arrival, and the line says so.
-    assert window.exchange.clip_line.isVisibleTo(window.exchange)
-    window.exchange._copy_file()
-    assert "clipboard" in window.exchange.status.text()
+    # The packet is in the clipboard on arrival, and the Send card
+    # says so. The turn starts on Send.
+    exchange = window.exchange
+    assert "clipboard" in exchange.send_button.sub_label.text()
+    assert exchange.send_button.property("active") == "true"
+    # Pressing Send passes the turn to Receive.
+    exchange.send_button.clicked.emit()
+    assert "Sent" in exchange.send_button.title_label.text()
+    assert exchange.receive_button.property("active") == "true"
+    assert exchange.send_button.property("active") == "false"
+    # The next packet resets the turn.
+    exchange._set_turn(sent=False)
+    assert exchange.send_button.property("active") == "true"
     # The scan controls stay away from a plain change.
-    assert not window.exchange._focus_holder.isVisibleTo(window.exchange)
+    assert not exchange._focus_holder.isVisibleTo(exchange)
     window.controller.stop()
     wait_until(qt_app, lambda: not window.controller.busy, message="paused")
 

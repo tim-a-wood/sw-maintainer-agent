@@ -591,20 +591,21 @@ class ExchangeScreen(Screen):
         self.title = label("", "Title")
         self.add(self.title)
         self.add_gap(4)
+        # FR-P10: the exchange is two actions, so the screen is two
+        # action cards. The accent moves from Send to Receive.
+        self.send_button = ChoiceButton("upload", text("exchange.send.title"),
+                                        text("send.file.copied"))
+        self.send_button.clicked.connect(self._send)
+        self.add(self.send_button)
+        # The packet itself: the receipt under the Send card, indented
+        # to read as its detail, still draggable into Copilot.
         self.card = PacketCard()
-        self.add(self.card)
-        clip_row = QHBoxLayout()
-        clip_row.setSpacing(10)
-        self.clip_line = label(text("send.file.copied"), "Ok")
-        clip_row.addWidget(self.clip_line, 1)
-        self.copy_button = button(text("send.copy_again"), "Ghost",
-                                  self._copy_file)
-        self.copy_button.setStyleSheet("padding: 2px 8px; font-size: 11px;")
-        clip_row.addWidget(self.copy_button,
-                           alignment=Qt.AlignmentFlag.AlignTop)
-        clip_holder = QWidget()
-        clip_holder.setLayout(clip_row)
-        self.add(clip_holder)
+        card_row = QHBoxLayout()
+        card_row.setContentsMargins(52, 0, 0, 0)
+        card_row.addWidget(self.card)
+        card_holder = QWidget()
+        card_holder.setLayout(card_row)
+        self.add(card_holder)
         self.chips = FileChips()
         self.chips.removed.connect(self.remove_attachment.emit)
         self.add(self.chips)
@@ -623,13 +624,11 @@ class ExchangeScreen(Screen):
         self.scan_note = label("", "Hint")
         self.scan_note.setVisible(False)
         self.add(self.scan_note)
-        self.add_gap(12)
-        self.lead = label("", "Lead")
-        self.add(self.lead)
-        self.newest_button = button(text("exchange.newest"), "Primary",
-                                    self.newest_download.emit)
-        self.newest_button.setMinimumHeight(46)
-        self.add(self.newest_button)
+        self.add_gap(10)
+        self.receive_button = ChoiceButton("download",
+                                           text("exchange.receive.title"), "")
+        self.receive_button.clicked.connect(self.newest_download.emit)
+        self.add(self.receive_button)
         self.reply_hint = label(text("exchange.reply.hint"), "Hint")
         self.add(self.reply_hint)
         self.waiting_label = label("", "Dim")
@@ -690,13 +689,30 @@ class ExchangeScreen(Screen):
         lead_key = ("receive.lead.zip" if handoff.reply_kind == "zip"
                     else "receive.lead.scene" if handoff.reply_kind == "scene"
                     else "receive.lead.json")
-        self.lead.setText(text(lead_key))
+        self.receive_button.set_texts(text("exchange.receive.title"),
+                                      text(lead_key))
+        self._set_turn(sent=False)
         self.reply_open = True
         self.status.set_state("plain", "")
         self._wait_start = time.monotonic()
         self._tick_waiting()
         self._wait_timer.start()
         self.auto_copy()
+
+    def _set_turn(self, sent: bool) -> None:
+        """The accent walks the flow: first Send, then Receive."""
+        self.send_button.set_active(not sent)
+        self.send_button.icon_square.set_icon(
+            name="check" if sent else "upload",
+            kind="ok" if sent else "accent")
+        self.send_button.set_texts(
+            text("exchange.send.done") if sent
+            else text("exchange.send.title"),
+            text("exchange.send.done.sub") if sent
+            else text("send.file.copied"))
+        self.receive_button.set_active(sent)
+        self.receive_button.icon_square.set_icon(
+            kind="accent" if sent else "neutral")
 
     def _tick_waiting(self) -> None:
         """FR-D5: a live sign of life while the person is in Copilot."""
@@ -709,7 +725,7 @@ class ExchangeScreen(Screen):
         if event.matches(QKeySequence.StandardKey.Copy):
             focus = QApplication.focusWidget()
             if not isinstance(focus, (QLineEdit, QPlainTextEdit)):
-                self._copy_file()
+                self._send()
                 return
         super().keyPressEvent(event)
 
@@ -741,13 +757,16 @@ class ExchangeScreen(Screen):
 
     def auto_copy(self) -> None:
         """FR-P2: the packet is in the clipboard the moment it appears.
-        The line under the card says so; no press is needed."""
-        self.clip_line.setVisible(self._clipboard_packet())
+        The Send card says so; no press is needed."""
+        self._clipboard_packet()
 
-    def _copy_file(self) -> None:
+    def _send(self) -> None:
+        """The Send card: copy the package, and pass the turn.
+
+        The card's own change to "Sent" is the confirmation; a status
+        line under it would say the same thing twice."""
         if self._clipboard_packet():
-            self.clip_line.setVisible(True)
-            self.status.set_state("ok", text("send.file.copied"))
+            self._set_turn(sent=True)
 
     def _clipboard_packet(self) -> bool:
         if self.handoff is None:
