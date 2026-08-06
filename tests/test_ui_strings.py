@@ -63,6 +63,7 @@ def test_placeholders_format_cleanly():
                "time": "2:10", "request": "Change the value.",
                "title": "The unit is ignored", "total": 120, "left": 78,
                "version": "1.2.3", "index": 3, "ahead": 2, "behind": 1,
+               "why": "the reply named another run",
                "current": "main", "wanted": "maintain/f-0143"}
     for key, value in STR.items():
         names = set(re.findall(r"\{([a-z_]+)\}", value))
