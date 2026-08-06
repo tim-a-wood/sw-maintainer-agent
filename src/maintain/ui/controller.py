@@ -250,6 +250,24 @@ class Controller(QObject):
             return False
         return True
 
+    def repository_state(self) -> dict:
+        """Branch, changed files, and distance from the remote."""
+        try:
+            return self.engine.workspaces.state()
+        except Exception:   # noqa: BLE001 - display only
+            return {"branch": "", "changed": 0, "tracked": "",
+                    "ahead": 0, "behind": 0}
+
+    def branches(self) -> list[str]:
+        try:
+            return self.engine.workspaces.branches()
+        except Exception:   # noqa: BLE001 - display only
+            return []
+
+    def switch_branch(self, branch: str, create: bool = False) -> None:
+        """Open another branch. The engine refuses an unclean tree."""
+        self.engine.workspaces.switch_branch(branch, create=create)
+
     def integrate(self, run_id: str, branch: str) -> None:
         """Fast-forward the person's branch onto the delivered commit.
 

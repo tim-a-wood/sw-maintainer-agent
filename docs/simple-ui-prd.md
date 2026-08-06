@@ -1661,3 +1661,50 @@ is there, presses it, proves the fast-forward targets the person's
 branch, and proves an integrated run offers nothing. A second test
 proves the home card appears, names the run, and disappears once
 the change is in the files.
+
+### 14.50 The run works where the person can see it (FR-B5..B8)
+
+Every run made its change inside an isolated Git worktree, on a
+branch named `maintain/<run-id>`. The isolation was correct in
+theory: no run touched the person's files without permission. In
+use it was the largest single difficulty. The change looked lost at
+the end of the run, and the step that brought it home was a merge —
+the one thing this app exists to remove.
+
+The field report ends the argument: "Having lots of issues with the
+worktree bullshit. I would prefer to simplify it and just commit and
+push straight to the branch we're on."
+
+- FR-B5. The run works in the person's own checkout, on the branch
+  they chose. `WorkspaceManager.create` returns that branch and that
+  folder. No new worktree, and no `maintain/<run-id>` branch.
+- The foot bar carries a branch chip beside the project chip. It
+  lists the local branches, opens one, and makes a new one. A branch
+  cannot open over work that is not committed; the refusal is words.
+- FR-B6. The home screen shows the state of the project in one
+  line: the branch, the count of changed files, and the distance
+  from the remote. Maintain's own files do not count as changes.
+- FR-B7. After the verified commit, the run pushes the branch to
+  its remote. A project with no remote, or a machine with no
+  network, is a normal state and never fails the run; the last
+  screen says which of the three happened.
+- FR-B8. The delivered commit is on the person's branch, so the
+  files have it the moment the run saves. The Done screen shows no
+  merge step and no merge command. Runs made before this change
+  keep both, so nothing already saved is stranded.
+
+The isolation that was lost is replaced by three guards:
+
+- The start still refuses a project with uncommitted changes, so
+  nothing of the person's can be mixed into the run's work.
+- A discard returns the files to the commit the run started from.
+  Nothing of the run survives it.
+- A clean never removes Maintain's own files, and a workspace
+  cleanup never removes the person's project. Both were safe when
+  the worktree was separate; both are now guarded by name.
+
+Journey tests prove the whole path: a run ends with the change in
+the project file on the person's own branch, a discard puts the
+file back, a cleanup leaves the project alone, the branch chip
+makes and opens branches, and the state line counts changes and
+commits to push.

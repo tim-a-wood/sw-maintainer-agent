@@ -238,23 +238,39 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     assert any(item.superseded for item in revert_timeline)
 
     # Accept and save: the run delivers and the Done screen lands the win.
+    # FR-B7: with a remote, the saved commit goes to it.
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(remote))
+    _git(Path(window.store.config.repository), "remote", "add", "origin",
+         str(remote))
     window.save.accept.emit()
     wait_until(qt_app, lambda: errors or _screen(window) == "done",
                message="done screen")
     assert not errors, errors
-    assert "maintain/" in window.done.branch.text()
+    # The run commits on the person's own branch, in their own files.
+    assert "main" in window.done.branch.text()
+    assert (Path(window.store.config.repository) / "app.py"
+            ).read_text() == 'VALUE = "after"\n'
     assert "1 file changed" in window.done.stat_files.text()
     assert "app.py" in window.done.file_names.text()
     # The count is applied builds, not raw timeline events (start,
     # plan, review… would triple the number).
     assert "build round" in window.done.stat_line.text()
-    window.done._copy_merge()
-    assert QApplication.clipboard().text().startswith("git merge --no-ff ")
+    # No merge step and no merge command: the change is already there.
+    assert not window.done._apply_holder.isVisibleTo(window.done)
+    assert not window.done.merge_button.isVisibleTo(window.done)
+    assert "in your files" in window.done.apply_hint.text()
+    # The commit reached the remote, and the screen names it.
+    assert window.done.push_line.isVisibleTo(window.done)
+    assert "on the remote origin" in window.done.push_line.text()
+    assert subprocess.run(["git", "-C", str(remote), "log", "-1", "--pretty=%s",
+                           "main"], check=True, capture_output=True,
+                          text=True).stdout.startswith("maintain:")
     assert window.done.first_note.isVisibleTo(window.done)
     window.done._copy_note()
     note = QApplication.clipboard().text()
     assert note.startswith("Saved: Change the value to after.")
-    assert "app.py" in note and "Branch: maintain/" in note
+    assert "app.py" in note and "Branch: main" in note
     window.done.explain_change.emit()
     assert _screen(window) == "explain"
     assert "Explain this change" in window.explain.goal_edit.toPlainText()

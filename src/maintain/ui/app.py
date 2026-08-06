@@ -272,6 +272,14 @@ class MainWindow(QMainWindow):
         self.foot_project.clicked.connect(self._pick_project)
         row.addWidget(self.foot_project)
         self._set_project_chip(self.store.config.name)
+        # FR-B5: the branch the run works on, always in sight and one
+        # click from a change.
+        self.foot_branch = QPushButton("")
+        self.foot_branch.setObjectName("FootProject")
+        self.foot_branch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.foot_branch.clicked.connect(self._pick_branch)
+        row.addWidget(self.foot_branch)
+        self._set_branch_chip()
         self.foot_label = QLabel("")
         self.foot_label.setObjectName("FootLabel")
         row.addWidget(self.foot_label)
@@ -586,6 +594,9 @@ class MainWindow(QMainWindow):
             sum(1 for issue in issues if issue.status != CLOSED),
             sum(1 for issue in issues if issue.status == CLOSED))
         self.home.set_momentum(self._momentum_line(runs))
+        state = self.controller.repository_state()
+        self.home.set_repository_state(state)
+        self._set_branch_chip(str(state.get("branch", "")))
         self.show_screen("home")
 
     # ----- self update (FR-U1..U4) -----
@@ -802,6 +813,7 @@ class MainWindow(QMainWindow):
             self.stage_header.setVisible(False)
             self.setWindowTitle(f"{text('app.title')} — {config.name}")
             self._set_project_chip(config.name)
+            self._set_branch_chip()
             self.show_home()
 
     def _set_project_chip(self, name: str) -> None:
@@ -809,6 +821,63 @@ class MainWindow(QMainWindow):
         tip = text("foot.project.tip")
         self.foot_project.setToolTip(
             f"{name}\n{tip}" if len(name) > 24 else tip)
+
+    def _set_branch_chip(self, branch: str = "") -> None:
+        """FR-B5: the foot bar names the branch the run commits to."""
+        branch = branch or self.controller.current_branch()
+        self.foot_branch.setText(
+            f"{chip_name(branch, 18)} ▾" if branch
+            else text("branch.none"))
+        self.foot_branch.setToolTip(text("branch.tip"))
+
+    def _branch_menu(self) -> QMenu:
+        """Every local branch, and a way to start a new one."""
+        menu = QMenu(self)
+        current = self.controller.current_branch()
+        for name in self.controller.branches()[:30]:
+            action = menu.addAction(name)
+            if name == current:
+                action.setCheckable(True)
+                action.setChecked(True)
+            else:
+                action.triggered.connect(
+                    lambda checked=False, value=name: self._switch_branch(value))
+        menu.addSeparator()
+        menu.addAction(text("branch.new"), self._new_branch)
+        return menu
+
+    def _pick_branch(self) -> None:
+        menu = self._branch_menu()
+        menu.aboutToHide.connect(menu.deleteLater)
+        corner = self.foot_branch.mapToGlobal(QPoint(0, 0))
+        menu.popup(QPoint(corner.x(),
+                          corner.y() - menu.sizeHint().height() - 4))
+
+    def _switch_branch(self, branch: str, create: bool = False) -> None:
+        if self.controller.busy:
+            self.toast(text("branch.busy"))
+            return
+        try:
+            self.controller.switch_branch(branch, create=create)
+        except MaintainError as exc:
+            self.toast(self._branch_words(str(exc)))
+            return
+        self._set_branch_chip(branch)
+        self.toast(text("branch.now", branch=branch))
+        if self.stack.currentWidget() is self.home:
+            self.show_home()
+
+    def _new_branch(self) -> None:
+        value = self.ask_line(text("branch.new"), text("branch.new.body"))
+        name = " ".join((value or "").split()).replace(" ", "-")
+        if name:
+            self._switch_branch(name, create=True)
+
+    @staticmethod
+    def _branch_words(reason: str) -> str:
+        if "not committed" in reason.lower():
+            return text("branch.dirty")
+        return reason
 
     def _project_menu(self) -> QMenu:
         """One click on the foot chip lists every project; one more switches."""
@@ -2047,13 +2116,15 @@ class MainWindow(QMainWindow):
                 note=self._change_note(record, iterations=iterations),
                 issues_closed=issues_closed)
             self._done_run_id = record.run_id
-            # The run commits on maintain/<run-id> inside its worktree.
-            # Integration targets the branch the person started from.
+            # The run commits on the person's own branch, so the files
+            # have the change already. Older runs, made when the work
+            # happened in a worktree, keep the step that adds it.
             self._done_branch = str(record.evidence.get("source_branch")
                                     or self.controller.current_branch())
-            self.done.set_applied(
-                bool(record.evidence.get("delivery", {})
-                     .get("integrated_commit")), record.branch)
+            delivery = record.evidence.get("delivery", {})
+            self.done.set_applied(bool(delivery.get("integrated_commit")),
+                                  record.branch)
+            self.done.set_push(delivery.get("push"))
             self._set_run_footer(False)
             self._set_stage(5)
             self.stage_header.setVisible(False)

@@ -409,9 +409,11 @@ def test_repair_failed_checks_stop_continue_and_discard(
     window._continue_run(record.run_id)
     assert _screen(window) == "save"
 
-    # Discard. The run cancels; the worktree can then be removed.
+    # Discard. The run works in the project itself, so a discard puts
+    # the files back to the commit the run started from.
     worktree = Path(window.current_record.worktree)
-    assert worktree.is_dir()
+    assert worktree == Path(window.store.config.repository)
+    assert "after" in (worktree / "app.py").read_text()
     window.save.discard.emit()
     wait_until(qt_app, lambda: not window.controller.busy
                and _screen(window) == "home", message="discarded")
@@ -423,10 +425,14 @@ def test_repair_failed_checks_stop_continue_and_discard(
     assert final.display_state == "Discarded"
     assert window.controller.resumable_run() is None
 
+    assert "before" in (worktree / "app.py").read_text()
+    assert (worktree / ".maintain.json").is_file()   # a clean keeps the settings
+
     assert window.controller.diff_text(window.current_record) != ""
     window.controller.engine.cleanup_workspace(record.run_id)
-    assert not worktree.exists()
-    # The recorded diff outlives the worktree; without any record the
+    # A cleanup must never remove the person's project.
+    assert worktree.is_dir()
+    # The recorded diff outlives the run; without any record the
     # answer is empty, never an error.
     assert "after" in window.controller.diff_text(window.current_record)
     import dataclasses
@@ -518,6 +524,61 @@ def test_delivered_change_reaches_the_project_files(qt_app, tmp_path,
                         lambda: "experiment")
     window.done.apply_change.emit()
     assert "experiment" in window.done.message.text()
+
+
+def test_the_branch_is_chosen_and_the_state_is_shown(qt_app, tmp_path,
+                                                     monkeypatch):
+    """FR-B5, FR-B6: the person picks the branch the run commits to,
+    and the home screen tells them the state of the project."""
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    repository = Path(config.repository)
+    from maintain.workspace import git as run_git
+
+    # The foot bar names the branch the work lands on.
+    window.show_home()
+    assert "main" in window.foot_branch.text()
+    assert "Branch main" in window.home.repo_state.text()
+    assert "no changes" in window.home.repo_state.text()
+    assert "no remote" in window.home.repo_state.text()
+
+    # A new branch is made and opened from the same chip.
+    window._switch_branch("trial", create=True)
+    assert window.controller.current_branch() == "trial"
+    assert "trial" in window.foot_branch.text()
+    assert "trial" in [action.text() for action in
+                       window._branch_menu().actions()]
+
+    # Back to main, and the state counts the work that is not committed.
+    window._switch_branch("main")
+    (repository / "app.py").write_text('VALUE = "edited"\n')
+    window.show_home()
+    assert "1 changed file" in window.home.repo_state.text()
+
+    # A branch cannot open over work that is not committed.
+    toasts: list[str] = []
+    monkeypatch.setattr(window, "toast", lambda message, **kw: toasts.append(message))
+    window._switch_branch("trial")
+    assert window.controller.current_branch() == "main"
+    assert "not committed" in toasts[-1]
+
+    # With the work committed, the state counts what waits for a remote.
+    run_git(repository, "add", "-A")
+    run_git(repository, "commit", "-m", "edit")
+    remote = tmp_path / "remote.git"
+    run_git(repository, "init", "--bare", str(remote))
+    run_git(repository, "remote", "add", "origin", str(remote))
+    # A project with a remote that has not seen this branch says so,
+    # and that is not the same as a project with no remote at all.
+    window.show_home()
+    assert "not on the remote yet" in window.home.repo_state.text()
+
+    # The push sends the branch and names where it went.
+    outcome = window.controller.engine.workspaces.push("main")
+    assert outcome == {"pushed": True, "remote": "origin"}
+    window.show_home()
+    assert "same as the remote" in window.home.repo_state.text()
 
 
 def test_saved_run_still_offers_its_change(qt_app, tmp_path, monkeypatch):

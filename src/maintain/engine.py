@@ -397,7 +397,15 @@ class WorkflowEngine:
             if RunState(record.state) in {RunState.DELIVERED, RunState.CANCELLED}:
                 return record
             self._move(record, store, RunState.CANCELLED, tree_hash=record.tree_hash)
-            store.append("human_cancelled", {"retained_worktree": record.worktree})
+            # A run in the person's own checkout must leave nothing
+            # behind: their files go back to the start of the run.
+            restored = ""
+            if record.worktree and self.workspaces.in_place(Path(record.worktree)):
+                self.workspaces.restore_base(Path(record.worktree),
+                                             record.base_commit)
+                restored = record.base_commit
+            store.append("human_cancelled", {"retained_worktree": record.worktree,
+                                             "restored_to": restored})
             self._iteration(record, store, "Discarded", kind="discarded")
             if self.issues is not None:
                 # The discarded run frees its issues: nothing may show
@@ -416,7 +424,9 @@ class WorkflowEngine:
                     RunState.DELIVERED, RunState.FAILED, RunState.CANCELLED}:
                 raise PolicyError("Only a delivered, failed, or cancelled workspace can be removed.")
             worktree = Path(record.worktree)
-            if worktree.exists():
+            # A run that works in place has nothing to remove, and the
+            # path it names is the person's project. Never touch it.
+            if worktree.exists() and not self.workspaces.in_place(worktree):
                 from .workspace import git
                 arguments = ["worktree", "remove"]
                 if RunState(record.state) in {RunState.FAILED, RunState.CANCELLED}:
@@ -599,13 +609,12 @@ class WorkflowEngine:
                           wait_seconds=30):
                 base = record.base_commit or self.workspaces.preflight()
                 if not record.base_commit:
-                    from .workspace import git
+                    # The run works where the person can see it: their
+                    # own checkout, on the branch they chose.
                     record.base_commit = base
-                    record.branch = f"maintain/{record.run_id}"
-                    record.worktree = str(self.workspaces.workspace_root / record.run_id)
-                    record.evidence["source_branch"] = git(
-                        self.config.repository, "branch", "--show-current"
-                    )
+                    record.branch = self.workspaces.current_branch()
+                    record.worktree = str(self.config.repository)
+                    record.evidence["source_branch"] = record.branch
                     store.append("workspace_planned", {
                         "base_commit": base, "branch": record.branch,
                         "worktree": record.worktree,
@@ -1293,6 +1302,14 @@ class WorkflowEngine:
         commit = self.workspaces.commit(Path(record.worktree),
             f"maintain: {summary}", record.accepted_tree_hash)
         record.evidence["delivery"] = {"commit": commit, "tree_hash": record.accepted_tree_hash}
+        if self.workspaces.in_place(Path(record.worktree)):
+            # The commit is on the person's own branch: their files
+            # have it already. No merge step, and none to forget.
+            record.evidence["delivery"]["integrated_branch"] = record.branch
+            record.evidence["delivery"]["integrated_commit"] = commit
+            outcome = self.workspaces.push(record.branch)
+            record.evidence["delivery"]["push"] = outcome
+            store.append("branch_pushed", outcome)
         self._move(record, store, RunState.DELIVERED)
         self._close_issues_for_delivery(record)
         self._iteration(record, store, "Saved", kind="saved",
@@ -1497,7 +1514,7 @@ class WorkflowEngine:
         note = (note or "").strip()
         worktree = Path(record.worktree)
         git(worktree, "reset", "--hard", "HEAD")
-        git(worktree, "clean", "-fd")
+        self.workspaces.clean(worktree)
         if note:
             record.evidence.setdefault("rescope_notes", []).append(note)
         record.evidence["timeline_epoch"] = int(

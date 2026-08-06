@@ -182,6 +182,11 @@ class HomeScreen(Screen):
         self.add(self._name)
         self._path = label(project_path, "MonoHint")
         self.add(self._path)
+        # FR-B6: the state of the project, in one line the person can
+        # read at a glance. The run commits here, so this must be true.
+        self.repo_state = label("", "Hint")
+        self.repo_state.setVisible(False)
+        self.add(self.repo_state)
         self.momentum = label("", "Hint")
         self.momentum.setVisible(False)
         self.add(self.momentum)
@@ -241,6 +246,37 @@ class HomeScreen(Screen):
             self.add(card)
             if title_key == "home.issues":
                 self._issues_card = card
+
+    def set_repository_state(self, state: dict) -> None:
+        """FR-B6: branch, changed files, and distance from the remote."""
+        branch = str(state.get("branch", ""))
+        if not branch:
+            self.repo_state.setVisible(False)
+            return
+        changed, ahead, behind = (int(state.get("changed", 0)),
+                                  int(state.get("ahead", 0)),
+                                  int(state.get("behind", 0)))
+        parts = [text("state.branch", branch=branch)]
+        parts.append(text("state.clean") if not changed
+                     else text("state.changed.one") if changed == 1
+                     else text("state.changed", count=changed))
+        if not state.get("tracked"):
+            # A project with no remote is different from a branch that
+            # the remote has not seen. Say which one this is.
+            parts.append(text("state.unsent") if state.get("has_remote")
+                         else text("state.noremote"))
+        elif ahead and behind:
+            parts.append(text("state.diverged", ahead=ahead, behind=behind))
+        elif ahead:
+            parts.append(text("state.ahead.one") if ahead == 1
+                         else text("state.ahead", count=ahead))
+        elif behind:
+            parts.append(text("state.behind.one") if behind == 1
+                         else text("state.behind", count=behind))
+        else:
+            parts.append(text("state.synced"))
+        self.repo_state.setText(" · ".join(parts))
+        self.repo_state.setVisible(True)
 
     def set_momentum(self, value: str) -> None:
         self.momentum.setText(value)
@@ -1173,14 +1209,20 @@ class DoneScreen(Screen):
         self._apply_holder = QWidget()
         self._apply_holder.setLayout(apply_row)
         self.add(self._apply_holder)
+        # FR-B7: the commit goes to the remote after it is made. Say so.
+        self.push_line = label("", "Ok")
+        self.push_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.push_line.setVisible(False)
+        self.add(self.push_line)
         self.message = StatusLine()
         self.add(self.message)
         self.add_gap()
         extras = QHBoxLayout()
         extras.setSpacing(8)
         extras.addStretch(1)
-        for extra in (button(text("done.merge"), "Secondary",
-                             self._copy_merge),
+        self.merge_button = button(text("done.merge"), "Secondary",
+                                   self._copy_merge)
+        for extra in (self.merge_button,
                       button(text("done.note"), "Secondary",
                              self._copy_note),
                       button(text("done.explain"), "Secondary",
@@ -1204,11 +1246,33 @@ class DoneScreen(Screen):
         self._note = ""
 
     def set_applied(self, applied: bool, branch: str = "") -> None:
-        """Show the step, or say the files already have the change."""
+        """Show the step, or say the files already have the change.
+
+        A run that works in the person's own checkout is applied the
+        moment it commits. Then there is no step and no merge command
+        — the two things that made this screen difficult.
+        """
         self._apply_holder.setVisible(not applied)
+        self.merge_button.setVisible(not applied)
         self.apply_hint.setText(
             text("done.apply.here", branch=branch) if applied
             else text("done.apply.sub"))
+
+    def set_push(self, outcome: dict | None) -> None:
+        """FR-B7: say if the commit went to the remote, and why not."""
+        if not outcome:
+            self.push_line.setVisible(False)
+            return
+        if outcome.get("pushed"):
+            self.push_line.setText(text("done.push.done",
+                                        name=str(outcome.get("remote", ""))))
+            self.push_line.setObjectName("Ok")
+        else:
+            self.push_line.setText(
+                text("done.push.none") if outcome.get("reason") == "no_remote"
+                else text("done.push.refused"))
+            self.push_line.setObjectName("Hint")
+        self.push_line.setVisible(True)
 
     def show_record(self, record: RunRecord, files: list[str] = (),
                     checks: int = 0, iterations: int = 0,
@@ -2508,6 +2572,7 @@ class RunDetailScreen(Screen):
         self.apply_note.setVisible(delivered and applied)
         self.apply_note.setText(text("done.apply.here", branch=branch)
                                 if delivered and applied else "")
+        self.merge_button.setVisible(delivered and not applied)
 
     def set_applied(self, applied: bool, branch: str = "") -> None:
         """The shared name the apply step calls after it wins."""

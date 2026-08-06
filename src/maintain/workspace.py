@@ -53,7 +53,9 @@ class WorkspaceManager:
 
     def preflight(self) -> str:
         if self._source_status():
-            raise PolicyError("The source repository has uncommitted changes.")
+            raise PolicyError(
+                "The project has uncommitted changes. Commit them or "
+                "remove them, then start again.")
         return git(self.repository, "rev-parse", "HEAD")
 
     def _source_status(self) -> str:
@@ -62,20 +64,46 @@ class WorkspaceManager:
         return git(self.repository, *arguments)
 
     def create(self, run_id: str, base_commit: str) -> tuple[str, Path]:
-        branch = f"maintain/{run_id}"
-        worktree = self.workspace_root / run_id
-        worktree.parent.mkdir(parents=True, exist_ok=True)
-        if worktree.exists():
-            if (git(worktree, "rev-parse", "HEAD") == base_commit and
-                    git(worktree, "branch", "--show-current") == branch):
-                return branch, worktree
-            raise RecoveryError(f"Worktree already exists with unexpected state: {worktree}")
-        result = subprocess.run(["git", "-C", str(self.repository), "worktree", "add", "-b",
-                                 branch, str(worktree), base_commit], text=True,
-                                capture_output=True, check=False, **hidden())
-        if result.returncode:
-            raise RecoveryError((result.stderr or result.stdout).strip())
-        return branch, worktree
+        """The run works in the person's own checkout, on their branch.
+
+        An isolated worktree kept the project files untouched until an
+        extra merge step. In use, that step is where the work looked
+        lost, and the merge itself became the difficulty. The run now
+        edits the files the person can see, and its commit lands on
+        the branch they chose.
+        """
+        branch = self.current_branch()
+        if not branch:
+            raise RecoveryError(
+                "The project is not on a branch. Move to a branch, then start again.")
+        if self._source_status():
+            raise RecoveryError("The project has changes that are not committed.")
+        head = git(self.repository, "rev-parse", "HEAD")
+        if head != base_commit:
+            raise RecoveryError("The branch moved after this run started.")
+        return branch, self.repository
+
+    def current_branch(self) -> str:
+        return git(self.repository, "branch", "--show-current", check=False)
+
+    def in_place(self, worktree: Path) -> bool:
+        """True when the run works in the person's own checkout."""
+        try:
+            return Path(worktree).resolve() == self.repository
+        except OSError:
+            return False
+
+    def restore_base(self, worktree: Path, base_commit: str) -> None:
+        """Return the files to the commit the run started from.
+
+        A discarded run must leave nothing behind. Everything after
+        the start belongs to the run, because the start refused to
+        begin with changes that were not committed.
+        """
+        if not base_commit:
+            return
+        git(worktree, "reset", "--hard", base_commit)
+        self.clean(worktree)
 
     def restore_tree(self, worktree: Path, tree_hash: str) -> None:
         """Return the worktree files to a recorded tree without moving HEAD.
@@ -84,7 +112,7 @@ class WorkspaceManager:
         stay in the shared object database for the life of the run.
         """
         git(worktree, "reset", "--hard", "HEAD")
-        git(worktree, "clean", "-fd")
+        self.clean(worktree)
         if not tree_hash or tree_hash == git(worktree, "rev-parse", "HEAD^{tree}"):
             return
         removed = git(worktree, "diff-tree", "-r", "--name-only", "--diff-filter=D",
@@ -102,8 +130,30 @@ class WorkspaceManager:
             if name and target.is_file():
                 target.unlink()
 
+    def clean(self, worktree: Path) -> None:
+        """Remove untracked files, but never Maintain's own settings.
+
+        The run works in the person's checkout, where .maintain.json
+        and the prompt files usually are not committed. A plain clean
+        would delete the project's configuration.
+        """
+        arguments = ["clean", "-fd"]
+        for path in self.ignored_source_paths:
+            arguments.extend(["-e", path])
+        git(worktree, *arguments)
+
+    def _stage_paths(self) -> list[str]:
+        """The pathspec that stages the code, and nothing else.
+
+        The run works in the person's own checkout now, so Maintain's
+        own files sit beside the code. Without these excludes they
+        would read as an implementation that edited the settings.
+        """
+        return [".", *(f":(exclude){path}"
+                       for path in self.ignored_source_paths)]
+
     def diff(self, worktree: Path) -> DiffEvidence:
-        text, paths, tree, statuses = self._snapshot(worktree)
+        text, paths, tree, statuses = self._snapshot(worktree, self._stage_paths())
         for relative in paths:
             candidate = worktree / relative
             if candidate.is_symlink():
@@ -112,13 +162,15 @@ class WorkspaceManager:
                             statuses=statuses)
 
     @staticmethod
-    def _snapshot(worktree: Path) -> tuple[str, tuple[str, ...], str, tuple[tuple[str, str], ...]]:
+    def _snapshot(worktree: Path, stage: list[str] | None = None
+                  ) -> tuple[str, tuple[str, ...], str, tuple[tuple[str, str], ...]]:
         env = os.environ.copy()
         with tempfile.TemporaryDirectory(prefix="maintain-index-") as directory:
             env["GIT_INDEX_FILE"] = str(Path(directory) / "index")
             subprocess.run(["git", "-C", str(worktree), "read-tree", "HEAD"], env=env,
                            check=True, capture_output=True, **hidden())
-            subprocess.run(["git", "-C", str(worktree), "add", "-A"], env=env,
+            subprocess.run(["git", "-C", str(worktree), "add", "-A", "--",
+                            *(stage or ["."])], env=env,
                            check=True, capture_output=True, **hidden())
             tree = subprocess.run(["git", "-C", str(worktree), "write-tree"], env=env,
                                   text=True, encoding="utf-8",
@@ -342,13 +394,76 @@ class WorkspaceManager:
         current_tree = git(worktree, "show", "-s", "--format=%T", "HEAD")
         if current_tree == expected_tree:
             return current_head
-        git(worktree, "add", "-A")
+        git(worktree, "add", "-A", "--", *self._stage_paths())
         if git(worktree, "write-tree") != expected_tree:
             raise PolicyError("The accepted tree changed before delivery.")
         git(worktree, "commit", "-m", message)
         if git(worktree, "show", "-s", "--format=%T", "HEAD") != expected_tree:
             raise PolicyError("The delivered commit does not match the accepted tree.")
         return git(worktree, "rev-parse", "HEAD")
+
+    def push(self, branch: str) -> dict:
+        """Send the branch to its remote, and never stop the run.
+
+        A project with no remote, or a machine with no network, is a
+        normal state. The result is words for the person, not a fault.
+        """
+        remotes = git(self.repository, "remote", check=False).split()
+        if not remotes:
+            return {"pushed": False, "reason": "no_remote"}
+        tracked = git(self.repository, "rev-parse", "--abbrev-ref",
+                      f"{branch}@{{upstream}}", check=False)
+        remote = tracked.split("/", 1)[0] if tracked else (
+            "origin" if "origin" in remotes else remotes[0])
+        arguments = ["push"] + ([] if tracked else ["-u"]) + [remote, branch]
+        result = subprocess.run(["git", "-C", str(self.repository), *arguments],
+                                text=True, encoding="utf-8", errors="replace",
+                                capture_output=True, check=False, **hidden())
+        if result.returncode:
+            return {"pushed": False, "reason": "refused", "remote": remote,
+                    "error": (result.stderr or result.stdout).strip()}
+        return {"pushed": True, "remote": remote}
+
+    def state(self) -> dict:
+        """A small picture of the repository, for the person to read."""
+        branch = self.current_branch()
+        # Maintain's own files are not the person's work, and a run
+        # does not refuse because of them. They do not count here.
+        changed = [line for line in self._source_status().splitlines()
+                   if line.strip()]
+        ahead = behind = 0
+        tracked = git(self.repository, "rev-parse", "--abbrev-ref",
+                      f"{branch}@{{upstream}}", check=False) if branch else ""
+        if tracked:
+            counts = git(self.repository, "rev-list", "--left-right", "--count",
+                         f"{tracked}...{branch}", check=False).split()
+            if len(counts) == 2:
+                behind, ahead = int(counts[0]), int(counts[1])
+        return {"branch": branch, "changed": len(changed), "tracked": tracked,
+                "ahead": ahead, "behind": behind,
+                "has_remote": bool(git(self.repository, "remote",
+                                       check=False).split())}
+
+    def branches(self) -> list[str]:
+        """The local branch names, current one first."""
+        names = [line.strip() for line in
+                 git(self.repository, "branch", "--format=%(refname:short)",
+                     check=False).splitlines() if line.strip()]
+        current = self.current_branch()
+        return ([current] if current in names else []) + [
+            name for name in names if name != current]
+
+    def switch_branch(self, branch: str, create: bool = False) -> None:
+        """Move the checkout to another branch, with the tree clean."""
+        if self._source_status():
+            raise RecoveryError("The project has changes that are not committed.")
+        arguments = ["checkout"] + (["-b"] if create else []) + [branch]
+        result = subprocess.run(["git", "-C", str(self.repository), *arguments],
+                                text=True, encoding="utf-8", errors="replace",
+                                capture_output=True, check=False, **hidden())
+        if result.returncode:
+            raise RecoveryError((result.stderr or result.stdout).strip()
+                                or "The branch could not be opened.")
 
     def integrate_current_branch(self, branch: str, commit: str, expected_base: str) -> str:
         """Fast-forward the checked-out source branch after explicit confirmation."""

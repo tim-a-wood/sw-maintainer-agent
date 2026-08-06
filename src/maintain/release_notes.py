@@ -48,6 +48,14 @@ NOTES: dict[str, tuple[str, ...]] = {
         "Before this, the button was only on the last screen of the run.",
         "The saved run also gives you the merge command, if you want a terminal.",
     ),
+    "0.9.8": (
+        "The tool now changes your project files directly, on your own branch.",
+        "There is no separate branch to merge at the end. The change is simply there.",
+        "After the tool saves, it pushes your branch to the remote.",
+        "The bottom bar shows your branch. Click it to change branch or make one.",
+        "The home screen shows the branch, the changed files, and the commits to push.",
+        "A start still needs a clean project. A discard puts your files back.",
+    ),
 }
 
 
