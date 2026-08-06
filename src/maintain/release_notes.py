@@ -78,6 +78,8 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The notices on the home screen have a close mark in the corner.",
         "The update notice closes for now. It shows again at the next look.",
         "The continue notice deletes that change. The app asks you first.",
+        "The plan step now tells you the attempt and the cause of a bad reply.",
+        "If Copilot names no task, the app stops and asks you to reword the change.",
     ),
 }
 
