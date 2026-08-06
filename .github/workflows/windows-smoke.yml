@@ -86,6 +86,57 @@ jobs:
             -OutputPath (Join-Path $env:RUNNER_TEMP "maintain-diagnostics.zip")
           if (-not $?) { throw "Diagnostic collection failed." }
 
+      - name: Parse-check every PowerShell script
+        shell: pwsh
+        run: |
+          # A syntax fault in an installer reaches a person as a broken
+          # install, and nothing else in this suite reads PowerShell.
+          $bad = 0
+          foreach ($file in (Get-ChildItem -Recurse -Filter *.ps1)) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName, [ref]$null, [ref]$errors)
+            if ($errors -and $errors.Count -gt 0) {
+              $bad = 1
+              Write-Host "FAIL $($file.FullName)"
+              foreach ($e in $errors) { Write-Host "  $($e.Message)" }
+            }
+          }
+          if ($bad -ne 0) { throw "A PowerShell script does not parse." }
+
+      - name: Resolve the newest release the way a fresh install does
+        shell: pwsh
+        run: |
+          # FR-U7. The smoke install above pins MAINTAIN_PACKAGE_SOURCE,
+          # so it never runs the default path a person actually takes.
+          # This runs that path's resolver for real, against GitHub.
+          $script = ".\scripts\install-windows.ps1"
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            $script, [ref]$null, [ref]$null)
+          foreach ($name in @("Assert-NativeCommand", "Resolve-LatestReleaseTag",
+                              "Resolve-RemoteCommit")) {
+            $fn = $ast.Find({
+              param($node)
+              $node -is [System.Management.Automation.Language.FunctionDefinitionAst] `
+                -and $node.Name -eq $name
+            }, $true)
+            if ($null -eq $fn) { throw "install-windows.ps1 has no $name." }
+            Invoke-Expression $fn.Extent.Text
+          }
+
+          $url = "https://github.com/tim-a-wood/sw-maintainer-agent.git"
+          $git = (Get-Command git.exe).Source
+          $tag = Resolve-LatestReleaseTag -GitPath $git -Repository $url
+          Write-Host "Resolved release: $tag"
+          if ($tag -notmatch "^refs/tags/v\d+(\.\d+)*$") {
+            throw "The resolver returned '$tag', which is not a release tag."
+          }
+          $commit = Resolve-RemoteCommit -GitPath $git -Repository $url -Reference $tag
+          Write-Host "Resolved commit: $commit"
+          if ($commit -notmatch "^[0-9a-f]{40}$") {
+            throw "The resolver returned '$commit', which is not a commit."
+          }
+
       - name: Exercise the self-updater
         shell: pwsh
         run: |
