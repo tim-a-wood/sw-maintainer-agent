@@ -297,3 +297,57 @@ def test_an_unusable_reply_stops_instead_of_asking_without_end(tmp_path):
     assert max(counts.values()) <= config.max_attempts
     # And the message tells the person what to do next.
     assert "continue" in record.error.lower()
+
+
+def test_a_scope_retry_names_its_attempt_and_its_cause(tmp_path):
+    """FR-V8: the field fault — the plan step asks again and again, and
+    every package looks like the first one. The person cannot see the
+    attempt or the cause, so the run looks stuck."""
+    repository = _repository(tmp_path)
+    config = _config(tmp_path, repository)
+
+    seen: list[dict] = []
+
+    class EmptyScopeProvider(ScriptedProvider):
+        """Answers the scope step with no tasks, every time."""
+
+        def exchange(self, request):
+            seen.append(dict(request.payload))
+            if request.role != "scope":
+                return super().exchange(request)
+            return ProviderResponse(
+                schema_version=1, run_id=request.run_id,
+                task_id=request.task_id, role=request.role,
+                provider="scripted", conversation_id="chat-scope",
+                content={"tasks": []})
+
+    engine = _engine(config, EmptyScopeProvider())
+    record = engine.start("feature", "Change the value")
+
+    # A reply with no tasks and no questions ends the discovery loop at
+    # once, so the step asks twice: the first ask, then the last one.
+    scope_payloads = [p for p in seen if "project_policy" in p]
+    assert len(scope_payloads) == 2, scope_payloads
+
+    # The attempt count follows the asks that were really made.
+    assert [p["exchange_attempt"] for p in scope_payloads] == [1, 2]
+    assert not scope_payloads[0]["content_fault"]
+    assert scope_payloads[1]["content_fault"].strip()
+
+    # The last ask carries no project files: they went with the first.
+    assert "candidate_files" not in scope_payloads[1]
+    assert "repository_map" not in scope_payloads[1]
+    assert scope_payloads[1]["disclosed_files"]
+
+    # This project holds one file, so the deterministic fallback still
+    # rescues the run. The point held here is the visible retry: the
+    # person can see the attempt and the cause on every package.
+    assert RunState(record.state) is RunState.AWAITING_ACCEPTANCE
+
+    # A run that cannot be rescued stops with words that say what to
+    # do next, not only what went wrong.
+    import inspect
+
+    from maintain.engine import WorkflowEngine
+    scope_source = inspect.getsource(WorkflowEngine._scope)
+    assert "Reword the change below" in scope_source

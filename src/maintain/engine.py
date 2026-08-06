@@ -711,11 +711,16 @@ class WorkflowEngine:
         }
         rounds = int(record.evidence.get("plan_rounds", 0))
         round_prefix = f"round-{rounds + 1}-" if rounds else ""
+        scope_fault = ""
+        asks_made = 0
         for scope_attempt in range(1, 4):
+            asks_made = scope_attempt
             response = self._exchange(
                 record, store, "scope", f"{round_prefix}scope-{scope_attempt}",
                 SCOPE_INSTRUCTIONS,
                 {"mode": record.mode, "request": record.request,
+                 "exchange_attempt": scope_attempt,
+                 "content_fault": scope_fault,
                  "project_policy": scope_policy,
                  "human_notes": list(record.evidence.get("rescope_notes", [])),
                  "context_expansions": expansions,
@@ -737,6 +742,14 @@ class WorkflowEngine:
 
             queries = response.get("context_queries")
             has_queries = isinstance(queries, list) and bool(queries)
+            # FR-V8: the person must know why the same step asks again.
+            scope_fault = (
+                "The plan named project files that were not in the package. "
+                f"The package now has them: {', '.join(missing_context[:6])}."
+                if missing_context else
+                "The reply asked for more of the project. The package now "
+                "holds more files." if has_queries else
+                "The reply defined no task for this change.")
             if scope_attempt == 3 or (not missing_context and not has_queries):
                 break
 
@@ -789,13 +802,13 @@ class WorkflowEngine:
                 "(for example, main.c for a standalone C program). Return content.tasks with id, "
                 "objective, allowed_files, done_when, verification, and depends_on.",
                 {"mode": record.mode, "request": record.request,
+                 "exchange_attempt": asks_made + 1,
+                 "content_fault": (scope_fault
+                                   or "The reply defined no task for this change."),
                  "project_policy": scope_policy,
                  "human_notes": list(record.evidence.get("rescope_notes", [])),
                  "context_expansions": expansions,
-                 "repository_map": selector.repository_map(),
-                 "candidate_files": [{"path": x.path, "sha256": x.sha256,
-                                      "bytes": x.bytes, "content": x.content}
-                                     for x in disclosed.values()],
+                 "disclosed_files": sorted(disclosed),
                  "scope_retry_reason": "context_expansion_exhausted"},
                 conversation_suffix="scope-final")
             store.append("scope_task_synthesis_retry", {
@@ -855,7 +868,10 @@ class WorkflowEngine:
         tasks = response.get("tasks")
         candidates = {item.path for item in context}
         if not isinstance(tasks, list) or not tasks:
-            raise ProviderError("The scope response did not define a task.")
+            raise ProviderError(
+                "The reply defined no task for this change. Copilot must "
+                "answer with content.tasks. Reword the change below, then "
+                "continue. Or go back and start the plan again.")
         if len(tasks) > self.config.max_changed_files:
             raise ProviderError("The scope response defined too many tasks.")
         seen: set[str] = set()
@@ -1447,7 +1463,10 @@ class WorkflowEngine:
                 f"The last cause was: {record.error or 'unknown'}. "
                 "Read the cause, make the reply again in Copilot, and "
                 "continue. Or discard this change and start again.")
-        effective_payload = {**payload, "exchange_attempt": retry + 1}
+        # The step can name its own attempt. The scope step asks more
+        # than once inside one pass, and each ask must count.
+        attempt = max(int(payload.get("exchange_attempt", 1) or 1), retry + 1)
+        effective_payload = {**payload, "exchange_attempt": attempt}
         if retry:
             # FR-V6. A retry stays on this step, and the package holds
             # only what the correction needs. The project context went

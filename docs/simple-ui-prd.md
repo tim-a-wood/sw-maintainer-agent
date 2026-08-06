@@ -1917,3 +1917,35 @@ differs, because the two notices differ:
 A test drives both: the update notice closes and returns at the
 next look; the continue notice keeps the run when the question is
 refused, and the run reads as discarded when it is accepted.
+
+### 14.59 The plan step that asked in silence (FR-V8)
+
+The field report, with a photograph: the plan step keeps asking,
+"still getting stuck at this step after it accepts the reply from
+Copilot". The package in the picture is named `plan-scope-final`.
+
+That name gives the whole story. The plan step asks more than once
+inside a single pass: up to three times while it expands the
+project files, and then a last time that asks only for the tasks.
+Each of those asks builds a package with its own name, and each one
+arrives on screen as "STEP 1 OF 5 — PLAN" with nothing else. The
+attempt counter stayed at one and no cause was carried, so FR-V6's
+retry line never appeared. The person sees the same step, the same
+words, and a new package: the run looks stuck when it is in fact
+working through its attempts.
+
+- FR-V8. Every ask after the first carries its attempt number and
+  its cause, so the retry line names both: "Attempt 2. The last
+  reply was not usable: The reply defined no task for this change."
+  The three causes are named plainly — files the plan asked for
+  that were not in the package, a request for more of the project,
+  or a reply with no task at all.
+- The attempt number follows the asks that were really made. A
+  reply with no tasks and no questions ends discovery at once, so
+  that run shows attempt 1 then attempt 2, not 1 then 4.
+- The last ask carries no project files. They went with the earlier
+  packages, into the same conversation, and that ask wants only the
+  tasks. In the reported case the package was 189 KB.
+- When no task can be found at all, the run stops with words that
+  say what to do: reword the change and continue, or go back and
+  start the plan again.
