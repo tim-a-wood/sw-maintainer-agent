@@ -134,6 +134,7 @@ class MainWindow(QMainWindow):
         self._in_test = False
         self._side: dict | None = None
         self._pending_issue_links: list[str] = []
+        self._forward_anchor = 0        # FR-V7: the step a go-back left
         self._explain: dict | None = None
         self.explain_render_done.connect(self._explain_render_done)
         self.explain_render_step.connect(
@@ -434,6 +435,9 @@ class MainWindow(QMainWindow):
         self.exchange.import_reply.connect(self._import_reply)
         self.exchange.newest_download.connect(self._open_newest_download)
         self.exchange.scan_focus.connect(self._update_scan_focus)
+        self.exchange.step_back.connect(self._step_back)
+        self.exchange.step_forward.connect(self._step_forward)
+        self.exchange.retry_note.connect(self._add_retry_note)
 
         self.plan_check.accept.connect(self._accept_plan)
         self.plan_check.rescope_note.connect(
@@ -1257,6 +1261,8 @@ class MainWindow(QMainWindow):
                                    documents_count(self.store, documents_key),
                                    scan=exchange.kind == "scan",
                                    coverage=coverage)
+        # A side exchange has no run timeline, so no step moves.
+        self.exchange.set_steps(False, False)
         self.show_screen("exchange")
 
     def _end_side(self) -> None:
@@ -1858,6 +1864,7 @@ class MainWindow(QMainWindow):
         self.exchange.show_handoff(handoff, self._packet_names(),
                                    documents_count(self.store,
                                                    handoff.task_key))
+        self._show_step_moves()
         self.show_screen("exchange")
         self._attention()
 
@@ -1956,6 +1963,74 @@ class MainWindow(QMainWindow):
         else:
             self.exchange.status.set_state(
                 "warn", text("exchange.newest.wrong", name=found.name))
+
+    def _open_run_key(self) -> str:
+        """The run behind the open packet. The handoff always names it;
+        current_record is not set yet at the first packet."""
+        handoff = self.current_handoff
+        if handoff is not None and self._side is None:
+            return str(handoff.request.run_id)
+        record = getattr(self, "current_record", None)
+        return record.run_id if record is not None else ""
+
+    def _step_anchors(self) -> list:
+        """The go-back points of the open run, oldest first (FR-V7)."""
+        run_id = self._open_run_key()
+        if not run_id or self._side is not None:
+            return []
+        return [item for item in self.controller.timeline(run_id)
+                if item.can_go_back and not item.superseded]
+
+    def _show_step_moves(self) -> None:
+        anchors = self._step_anchors()
+        # Back needs an earlier anchor than the newest one. Forward is
+        # offered only after a go-back, when a later step still stands.
+        self.exchange.set_steps(len(anchors) >= 2,
+                                bool(getattr(self, "_forward_anchor", 0)))
+
+    def _step_back(self) -> None:
+        """FR-V7: do the previous step again, keeping the run."""
+        anchors = self._step_anchors()
+        if len(anchors) < 2:
+            self.toast(text("exchange.step.none"))
+            return
+        target = anchors[-2]
+        self._forward_anchor = anchors[-1].sequence
+        self._move_to_step(target.sequence)
+
+    def _step_forward(self) -> None:
+        """Return to the step the person came back from."""
+        sequence = int(getattr(self, "_forward_anchor", 0) or 0)
+        if not sequence:
+            return
+        self._forward_anchor = 0
+        self._move_to_step(sequence)
+
+    def _move_to_step(self, sequence: int) -> None:
+        run_id = self._open_run_key()
+        if not run_id:
+            return
+        if self.controller.busy:
+            # The engine waits at the packet bridge; release it first.
+            self.controller.stop()
+            self.controller.wait_settled()
+        if self.controller.revert_and_continue(run_id, sequence):
+            self.toast(text("exchange.step.back.done"))
+            self.show_busy()
+
+    def _add_retry_note(self, note: str) -> None:
+        """FR-V6: new words ride with the next correction package."""
+        handoff = self.current_handoff
+        run_id = self._open_run_key()
+        if handoff is None or not run_id:
+            return
+        try:
+            self.controller.add_retry_note(
+                run_id, handoff.request.role, note)
+        except MaintainError as exc:
+            self.toast(str(exc))
+            return
+        self.toast(text("exchange.note.added"))
 
     def _update_scan_focus(self, focus: str) -> None:
         """FR-P7: aim the scan from the exchange screen itself."""

@@ -44,6 +44,62 @@ PROVIDER_SAFETY_HEADER = (
     "dependencies, expose secrets, run MATLAB, or claim local verification."
 )
 
+def retry_notes_path(runtime_root: Path, run_id: str) -> Path:
+    """Where a reworded request waits for the next correction package.
+
+    The engine holds the run lock while it waits at the packet bridge,
+    so the note cannot go into the record. It goes beside the record
+    instead, and the correction package collects it.
+    """
+    return Path(runtime_root).expanduser() / run_id / "retry-notes.json"
+
+
+def append_retry_note(runtime_root: Path, run_id: str, role: str,
+                      note: str) -> None:
+    note = (note or "").strip()
+    if not note:
+        raise PolicyError("The note is empty.")
+    path = retry_notes_path(runtime_root, run_id)
+    if not path.parent.is_dir():
+        raise PolicyError("This run has no record.")
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
+    stored.setdefault(role, []).append(note)
+    path.write_text(json.dumps(stored, indent=2), encoding="utf-8")
+
+
+def take_retry_notes(runtime_root: Path, run_id: str, role: str) -> list[str]:
+    """Read the notes for one role, and leave none behind."""
+    path = retry_notes_path(runtime_root, run_id)
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(stored, dict):
+        return []
+    notes = [str(item) for item in stored.pop(role, []) if str(item).strip()]
+    if notes:
+        try:
+            path.write_text(json.dumps(stored, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+    return notes
+
+
+CORRECTION_INSTRUCTIONS = (
+    "Your last reply for this step could not be used. The cause is in "
+    "content_fault. You already have the project context from this "
+    "conversation; it is not sent again. Do not start the step again "
+    "from the beginning. Send the same reply for the same step, with "
+    "the cause corrected, in the output shape the step named. When "
+    "human_notes holds a new note, follow it: it changes the request "
+    "or the plan for this step."
+)
+
 IMPLEMENT_INSTRUCTIONS = (
     "Implement the complete authorized task and follow the provider-specific output "
     "contract exactly. Patch providers return content.patch as a complete unified "
@@ -272,6 +328,10 @@ class WorkflowEngine:
                 if isinstance(exc, ProviderError) and active_exchange:
                     retries = record.evidence.setdefault("provider_retry_counts", {})
                     retries[active_exchange] = int(retries.get(active_exchange, 0)) + 1
+                    # The correction package names the cause. record.error
+                    # does not survive the next resume, so keep it here.
+                    faults = record.evidence.setdefault("provider_retry_faults", {})
+                    faults[active_exchange] = str(exc)
                 if RunState(record.state) not in {RunState.NEEDS_HUMAN, RunState.FAILED}:
                     allowed = __import__("maintain.policy", fromlist=["TRANSITIONS"]).TRANSITIONS.get(RunState(record.state), set())
                     target = RunState.NEEDS_HUMAN if RunState.NEEDS_HUMAN in allowed else RunState.FAILED
@@ -1331,6 +1391,38 @@ class WorkflowEngine:
             raise ProviderError(
                 f"The saved Copilot reference could not be restored: {exc}") from exc
 
+    # The keys a correction never repeats: the project context that
+    # went with the first package of this step.
+    _BULK_PAYLOAD_KEYS = ("candidate_files", "repository_map", "context_expansions",
+                          "read_only_files", "diff", "files", "tasks")
+
+    def _correction_payload(self, record: RunRecord, role: str, task_id: str,
+                            retry: int, payload: dict,
+                            exchange_base: str = "") -> dict:
+        """The small package that asks for one reply again (FR-V6)."""
+        kept = {key: value for key, value in payload.items()
+                if key not in self._BULK_PAYLOAD_KEYS}
+        notes = take_retry_notes(self.config.runtime_root, record.run_id, role)
+        if notes:
+            record.evidence.setdefault("retry_notes", {}).setdefault(
+                role, []).extend(notes)
+        kept.update({
+            "exchange_attempt": retry + 1,
+            "correction": True,
+            "step": role,
+            "step_task_id": task_id,
+            "content_fault": (
+                str(record.evidence.get("provider_retry_faults", {})
+                    .get(exchange_base, ""))
+                or record.error
+                or "The reply did not match the contract."),
+            "dropped_context": [key for key in self._BULK_PAYLOAD_KEYS
+                                if key in payload],
+        })
+        if notes:
+            kept["human_notes"] = list(kept.get("human_notes", [])) + notes
+        return kept
+
     def _exchange(self, record: RunRecord, store: AuditStore, role: str, task_id: str,
                   instructions: str, payload: dict, conversation_suffix: str = "",
                   implementation_worktree: Path | None = None) -> dict:
@@ -1356,6 +1448,15 @@ class WorkflowEngine:
                 "Read the cause, make the reply again in Copilot, and "
                 "continue. Or discard this change and start again.")
         effective_payload = {**payload, "exchange_attempt": retry + 1}
+        if retry:
+            # FR-V6. A retry stays on this step, and the package holds
+            # only what the correction needs. The project context went
+            # with the first package, into the same conversation, so
+            # sending it again costs the person a large paste and says
+            # nothing new.
+            effective_payload = self._correction_payload(
+                record, role, task_id, retry, payload, exchange_base)
+            instructions = CORRECTION_INSTRUCTIONS
         if reference is not None:
             effective_payload["copilot_reference"] = {
                 "kind": reference.kind,
@@ -1541,6 +1642,15 @@ class WorkflowEngine:
         self._iteration(record, store, "Plan requested again", kind="rescope", sub=note)
         self._move(record, store, RunState.SCOPING)
         self.presenter.complete("PLAN", "Starting the plan again with your note")
+
+    def add_retry_note(self, run_id: str, role: str, note: str) -> None:
+        """Carry a reworded request into the next correction package.
+
+        FR-V6: a reply can be unusable because the request was unclear,
+        not because Copilot erred. The person rewords it while the run
+        waits at the packet bridge, so this takes no run lock.
+        """
+        append_retry_note(self.config.runtime_root, run_id, role, note)
 
     def revert_to(self, run_id: str, sequence: int) -> RunRecord:
         """Return the run to the state directly after a recorded iteration.

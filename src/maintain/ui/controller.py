@@ -172,6 +172,10 @@ class Controller(QObject):
             return self.engine.run(record)
         return self._spawn(work)
 
+    def add_retry_note(self, run_id: str, role: str, note: str) -> None:
+        """FR-V6: carry new words into the next correction package."""
+        self.engine.add_retry_note(run_id, role, note)
+
     def rerun_checks(self, run_id: str) -> bool:
         """Run the checks again by going back to the newest check anchor."""
         anchors = [item for item in self.timeline(run_id)

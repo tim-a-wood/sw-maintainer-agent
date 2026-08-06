@@ -1536,3 +1536,135 @@ def test_manim_install_also_brings_the_video_player(monkeypatch):
     joined = " ".join(seen["argv"])
     assert "manim==0.20.1" in joined
     assert f"PySide6-Addons=={PySide6.__version__}" in joined
+
+
+def test_a_bad_reply_stays_on_the_step_with_a_small_correction(
+        qt_app, tmp_path, monkeypatch):
+    """FR-V6, FR-V7 end to end: a reply the tool cannot use keeps the
+    run on its step, the next package carries only the correction, a
+    reworded note rides with it, a step can be done again, and the run
+    still reaches a saved change in the person's files."""
+    import json as json_module
+    import zipfile as zip_module
+
+    from test_ui_app import _build_markdown, _review_reply, _scope_reply
+
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    repository = Path(window.store.config.repository)
+
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange",
+               message="plan packet")
+
+    first = window.current_handoff
+    first_bytes = first.zip_path.stat().st_size
+    with zip_module.ZipFile(first.zip_path) as archive:
+        first_task_bytes = len(archive.read("TASK.md"))
+    assert window.exchange.retry_line.isVisibleTo(window.exchange) is False
+    assert not window.exchange._note_holder.isVisibleTo(window.exchange)
+
+    # A reply the tool cannot use: right shape, wrong run.
+    window.exchange.check(clipboard_text=json_module.dumps({
+        "schema_version": 1, "run_id": "not-this-run",
+        "task_id": first.request.task_id, "role": "scope",
+        "content": {"tasks": []}}))
+    assert _screen(window) == "exchange", "the run must stay on its step"
+    assert window.exchange.status.text()
+
+    # The person rewords the request; the note is kept for the retry.
+    window.exchange.note_edit.setText("Change VALUE to after in app.py.")
+    window.exchange._emit_note()
+    assert any("note goes with" in item for item in toasts), toasts[-3:]
+
+    # A real fault on this step: the person stops the exchange. The
+    # engine counts one retry against it and keeps the cause. No
+    # internal is patched here; this is the path a person walks.
+    run_id = window.current_handoff.request.run_id
+    window._stop_run()
+    wait_until(qt_app, lambda: not window.controller.busy, message="paused")
+    errors.clear()
+    window._continue_run(run_id)
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.request.payload.get("correction"),
+               message="correction packet", timeout=60.0)
+
+    # FR-V6: the same step, a smaller package, and the cause on screen.
+    retry = window.current_handoff
+    assert retry.task_key == "plan", "a retry must not change the step"
+    assert retry.zip_path.stat().st_size < first_bytes
+    payload = retry.request.payload
+    assert payload["correction"] is True
+    assert payload["exchange_attempt"] == 2
+    assert "candidate_files" not in payload
+    assert "candidate_files" in payload["dropped_context"]
+    assert payload["content_fault"].strip()
+    assert "Change VALUE to after in app.py." in payload["human_notes"]
+    assert window.exchange.retry_line.isVisibleTo(window.exchange)
+    assert "attempt 2" in window.exchange.retry_line.text().lower()
+    assert window.exchange._note_holder.isVisibleTo(window.exchange)
+    # The packet keeps its four standard parts; what shrank is the
+    # project context inside them.
+    with zip_module.ZipFile(retry.zip_path) as archive:
+        names = set(archive.namelist())
+        assert {"TASK.md", "GLOBAL.md", "MANIFEST.json"} <= names
+        assert len(archive.read("TASK.md")) < first_task_bytes
+
+    # The good reply now lands, and the run goes on.
+    window.exchange.check(clipboard_text=_scope_reply(retry))
+    wait_until(qt_app, lambda: _screen(window) == "plan", message="plan gate")
+    window.plan_check.accept.emit()
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "build",
+               message="build packet")
+
+    # FR-V7: go back a step, then forward again, without discarding.
+    assert window.exchange.back_button.isEnabled()
+    window.exchange.step_back.emit()
+    # A step back from Build lands on the plan gate: the place where
+    # that step is decided again.
+    wait_until(qt_app, lambda: errors or _screen(window) == "plan",
+               message="after the step back", timeout=60.0)
+    assert not errors, errors
+    assert any("earlier step" in item for item in toasts)
+    kinds = [item.kind for item in window.controller.timeline(run_id)]
+    assert "revert" in kinds, kinds
+
+    # Drive the rest to a saved change in the person's own files.
+    # Busy stays true at the packet bridge, so each step waits for the
+    # step itself to change.
+    def _here():
+        return (_screen(window), window.current_handoff.task_key
+                if window.current_handoff is not None else "")
+
+    for _ in range(10):
+        if _screen(window) == "save":
+            break
+        before = _here()
+        if _screen(window) == "plan":
+            window.plan_check.accept.emit()
+        elif _screen(window) == "exchange":
+            key = window.current_handoff.task_key
+            reply = (_scope_reply(window.current_handoff) if key == "plan"
+                     else _review_reply(window.current_handoff)
+                     if key == "review"
+                     else _build_markdown(window.current_handoff))
+            window.exchange.check(clipboard_text=reply)
+        elif _screen(window) == "test":
+            # A failed local check offers a repair round; take it.
+            window.test.repair.emit()
+        elif _screen(window) == "findings":
+            window.findings.repair.emit()
+        else:
+            break
+        wait_until(qt_app, lambda b=before: errors
+                   or _screen(window) == "save" or _here() != b,
+                   message="next step", timeout=60.0)
+        assert not errors, errors
+    assert _screen(window) == "save", _screen(window)
+    window.save.accept.emit()
+    wait_until(qt_app, lambda: errors or _screen(window) == "done",
+               message="done screen", timeout=60.0)
+    assert not errors, errors
+    assert (repository / "app.py").read_text() == 'VALUE = "after"\n'

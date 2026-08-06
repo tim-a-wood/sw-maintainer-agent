@@ -1859,3 +1859,35 @@ say so. The field report asked for the two buttons alone.
   name and size. Nothing on the screen is draggable.
 - The window still accepts a dropped reply, because that costs no
   space and helps the return trip. The hint says so.
+
+### 14.57 A retry corrects; it does not start again (FR-V6, FR-V7)
+
+FR-V5 stopped the endless asking. This round makes the asking
+useful.
+
+- FR-V6. A retry stays on its step, and the package holds only what
+  the correction needs: the cause, the step it belongs to, and the
+  request. The project context — candidate files, the repository
+  map, the diff — went with the first package into the same
+  conversation, so sending it again costs the person a large paste
+  and says nothing new. The package names what it left out.
+- The screen shows the cause: "Attempt 2. The last reply was not
+  usable: <cause>." The cause is kept beside the retry count,
+  because `record.error` does not survive the next resume.
+- A retry can carry new words. The person rewords the request or
+  the plan in one field, and the correction package takes it. The
+  note is written beside the record, not into it: the engine holds
+  the run lock while it waits at the packet bridge, so a note that
+  needed that lock could never be written.
+- FR-V7. Previous step and Next step move the run between its
+  go-back points, so one step can be done again without discarding
+  the change. A step back from Build lands on the plan gate, where
+  that decision is made. Forward returns to the step the person
+  came back from.
+
+One journey test drives the whole path: a reply that names another
+run keeps the screen on its step; a real fault produces a
+correction package that is smaller than the first, carries the
+cause and the reworded note, and drops the project context; the
+good reply then lands; a step back reaches the plan gate; and the
+run still ends with the change in the person's own files.

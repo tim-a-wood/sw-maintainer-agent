@@ -578,6 +578,9 @@ class ExchangeScreen(Screen):
     scan_focus = Signal(str)
     show_task = Signal()
     show_global = Signal()
+    step_back = Signal()
+    step_forward = Signal()
+    retry_note = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -604,10 +607,25 @@ class ExchangeScreen(Screen):
         self.packet_line = label("", "MonoHint")
         self.packet_line.setContentsMargins(52, 0, 0, 0)
         self.add(self.packet_line)
-        self.retry_note = label("", "Warn")
-        self.retry_note.setContentsMargins(52, 0, 0, 0)
-        self.retry_note.setVisible(False)
-        self.add(self.retry_note)
+        self.retry_line = label("", "Warn")
+        self.retry_line.setContentsMargins(52, 0, 0, 0)
+        self.retry_line.setVisible(False)
+        self.add(self.retry_line)
+        # FR-V6: a retry can carry new words. The person rewords the
+        # request or the plan here and the correction package takes it.
+        note_row = QHBoxLayout()
+        note_row.setContentsMargins(52, 0, 0, 0)
+        note_row.setSpacing(8)
+        self.note_edit = QLineEdit()
+        self.note_edit.setPlaceholderText(text("exchange.note.hint"))
+        self.note_edit.returnPressed.connect(self._emit_note)
+        note_row.addWidget(self.note_edit, 1)
+        note_row.addWidget(button(text("exchange.note.add"), "Secondary",
+                                  self._emit_note))
+        self._note_holder = QWidget()
+        self._note_holder.setLayout(note_row)
+        self._note_holder.setVisible(False)
+        self.add(self._note_holder)
         self.chips = FileChips()
         self.chips.removed.connect(self.remove_attachment.emit)
         self.add(self.chips)
@@ -637,7 +655,15 @@ class ExchangeScreen(Screen):
         self.add(self.waiting_label)
         self.status = StatusLine()
         self.add(self.status)
+        # FR-V7: move between steps to do one again, without discarding.
         more_row = QHBoxLayout()
+        self.back_button = button(text("exchange.step.back"), "Ghost",
+                                  self.step_back.emit)
+        self.forward_button = button(text("exchange.step.forward"), "Ghost",
+                                     self.step_forward.emit)
+        for control in (self.back_button, self.forward_button):
+            control.setStyleSheet("padding: 3px 10px; font-size: 12px;")
+            more_row.addWidget(control)
         more_row.addStretch(1)
         self.more_button = button(text("exchange.more"), "Ghost",
                                   self._show_more)
@@ -694,8 +720,15 @@ class ExchangeScreen(Screen):
                 attempt = max(1, int(payload.get("exchange_attempt", 1)))
             except (TypeError, ValueError):
                 attempt = 1
-        self.retry_note.setText(text("exchange.again", count=attempt))
-        self.retry_note.setVisible(attempt > 1)
+        fault = ""
+        if isinstance(payload, dict):
+            fault = str(payload.get("content_fault", "") or "")
+        self.retry_line.setText(
+            text("exchange.again.why", count=attempt, why=fault) if fault
+            else text("exchange.again", count=attempt))
+        self.retry_line.setVisible(attempt > 1)
+        self._note_holder.setVisible(attempt > 1)
+        self.note_edit.clear()
         self._focus_holder.setVisible(scan)
         self.scan_note.setText(coverage)
         self.scan_note.setVisible(bool(coverage))
@@ -770,6 +803,18 @@ class ExchangeScreen(Screen):
 
     def _emit_focus(self) -> None:
         self.scan_focus.emit(self.focus_edit.text().strip())
+
+    def _emit_note(self) -> None:
+        note = self.note_edit.text().strip()
+        if note:
+            self.retry_note.emit(note)
+            self.note_edit.clear()
+
+    def set_steps(self, can_back: bool, can_forward: bool) -> None:
+        """FR-V7: which way the person can move from this step."""
+        self.back_button.setEnabled(can_back)
+        self.forward_button.setEnabled(can_forward)
+        self.forward_button.setVisible(can_forward)
 
     # ---- send side ----
 
