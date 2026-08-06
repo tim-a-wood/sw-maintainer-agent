@@ -1638,9 +1638,15 @@ def test_a_bad_reply_stays_on_the_step_with_a_small_correction(
         return (_screen(window), window.current_handoff.task_key
                 if window.current_handoff is not None else "")
 
-    for _ in range(10):
+    for _ in range(14):
         if _screen(window) == "save":
             break
+        if _screen(window) == "busy":
+            # A slower computer shows the busy screen between steps.
+            # That is work in progress, not a step to act on.
+            wait_until(qt_app, lambda: _screen(window) != "busy",
+                       message="the busy screen passes", timeout=90.0)
+            continue
         before = _here()
         if _screen(window) == "plan":
             window.plan_check.accept.emit()
@@ -1660,8 +1666,12 @@ def test_a_bad_reply_stays_on_the_step_with_a_small_correction(
             break
         wait_until(qt_app, lambda b=before: errors
                    or _screen(window) == "save" or _here() != b,
-                   message="next step", timeout=60.0)
+                   message="next step", timeout=90.0)
         assert not errors, errors
+    # The last checks can still be running; wait for the step to land.
+    wait_until(qt_app, lambda: errors or _screen(window) == "save",
+               message="the save step", timeout=90.0)
+    assert not errors, errors
     assert _screen(window) == "save", _screen(window)
     window.save.accept.emit()
     wait_until(qt_app, lambda: errors or _screen(window) == "done",
