@@ -98,6 +98,7 @@ QLabel#Hint {{ color: {p.faint}; font-size: 11px; }}
 QLabel#Dim {{ color: {p.dim}; font-size: 12px; }}
 QLabel#Ok {{ color: {p.ok}; font-weight: 600; }}
 QLabel#Bad {{ color: {p.bad}; font-weight: 600; }}
+QLabel#Warn {{ color: {p.warn}; font-weight: 600; font-size: 12px; }}
 QLabel#Mono {{ font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono",
                monospace; font-size: 12px; }}
 QLabel#MonoHint {{ font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono",

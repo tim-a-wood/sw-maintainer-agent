@@ -1826,3 +1826,36 @@ Two CI steps, added in the same round, cover the installer itself:
 every `.ps1` must parse, and the newest-release resolver runs for
 real against GitHub. Neither existed before; the smoke install pins
 `MAINTAIN_PACKAGE_SOURCE`, so it never ran the default path.
+
+### 14.55 The step that asked without end (FR-V5)
+
+The field report: "Now it's just looping on the plan step when
+requesting a change."
+
+A reply the tool cannot use raises a provider fault. The run then
+moves to needs-human and counts one retry against that exchange.
+On the next continue the same step runs again, and the retry count
+only changes the artifact name — so a new package appears. Nothing
+capped that count. A reply the tool never accepts therefore made
+packages without end, and the screen showed the same step each
+time, with no attempt number and no cause.
+
+- FR-V5. The count is capped by the project's attempt limit
+  (`max_attempts_per_task`, three by default). Past it the run stops
+  with words: how many times the reply was not usable, the last
+  cause, and the two ways forward — make the reply again, or discard
+  the change.
+- The exchange screen names a repeat. A package after a failed
+  reply carries "The last reply was not usable. This is attempt 2."
+  The payload already counted the attempt; nothing showed it.
+
+### 14.56 No dragging, only the two actions (FR-P11)
+
+The packet card existed to be dragged into Copilot. That was a
+third way to do what Send already does, and it took a whole card to
+say so. The field report asked for the two buttons alone.
+
+- FR-P11. The package is one quiet line under the Send card: its
+  name and size. Nothing on the screen is draggable.
+- The window still accepts a dropped reply, because that costs no
+  space and helps the return trip. The hint says so.

@@ -162,7 +162,7 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
 
     # One minimal screen: two action cards and the packet receipt,
     # with the rare actions folded into a menu. No Continue gate.
-    assert window.exchange.card.isVisibleTo(window.exchange)
+    assert window.exchange.packet_line.isVisibleTo(window.exchange)
     assert window.exchange.send_button.isVisibleTo(window.exchange)
     assert window.exchange.receive_button.isVisibleTo(window.exchange)
     assert not hasattr(window.exchange, "continue_button")

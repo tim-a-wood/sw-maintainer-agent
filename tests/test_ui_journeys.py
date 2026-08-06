@@ -269,11 +269,11 @@ def test_settings_edits_never_block_the_next_run(qt_app, tmp_path,
     assert _screen(window) == "exchange"
 
     # A style change while the packet is open re-shows and re-copies it.
-    assert window.exchange.card.packet_path.suffix == ".md"
+    assert window.exchange.packet_path.suffix == ".md"
     window._open_settings_page("package")
     window.page_package.zip_radio.setChecked(True)
     window.page_package._save()
-    assert window.exchange.card.packet_path.suffix == ".zip"
+    assert window.exchange.packet_path.suffix == ".zip"
     from PySide6.QtWidgets import QApplication
     mime = QApplication.clipboard().mimeData()
     assert mime.hasUrls()
@@ -1241,7 +1241,7 @@ def test_markdown_style_shows_the_md_as_the_package(qt_app, tmp_path,
     window.describe._start()
     wait_until(qt_app, lambda: _screen(window) == "exchange",
                message="plan packet")
-    shown = window.exchange.card.packet_path
+    shown = window.exchange.packet_path
     assert str(shown).endswith(".md")
     body = Path(shown).read_text(encoding="utf-8")
     assert "## FILE: TASK.md" in body and "## FILE: CODEBASE.md" in body

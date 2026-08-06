@@ -24,7 +24,7 @@ from maintain.zip_package import global_prompt_text
 from .config_store import BUILTIN_PROMPTS, ConfigStore
 from .strings import STR, text
 from .widgets import (ChoiceButton, DiffHighlighter, DropZone, ElidedLabel,
-                      FileChips, IconSquare, NumberBadge, PacketCard, Spinner,
+                      FileChips, IconSquare, NumberBadge, Spinner,
                       StateChip, StatusLine, StepTicker, TimelineDot, button,
                       label, palette, run_state_chip)
 
@@ -597,15 +597,17 @@ class ExchangeScreen(Screen):
                                         text("send.file.copied"))
         self.send_button.clicked.connect(self._send)
         self.add(self.send_button)
-        # The packet itself: the receipt under the Send card, indented
-        # to read as its detail, still draggable into Copilot.
-        self.card = PacketCard()
-        card_row = QHBoxLayout()
-        card_row.setContentsMargins(52, 0, 0, 0)
-        card_row.addWidget(self.card)
-        card_holder = QWidget()
-        card_holder.setLayout(card_row)
-        self.add(card_holder)
+        # The package is named, not shown as a thing to drag. Dragging
+        # was a third way to do what Send already does, and it carried
+        # a whole card to say so.
+        self.packet_path: Path | None = None
+        self.packet_line = label("", "MonoHint")
+        self.packet_line.setContentsMargins(52, 0, 0, 0)
+        self.add(self.packet_line)
+        self.retry_note = label("", "Warn")
+        self.retry_note.setContentsMargins(52, 0, 0, 0)
+        self.retry_note.setVisible(False)
+        self.add(self.retry_note)
         self.chips = FileChips()
         self.chips.removed.connect(self.remove_attachment.emit)
         self.add(self.chips)
@@ -682,6 +684,18 @@ class ExchangeScreen(Screen):
         key = "talk" if request.role == "talk" else handoff.task_key
         self.eyebrow.setText(TASK_STEPS[key] + again)
         self.title.setText(text(TASK_TITLES[key]))
+        # A repeat of the same step is never silent. The payload counts
+        # the attempt; a second package means the last reply was not
+        # usable, and the person must be told, not left guessing.
+        attempt = 1
+        payload = getattr(request, "payload", None)
+        if isinstance(payload, dict):
+            try:
+                attempt = max(1, int(payload.get("exchange_attempt", 1)))
+            except (TypeError, ValueError):
+                attempt = 1
+        self.retry_note.setText(text("exchange.again", count=attempt))
+        self.retry_note.setVisible(attempt > 1)
         self._focus_holder.setVisible(scan)
         self.scan_note.setText(coverage)
         self.scan_note.setVisible(bool(coverage))
@@ -736,19 +750,23 @@ class ExchangeScreen(Screen):
             return
         from maintain.zip_package import packet_for_style
         shown = packet_for_style(self.handoff.zip_path, self.package_style)
-        if self.card.packet_path == shown:
+        if self.packet_path == shown:
             return
-        self.card.set_packet(shown,
-                             shown.stat().st_size if shown.is_file() else 0)
+        self._set_packet(shown)
         self.auto_copy()
 
     def update_packet(self, zip_path: Path, attachment_names: list[str],
                       document_count: int) -> None:
         from maintain.zip_package import packet_for_style
-        shown = packet_for_style(zip_path, self.package_style)
-        size = shown.stat().st_size if shown.is_file() else 0
-        self.card.set_packet(shown, size)
+        self._set_packet(packet_for_style(zip_path, self.package_style))
         self.chips.set_files(attachment_names)
+
+    def _set_packet(self, shown: Path) -> None:
+        """Name the package and its size; the person never drags it."""
+        self.packet_path = shown
+        size = shown.stat().st_size if shown.is_file() else 0
+        self.packet_line.setText(
+            f"{shown.name} · {max(1, round(size / 1024))} KB")
 
     def _emit_focus(self) -> None:
         self.scan_focus.emit(self.focus_edit.text().strip())
@@ -769,11 +787,11 @@ class ExchangeScreen(Screen):
             self._set_turn(sent=True)
 
     def _clipboard_packet(self) -> bool:
-        if self.handoff is None:
+        if self.handoff is None or self.packet_path is None:
             return False
         from PySide6.QtCore import QMimeData, QUrl
         mime = QMimeData()
-        mime.setUrls([QUrl.fromLocalFile(str(self.card.packet_path))])
+        mime.setUrls([QUrl.fromLocalFile(str(self.packet_path))])
         QGuiApplication.clipboard().setMimeData(mime)
         return True
 

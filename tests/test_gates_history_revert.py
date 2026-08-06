@@ -266,3 +266,34 @@ def test_revert_refuses_closed_runs_and_non_anchors(tmp_path):
     plan_event = next(item for item in timeline if item.kind == "plan_proposed")
     with pytest.raises(PolicyError, match="closed"):
         engine.revert_to(record.run_id, plan_event.sequence)
+
+
+def test_an_unusable_reply_stops_instead_of_asking_without_end(tmp_path):
+    """The field fault: a reply the tool cannot use counted one retry
+    and made another package. Nothing capped that count, so the plan
+    step asked again and again with no reason and no end."""
+    from maintain.errors import ProviderError
+
+    repository = _repository(tmp_path)
+    config = _config(tmp_path, repository)
+
+    class RefusingProvider(ScriptedProvider):
+        def exchange(self, request):      # noqa: D102 - always unusable
+            raise ProviderError("The reply has no content block.")
+
+    engine = _engine(config, RefusingProvider())
+    record = engine.start("feature", "Change the value")
+
+    # Each continue counts one retry and stops for the person.
+    for _ in range(6):
+        record = engine.resume(record.run_id)
+        if "not usable" in (record.error or ""):
+            break
+
+    assert RunState(record.state) is RunState.NEEDS_HUMAN
+    assert "not usable" in record.error
+    # The cap is the configured attempt limit, not an endless treadmill.
+    counts = record.evidence.get("provider_retry_counts", {})
+    assert max(counts.values()) <= config.max_attempts
+    # And the message tells the person what to do next.
+    assert "continue" in record.error.lower()

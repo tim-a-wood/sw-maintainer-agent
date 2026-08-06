@@ -167,6 +167,7 @@ STR: dict[str, str] = {
     "exchange.sent.show": "Show",
     "exchange.newest": "Open the newest download",
     "exchange.reply.hint": "You can also paste the reply, or drop the file on this window.",
+    "exchange.again": "The last reply was not usable. This is attempt {count}.",
     "exchange.more": "More …",
     "exchange.show.task": "Show the task text",
     "exchange.show.global": "Show the project rules",

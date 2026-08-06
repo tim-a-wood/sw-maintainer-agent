@@ -1345,6 +1345,16 @@ class WorkflowEngine:
         exchange_base = f"{role}-{conversation_suffix or task_id}"
         retries = record.evidence.get("provider_retry_counts", {})
         retry = int(retries.get(exchange_base, 0)) if isinstance(retries, dict) else 0
+        # A reply that cannot be used moves the run to needs-human and
+        # counts one retry. Nothing capped that count, so a reply the
+        # tool never accepts produced one more package, without end.
+        # The person saw the same step again and again, with no reason.
+        if retry >= self.config.max_attempts:
+            raise PolicyError(
+                f"The reply for this step was not usable {retry} times. "
+                f"The last cause was: {record.error or 'unknown'}. "
+                "Read the cause, make the reply again in Copilot, and "
+                "continue. Or discard this change and start again.")
         effective_payload = {**payload, "exchange_attempt": retry + 1}
         if reference is not None:
             effective_payload["copilot_reference"] = {
