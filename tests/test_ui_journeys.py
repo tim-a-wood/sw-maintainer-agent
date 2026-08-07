@@ -259,7 +259,10 @@ def test_settings_edits_never_block_the_next_run(qt_app, tmp_path,
                message="run despite settings edits")
     payload = window.current_handoff.request.payload
     swept = [item["path"] for item in payload["candidate_files"]]
-    swept += [item["path"] for item in payload["repository_map"]]
+    # FR-V9: with the whole project in candidate_files there is no
+    # separate path index, and the sweep above already covers every
+    # file the index used to name.
+    swept += [item["path"] for item in payload.get("repository_map", [])]
     assert swept and not any(item.startswith(".maintain") for item in swept)
 
     # Continue from home returns to the waiting screen — no dead click.
