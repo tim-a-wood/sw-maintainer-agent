@@ -121,6 +121,11 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The desktop icon starts the app directly, with no command window first.",
         "Install again from the GitHub releases page to get this.",
     ),
+    "0.9.18": (
+        "The git line-ending warnings do not stop a change at any step now.",
+        "Before this, the Save step showed the same box of warnings as the plan step.",
+        "Each step that uses git had to remember to hide them. Now one place does it.",
+    ),
 }
 
 

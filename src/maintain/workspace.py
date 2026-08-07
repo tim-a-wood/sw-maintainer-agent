@@ -16,16 +16,39 @@ from .proc import hidden
 
 
 def git(repository: Path, *args: str, check: bool = True) -> str:
-    result = subprocess.run(["git", "-C", str(repository), *args], text=True,
-                            encoding="utf-8", errors="replace",
-                            capture_output=True, check=False, **hidden())
+    """Every git call the person can be shown the result of.
+
+    FR-V16 lives here rather than at each caller. The first report was
+    the plan step, the second was Save, and both reached the person as
+    the same wall of line-ending warnings — because each place that
+    runs git had to remember to filter them. One front door cannot
+    forget.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(repository),
+         # Three hints the person cannot act on.
+         "-c", "advice.addIgnoredFile=false",
+         *args],
+        text=True, encoding="utf-8", errors="replace",
+        capture_output=True, check=False, **hidden())
     if check and result.returncode:
-        raise RecoveryError((result.stderr or result.stdout).strip() or "Git command failed.")
+        cause = _fatal_git(result.stderr, result.stdout)
+        if cause:
+            raise RecoveryError(cause)
+        # git only grumbled: warnings, hints, an ignored path. Nothing
+        # the person can do, and nothing that stopped the command.
     return result.stdout.strip()
 
 
 def _err(completed) -> str:
-    return completed.stderr.decode("utf-8", "replace").strip()
+    """What `git apply` said, with the grumbling taken out (FR-V16).
+
+    The same rule as `git()`: a patch that fails to apply is a real
+    fault and the person needs git's words, but the line-ending
+    warnings around them are noise.
+    """
+    raw = completed.stderr.decode("utf-8", "replace")
+    return _fatal_git(raw) or raw.strip()
 
 
 # FR-V16: what git says that a person can act on.
@@ -478,7 +501,8 @@ class WorkspaceManager:
                                 capture_output=True, check=False, **hidden())
         if result.returncode:
             return {"pushed": False, "reason": "refused", "remote": remote,
-                    "error": (result.stderr or result.stdout).strip()}
+                    "error": _fatal_git(result.stderr, result.stdout)
+                    or "The remote refused the branch."}
         return {"pushed": True, "remote": remote}
 
     def state(self) -> dict:
@@ -519,7 +543,7 @@ class WorkspaceManager:
                                 text=True, encoding="utf-8", errors="replace",
                                 capture_output=True, check=False, **hidden())
         if result.returncode:
-            raise RecoveryError((result.stderr or result.stdout).strip()
+            raise RecoveryError(_fatal_git(result.stderr, result.stdout)
                                 or "The branch could not be opened.")
 
     def integrate_current_branch(self, branch: str, commit: str, expected_base: str) -> str:
@@ -536,6 +560,6 @@ class WorkspaceManager:
             text=True, capture_output=True, check=False, **hidden(),
         )
         if result.returncode:
-            raise RecoveryError((result.stderr or result.stdout).strip() or
+            raise RecoveryError(_fatal_git(result.stderr, result.stdout) or
                                 "The target branch cannot be fast-forwarded.")
         return git(self.repository, "rev-parse", "HEAD")

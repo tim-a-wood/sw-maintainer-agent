@@ -2242,3 +2242,56 @@ it can only be fixed on both sides at once.
   were read until a zero count, which now runs on into the extra data
   and decodes it as text; the reader takes exactly the blocks the
   flags declare.
+
+### 14.69 The same noise, one step further on (FR-V16, second pass)
+
+"I'm getting the same issue at another point in the workflow. Make
+sure this doesn't happen in other places too."
+
+FR-V16 was applied where the fault was reported — the plan step's diff
+snapshot — and nowhere else. Save has its own git calls, through the
+shared `git()` helper, which still raised with the whole of stderr. So
+the same wall of line-ending warnings arrived at step 5 with all four
+earlier steps green.
+
+The lesson is the shape of the first fix, not the second fault: a rule
+that each caller has to remember is a rule that some caller will
+forget.
+
+- FR-V16 now lives in `git()`, the front door every caller already
+  used, and in `_err()`, which reports what `git apply` said. Three
+  more paths were routed through it — `push`, `switch_branch`, and
+  `integrate_current_branch` — none of which had been looked at, and
+  all of which would have shown the same wall.
+- A test reads `workspace.py` and fails if any function builds
+  person-facing text out of a subprocess result without passing it
+  through `_fatal_git`. It found those three; it will find the next
+  one.
+
+### 14.70 A dead end at the render (FR-V18)
+
+Explain reached the render and stopped: "Manim is absent. Manim needs
+Python 3.11 to 3.13; this computer runs 3.14. Install Python 3.13,
+then run scripts/setup.ps1 again."
+
+Two faults in one message.
+
+The route it names cannot be taken. `scripts/setup.ps1` is PowerShell,
+and the machine that reported this refuses unsigned scripts — the
+reason the whole install became Python in FR-V14. Changing the route
+without sweeping the text that points at the old one leaves a message
+that is worse than none: it looks like an answer.
+
+And the person learned this at the render, long after the install that
+chose the Python. The installer prefers 3.13, 3.12, 3.11 and falls
+back to whatever exists; on a machine with only 3.14 it takes 3.14 and
+says nothing.
+
+- FR-V18. The message names a route that works: install Python 3.13
+  from python.org, then run `install-or-update-windows.cmd` again.
+- The installer says it at install time. When the Python it settled
+  for is above 3.13, it reports that everything works except the video
+  feature, and how to add it.
+- A test asserts no user-visible string names a `.ps1` file. The git
+  noise came back at a second step because the rule lived at the
+  callers; this one is held on the whole catalog at once.

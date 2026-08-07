@@ -2145,3 +2145,69 @@ def test_git_grumbling_is_not_an_error(tmp_path):
     # A real fault still travels, and travels alone.
     real = grumbling + "fatal: unable to read tree 9f8a2c\n"
     assert _fatal_git(real) == "fatal: unable to read tree 9f8a2c"
+
+
+def test_no_git_call_shows_its_grumbling_to_the_person():
+    """FR-V16, held on the source.
+
+    The first report was the plan step, the second was Save. Both
+    reached the person as the same wall of line-ending warnings,
+    because each place that runs git had to remember to filter them.
+    This test fails if a new one forgets.
+    """
+    import ast
+
+    source_path = ROOT / "src" / "maintain" / "workspace.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+
+    # Every function that raises with text built from a subprocess
+    # result must put that text through _fatal_git first.
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = ast.get_source_segment(
+            source_path.read_text(encoding="utf-8"), node) or ""
+        raises_output = any(
+            token in body for token in ("result.stderr", "completed.stderr"))
+        if not raises_output:
+            continue
+        if "_fatal_git" not in body:
+            offenders.append(node.name)
+    assert not offenders, (
+        "These show git's raw output to the person; pass it through "
+        f"_fatal_git first: {offenders}")
+
+
+def test_the_shared_git_helper_swallows_a_grumble(tmp_path):
+    """The Save step's fault, at the front door every caller uses."""
+    import subprocess as sp
+
+    from maintain import workspace as ws
+
+    repository = tmp_path / "project"
+    repository.mkdir()
+    for arguments in (["init", "-b", "main"],
+                      ["config", "user.email", "t@e"],
+                      ["config", "user.name", "t"]):
+        sp.run(["git", "-C", str(repository), *arguments], check=True,
+               capture_output=True)
+    (repository / "app.py").write_text("x\n", encoding="utf-8")
+    sp.run(["git", "-C", str(repository), "add", "-A"], check=True,
+           capture_output=True)
+    sp.run(["git", "-C", str(repository), "commit", "-m", "init"], check=True,
+           capture_output=True)
+
+    # The person's shape: a file the project ignores, named to git.
+    (repository / ".gitignore").write_text("maintain.json\n", encoding="utf-8")
+    (repository / "maintain.json").write_text("{}\n", encoding="utf-8")
+
+    # git exits 1 and lists the ignored path. That is not a fault, and
+    # the helper must not raise on it.
+    ws.git(repository, "add", "-A", "--", ".", "maintain.json")
+
+    # A real fault still stops the run.
+    from maintain.errors import MaintainError
+
+    with pytest.raises(MaintainError):
+        ws.git(repository, "rev-parse", "does-not-exist^{tree}")

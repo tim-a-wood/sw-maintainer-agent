@@ -253,6 +253,17 @@ def install(reference: str = "", *, root: Path | None = None,
                              "from https://www.python.org/downloads/windows/ "
                              "and run this again.", lines=lines)
     lines.append(f"Python: {' '.join(python)}")
+    # FR-V18: say at install time when the video feature cannot work.
+    # Manim publishes no wheels above 3.13, and a person who only has
+    # 3.14 found this out much later, at the render, with a message
+    # that named a PowerShell script they could not run.
+    chosen = python_version(python, run=run)
+    if chosen and chosen > (3, 13):
+        lines.append(
+            f"Note: this Python is {chosen[0]}.{chosen[1]}. Everything works "
+            "except the video feature of Explain code, which needs 3.11 to "
+            "3.13. Install Python 3.13 from python.org and run this again "
+            "to add it.")
 
     git = find_git(which=which)
     if not git:

@@ -49,10 +49,14 @@ def _absent_message(manim_command: str,
     version = version or sys.version_info[:2]
     message = (f"Manim is absent. The command is not found: {manim_command}. ")
     if version >= (3, 14):
+        # FR-V18: the route named here has to be one the person can
+        # take. scripts/setup.ps1 is PowerShell, which a managed
+        # machine refuses, and the install is Python now anyway.
         return message + (
             f"Manim needs Python 3.11 to 3.13; this computer runs "
-            f"{version[0]}.{version[1]}. Install Python 3.13, then run "
-            "scripts/setup.ps1 again.")
+            f"{version[0]}.{version[1]}. Install Python 3.13 from "
+            "python.org, then run install-or-update-windows.cmd again. "
+            "It takes the newest Python that can make videos.")
     return message + ("Install it with: pip install maintain[explain], "
                       "and: winget install ffmpeg")
 

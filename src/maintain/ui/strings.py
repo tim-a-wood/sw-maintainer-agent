@@ -334,8 +334,9 @@ STR: dict[str, str] = {
     "explain.install.yes": "Install",
     "explain.installing": "The tool installs the video feature.",
     "explain.install.done": "The video feature is ready.",
-    "explain.install.failed": "The install failed. Run scripts/setup.ps1 "
-                              "again.",
+    "explain.install.failed": "The install failed. Install Python 3.13 "
+                              "from python.org, then run "
+                              "install-or-update-windows.cmd again.",
     "step.scene.check": "Check the scene",
     "step.render.probe": "Check the geometry",
     "step.render.video": "Render the video",

@@ -330,3 +330,55 @@ def test_the_identity_survives_a_round_trip(tmp_path):
 def test_a_shortcut_without_an_identity_says_so(tmp_path):
     path = shortcut.write_shortcut(tmp_path / "plain.lnk", r"C:\a\b.exe")
     assert shortcut.read_app_id(path) == ""
+
+
+def test_a_python_that_cannot_make_videos_says_so_at_install(
+        tmp_path, monkeypatch):
+    """FR-V18: the field fault — Explain failed at the render with
+    "Manim needs Python 3.11 to 3.13; this computer runs 3.14", long
+    after the install that chose that Python. The install knows, so
+    the install says."""
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    root = tmp_path / "Maintain"
+    runtime = installer.runtime_path(root)
+
+    def run(command, **kwargs):
+        if "venv" in command:
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+            return FakeCompleted(0, "")
+        if "pip" in command:
+            return FakeCompleted(0, "Successfully installed")
+        if any("sys.version_info" in part for part in command):
+            # Only 3.14 on this machine, which is the reported shape.
+            return FakeCompleted(0, "3.14\n")
+        return FakeCompleted(0, "0.9.18\n")
+
+    report = installer.install("refs/tags/v0.9.18", root=root, run=run,
+                               which=lambda name: f"/bin/{name}")
+
+    assert report.ok, report.reason
+    said = " ".join(report.lines)
+    assert "3.14" in said
+    assert "video" in said
+    assert "3.13" in said
+    # And it does not send them to a PowerShell script.
+    assert "setup.ps1" not in said
+
+
+def test_no_message_sends_the_person_to_powershell():
+    """FR-V18: the install is Python now. A message that names a
+    PowerShell script is a dead end on the machine that reported this,
+    whose policy refuses unsigned scripts."""
+    from maintain.ui.strings import STR
+
+    for key, value in STR.items():
+        assert ".ps1" not in value, (key, value)
+
+    render_source = (ROOT / "src" / "maintain" / "render.py").read_text(
+        encoding="utf-8")
+    # The only mention left is the comment that explains why.
+    for line in render_source.splitlines():
+        if ".ps1" in line:
+            assert line.strip().startswith("#"), line
