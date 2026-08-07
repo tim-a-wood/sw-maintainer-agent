@@ -109,6 +109,13 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The button for a previous request works again. It did nothing before.",
         "If git cannot read your files, the app tells you what git said.",
     ),
+    "0.9.16": (
+        "Maintain has a new icon: the step rail, in the colours of the app.",
+        "The window, the taskbar, and the desktop icon all show the same mark.",
+        "Before this they showed three different pictures.",
+        "Git messages about line endings do not stop a change now.",
+        "Those messages filled a box with warnings when nothing was wrong.",
+    ),
 }
 
 

@@ -28,6 +28,46 @@ def _err(completed) -> str:
     return completed.stderr.decode("utf-8", "replace").strip()
 
 
+# FR-V16: what git says that a person can act on.
+#
+# git talks a great deal on Windows. Every file whose line endings it
+# will rewrite gets a warning, and a pathspec that touches an ignored
+# file makes it exit non-zero and list that file with hints. None of
+# it stops the snapshot from being correct, and all of it arrived in
+# one dialog: a hundred lines of noise around no fault at all.
+_GIT_NOISE = (
+    "warning:",
+    "hint:",
+    "The following paths are ignored",
+    "Use -f if you really want",
+)
+
+
+def _fatal_git(stderr: str, stdout: str = "") -> str:
+    """The lines worth showing, or empty when git only grumbled.
+
+    A bare filename on its own line belongs to the ignored-paths list
+    above it, so it goes with the notice it explains.
+    """
+    kept: list[str] = []
+    in_ignored_list = False
+    for raw in f"{stderr}\n{stdout}".splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("The following paths are ignored"):
+            in_ignored_list = True
+            continue
+        if line.startswith(_GIT_NOISE):
+            in_ignored_list = in_ignored_list and line.startswith("hint:")
+            continue
+        if in_ignored_list and "/" not in line and " " not in line:
+            continue
+        in_ignored_list = False
+        kept.append(line)
+    return " ".join(kept)
+
+
 @dataclass(frozen=True)
 class DiffEvidence:
     text: str
@@ -167,24 +207,32 @@ class WorkspaceManager:
         env = os.environ.copy()
 
         def run(*arguments: str) -> str:
-            """FR-V13: git's own words, not a traceback.
+            """FR-V13 + FR-V16: git's own words, and only when they matter.
 
             These calls used check=True, so a failure raised
             CalledProcessError, whose message is only the command and
             the exit status. The person saw a wall of Python and no
             cause. git writes the cause to stderr; it belongs in the
             error.
+
+            But most of what git writes is not a cause. On Windows it
+            warns about every line ending it will change, and it exits
+            non-zero merely because the project ignores a file the
+            pathspec touched. Neither stops the snapshot, and a
+            hundred of them in a dialog is a nuisance, not a fault.
             """
             result = subprocess.run(
-                ["git", "-C", str(worktree), *arguments], env=env,
+                ["git", "-C", str(worktree),
+                 # No advice to print: the person cannot act on it.
+                 "-c", "advice.addIgnoredFile=false",
+                 *arguments], env=env,
                 text=True, encoding="utf-8", errors="replace",
                 check=False, capture_output=True, **hidden())
-            if result.returncode:
-                cause = (result.stderr or result.stdout).strip()
+            if result.returncode and _fatal_git(result.stderr, result.stdout):
+                cause = _fatal_git(result.stderr, result.stdout)
                 raise RecoveryError(
                     f"git {arguments[0]} could not read your project files. "
-                    f"{cause}" if cause else
-                    f"git {arguments[0]} could not read your project files.")
+                    f"{cause}")
             return result.stdout
 
         with tempfile.TemporaryDirectory(prefix="maintain-index-") as directory:

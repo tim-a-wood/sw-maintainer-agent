@@ -69,7 +69,7 @@ from .screens import (BusyScreen, ChecksPage, DescribeScreen, DoneScreen,
                       ScanCheckScreen, SettingsScreen, TalkScreen, TasksPage,
                       TestScreen, documents_count)
 from .strings import text
-from .widgets import StageHeader, ToastStack
+from .widgets import StageHeader, ToastStack, app_icon
 
 STAGE_FOR_TASK = {"plan": 0, "build": 1, "repair": 1, "review": 2}
 
@@ -124,6 +124,12 @@ class MainWindow(QMainWindow):
     def __init__(self, config: ProjectConfig) -> None:
         super().__init__()
         self.setWindowTitle(f"{text('app.title')} — {config.name}")
+        # FR-V15: the window carries the mark itself, not only the
+        # application. Windows reads the top-level window's icon for
+        # the title bar and, on some setups, for the taskbar button —
+        # which is why the header bar had a different picture from the
+        # desktop shortcut.
+        self.setWindowIcon(app_icon())
         # Height covers the run-name head, the tallest screen content
         # (700px, pinned by test), and the foot bar.
         self.resize(640, 866)

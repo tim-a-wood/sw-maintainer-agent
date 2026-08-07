@@ -2158,3 +2158,56 @@ non-zero exit status 1" — what failed, and nothing about why.
   `CalledProcessError` carries only the command and the status. git
   writes the cause to stderr, so the snapshot reads it and raises it
   in words the person can act on.
+
+### 14.66 One mark, three places (FR-V15)
+
+Three photographs, three different pictures for one app: a blue letter
+M in the header bar, a robot on the desktop shortcut, and the generic
+Python icon in the taskbar. The window painted its own letter in code
+while the installer shipped an unrelated `.ico`, and nothing kept them
+in step.
+
+The mark chosen from four proposals is **the step rail** — the stepper
+that runs down the left of every screen, reduced to a lit node, a
+rail, and behind it a step that passed. It is the one thing on screen
+unique to this tool, and two shapes and a line is all that survives 16
+pixels.
+
+- FR-V15. `src/maintain/ui/icon.py` holds the geometry once.
+  `qt_icon()` paints it for the window and the taskbar;
+  `scripts/make_icon.py` paints the same numbers with Pillow into
+  `assets/maintain.ico.b64` for the shortcuts. They cannot drift again.
+- The colours are the interface's own: ground `#10151f`, accent
+  `#4cbdff`, done `#3bd694`. The mark carries its own dark tile, so a
+  light Windows taskbar cannot swallow it.
+- Small sizes are hinted, not shrunk. Below 32 pixels the hairline
+  edge is a smudge and goes; below 24 the tick fills in and reads as a
+  dark blob, so the lower node stays a solid disc; the rail and the
+  nodes grow to hold the silhouette. A 16 pixel icon downsampled from
+  a 256 pixel one loses the rail entirely, so each size is drawn at
+  its own scale.
+- The `.ico` container is written by hand. Pillow's own writer takes
+  one image and shrinks it, which would undo the hinting above.
+- The window sets the icon as well as the application. Windows reads
+  the top-level window's icon for the title bar, which is where the
+  old letter was showing.
+
+### 14.67 git grumbles, and that is not a fault (FR-V16)
+
+A dialog filled with a hundred lines: every file whose line endings
+git would rewrite, then a list of ignored paths and three hints. The
+person's words were "a nuisance alert", and they were right — nothing
+had gone wrong.
+
+`git add` exits non-zero merely because a pathspec touched a file the
+project's `.gitignore` covers. FR-V13 had just started surfacing git's
+stderr instead of a traceback, which was correct, but it surfaced all
+of it and treated the exit code as fatal.
+
+- FR-V16. Warnings, hints, and the ignored-paths notice are read as
+  noise. A real message — anything git says that is none of those —
+  still stops the run and still travels in words.
+- `advice.addIgnoredFile=false` is set on the call, so git does not
+  print the three hints it knows the person cannot act on.
+- The snapshot is correct either way: git staged everything it could,
+  and `write-tree` and `diff` are the real test of that.

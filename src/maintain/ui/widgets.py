@@ -9,7 +9,7 @@ from PySide6.QtCore import (QMimeData, QPoint, QRect, QRectF, QSize, Qt,
                             QTimer, QUrl, Signal)
 from PySide6.QtGui import (QColor, QDrag, QDragEnterEvent, QDropEvent, QFont,
                            QFontMetrics, QIcon, QPainter, QPainterPath,
-                           QPen, QPixmap, QSyntaxHighlighter,
+                           QPen, QSyntaxHighlighter,
                            QTextCharFormat)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLayout,
@@ -918,26 +918,14 @@ class ToastStack(QWidget):
 
 
 def app_icon() -> QIcon:
-    """The window and taskbar icon, painted here so nothing ships as a file."""
-    icon = QIcon()
-    for size in (16, 24, 32, 48, 64, 128, 256):
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#0b6fb8"))
-        radius = size * 0.22
-        painter.drawRoundedRect(QRectF(0, 0, size, size), radius, radius)
-        painter.setPen(QPen(QColor("#ffffff")))
-        typeface = QFont("Segoe UI", max(6, int(size * 0.56)))
-        typeface.setBold(True)
-        painter.setFont(typeface)
-        painter.drawText(QRectF(0, -size * 0.04, size, size),
-                         Qt.AlignmentFlag.AlignCenter, "M")
-        painter.end()
-        icon.addPixmap(pixmap)
-    return icon
+    """The window and taskbar icon: the step rail (FR-V15).
+
+    The picture lives in ui/icon.py, which the .ico generator also
+    paints from, so the window and the desktop shortcut cannot show
+    different marks again.
+    """
+    from .icon import qt_icon
+    return qt_icon()
 
 
 DOTS_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"

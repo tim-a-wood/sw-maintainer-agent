@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+ROOT = Path(__file__).resolve().parents[1]
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
@@ -2055,3 +2057,91 @@ def test_a_git_failure_says_what_git_said(tmp_path):
     assert "your project files" in said
     # git's own words travel with it.
     assert "repository" in said.lower() or "git" in said.lower()
+
+
+def test_the_window_and_the_shortcut_show_the_same_mark(qt_app):
+    """FR-V15: the field fault — a blue letter M in the header, a robot
+    on the desktop, and the Python icon in the taskbar. Three pictures
+    for one app. Both are painted from one geometry now."""
+    import base64
+    import struct
+
+    from maintain.ui.icon import ACCENT, DONE, GROUND, SIZES
+    from maintain.ui.widgets import app_icon
+
+    icon = app_icon()
+    have = {(size.width(), size.height()) for size in icon.availableSizes()}
+    for wanted in SIZES:
+        assert (wanted, wanted) in have, wanted
+
+    # The .ico the shortcuts use carries the same sizes.
+    raw = base64.b64decode(
+        (ROOT / "assets" / "maintain.ico.b64").read_text(encoding="utf-8"))
+    reserved, kind, count = struct.unpack("<HHH", raw[:6])
+    assert (reserved, kind) == (0, 1)
+    assert count == len(SIZES)
+    in_file = []
+    for index in range(count):
+        entry = struct.unpack("<BBBBHHII", raw[6 + index * 16:22 + index * 16])
+        in_file.append(entry[0] or 256)
+    assert sorted(in_file) == sorted(SIZES)
+
+    # The mark is the interface's own colours, not a stock blue.
+    assert (GROUND, ACCENT, DONE) == ("#10151f", "#4cbdff", "#3bd694")
+
+    # And the artwork really is drawn, not a blank square.
+    pixmap = icon.pixmap(64, 64)
+    assert not pixmap.isNull()
+    image = pixmap.toImage()
+    seen = {image.pixelColor(x, y).name()
+            for x in range(0, 64, 2) for y in range(0, 64, 2)}
+    assert ACCENT in seen, "the lit node is missing"
+    assert DONE in seen, "the step that passed is missing"
+
+
+def test_a_small_icon_drops_what_it_cannot_draw():
+    """A tick at 16 pixels is a dark blob. The lower node stays a solid
+    disc there, and the rail thickens so the shape still reads."""
+    from maintain.ui import icon as mark
+
+    drawn: dict[int, list[str]] = {}
+
+    def record(size):
+        marks: list[str] = []
+        mark.draw(
+            size,
+            rect=lambda *a, **k: marks.append("rect"),
+            ellipse=lambda *a, **k: marks.append("ellipse"),
+            line=lambda *a, **k: marks.append("line"),
+            polyline=lambda *a, **k: marks.append("polyline"))
+        drawn[size] = marks
+
+    record(16)
+    record(64)
+    assert "polyline" not in drawn[16]
+    assert "polyline" in drawn[64]
+    # The hairline edge is a second rect, and it goes at small sizes too.
+    assert drawn[16].count("rect") == 1
+    assert drawn[64].count("rect") == 2
+
+
+def test_git_grumbling_is_not_an_error(tmp_path):
+    """FR-V16: the field fault — a dialog of a hundred git warnings
+    about line endings, around no fault at all. git exits non-zero
+    merely because a pathspec touched a file the project ignores."""
+    from maintain.workspace import _fatal_git
+
+    grumbling = (
+        "warning: in the working copy of 'README.md', LF will be replaced "
+        "by CRLF the next time Git touches it\n"
+        "warning: in the working copy of 'src/App.jsx', LF will be replaced "
+        "by CRLF the next time Git touches it\n"
+        "The following paths are ignored by one of your .gitignore files:\n"
+        "maintain.json\n"
+        "hint: Use -f if you really want to add them.\n"
+        'hint: "git config advice.addIgnoredFile false"\n')
+    assert _fatal_git(grumbling) == ""
+
+    # A real fault still travels, and travels alone.
+    real = grumbling + "fatal: unable to read tree 9f8a2c\n"
+    assert _fatal_git(real) == "fatal: unable to read tree 9f8a2c"
