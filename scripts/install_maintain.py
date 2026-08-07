@@ -144,12 +144,34 @@ def newest_release_tag(repository: str = REPOSITORY_URL, *, git: str = "git",
     return best_tag
 
 
-def requirement(reference: str, repository: str = REPOSITORY_URL,
-                extras: str = "") -> str:
-    """The bare VCS URL: pip reads PEP 508's "name @ git+url" as a path."""
+# FR-V19: the app cannot start without these. PySide6 is an optional
+# extra in pyproject, and the installer asked for the bare package, so
+# a freshly built environment had no Qt at all. maintain-ui is a
+# windowed script: it died with no console and no message.
+REQUIRED_EXTRAS = "ui"
+
+
+def requirements(reference: str, repository: str = REPOSITORY_URL,
+                 extras: str = REQUIRED_EXTRAS) -> list[str]:
+    """The ways to ask pip for one release, best first.
+
+    PEP 508's "name[extra] @ git+url" is the right form and the one
+    pip will keep. pip 24 refuses it for a local path — "It looks like
+    a path" — which is how CI and the tests install, so the older
+    "#egg=name[extra]" fragment follows as a fallback.
+    """
     tag = reference.rsplit("/", 1)[-1]
-    suffix = f"#egg={PACKAGE_NAME}" if extras else ""
-    return f"git+{repository}@{tag}{suffix}"
+    url = f"git+{repository}@{tag}"
+    if not extras:
+        return [url]
+    return [f"{PACKAGE_NAME}[{extras}] @ {url}",
+            f"{url}#egg={PACKAGE_NAME}[{extras}]"]
+
+
+def requirement(reference: str, repository: str = REPOSITORY_URL,
+                extras: str = REQUIRED_EXTRAS) -> str:
+    """The first way to ask. Kept for callers that want just one."""
+    return requirements(reference, repository, extras)[0]
 
 
 def installed_version(runtime: Path, *, run=None) -> str:
@@ -302,9 +324,20 @@ def install(reference: str = "", *, root: Path | None = None,
                       lines=lines)
 
     lines.append("Installing Maintain...")
-    code, output = _text([str(runtime), "-m", "pip", "install", "--upgrade",
-                          "--disable-pip-version-check", "--no-input",
-                          f"{requirement(reference, repository)}"], run=run)
+    # The video feature only where the Python can run it.
+    extras = REQUIRED_EXTRAS
+    if chosen and chosen <= (3, 13):
+        extras = f"{REQUIRED_EXTRAS},explain"
+    output = ""
+    code = 1
+    for candidate in requirements(reference, repository, extras):
+        code, output = _text(
+            [str(runtime), "-m", "pip", "install", "--upgrade",
+             "--disable-pip-version-check", "--no-input", candidate], run=run)
+        if code == 0:
+            break
+        if "Invalid requirement" not in output:
+            break
     lines.append(output.strip())
     if code:
         return Report(False, f"The install failed. {output.strip()}", lines=lines)

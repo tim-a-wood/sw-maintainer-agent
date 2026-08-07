@@ -54,19 +54,33 @@ def wanted_version(reference: str) -> str:
     return candidate
 
 
-def requirement(reference: str, repository: str = REPOSITORY_URL) -> str:
-    """The pip requirement for one release.
+# FR-V19: the app cannot start without Qt, and Qt is an optional extra.
+# An update that asked for the bare package left whatever the
+# environment already had — which is fine until the environment is
+# rebuilt, and then the window never opens and says nothing.
+REQUIRED_EXTRAS = "ui"
 
-    pip fetches a tag directly, so the update needs no clone of its own
-    and no second installer run.
 
-    The bare VCS URL, not PEP 508's ``name @ git+url``: pip 24 reads
-    that longer form as a file path and refuses it — "It looks like a
-    path" — which a real update against a real environment showed at
-    once. pip takes the project name from the fetched metadata.
+def requirements(reference: str, repository: str = REPOSITORY_URL,
+                 extras: str = REQUIRED_EXTRAS) -> list[str]:
+    """The ways to ask pip for one release, best first.
+
+    PEP 508's ``name[extra] @ git+url`` is the form pip will keep. pip
+    24 refuses it for a local path — "It looks like a path" — which is
+    how the smoke test updates, so the older ``#egg=`` fragment
+    follows as a fallback.
     """
     tag = reference.rsplit("/", 1)[-1]
-    return f"git+{repository}@{tag}"
+    url = f"git+{repository}@{tag}"
+    if not extras:
+        return [url]
+    return [f"{PACKAGE_NAME}[{extras}] @ {url}",
+            f"{url}#egg={PACKAGE_NAME}[{extras}]"]
+
+
+def requirement(reference: str, repository: str = REPOSITORY_URL) -> str:
+    """The first way to ask."""
+    return requirements(reference, repository)[0]
 
 
 def install_root() -> Path:
@@ -173,18 +187,21 @@ def install(runtime: Path, reference: str, *, repository: str = REPOSITORY_URL,
     and the launcher are already there, so only the package changes.
     """
     run = run or subprocess.run
-    command = [str(runtime), "-m", "pip", "install", "--upgrade",
-               "--disable-pip-version-check", "--no-input",
-               requirement(reference, repository)]
-    try:
-        result = run(command, capture_output=True, text=True, check=False,
-                     timeout=1800)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return False, str(exc)
-    output = f"{result.stdout or ''}{result.stderr or ''}".strip()
-    if result.returncode != 0:
-        return False, output or f"pip stopped with code {result.returncode}."
-    return True, output
+    output = ""
+    for candidate in requirements(reference, repository):
+        command = [str(runtime), "-m", "pip", "install", "--upgrade",
+                   "--disable-pip-version-check", "--no-input", candidate]
+        try:
+            result = run(command, capture_output=True, text=True, check=False,
+                         timeout=1800)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, str(exc)
+        output = f"{result.stdout or ''}{result.stderr or ''}".strip()
+        if result.returncode == 0:
+            return True, output
+        if "Invalid requirement" not in output:
+            break
+    return False, output or "pip could not install the release."
 
 
 def launcher_path(install_root: Path) -> Path:

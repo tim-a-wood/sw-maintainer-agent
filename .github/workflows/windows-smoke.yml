@@ -140,6 +140,15 @@ jobs:
             --app-process-id 0 --no-relaunch
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+          # FR-V19: the one check nothing had: does the installed app
+          # actually start? A missing extra left no Qt, and maintain-ui
+          # is a windowed script, so it died with no console and no
+          # message. Importing Qt from the installed environment is
+          # what would have caught it.
+          $installedPython = Join-Path $installRoot "venv\Scripts\python.exe"
+          & $installedPython -c "from PySide6.QtWidgets import QApplication; import maintain.ui.main; print('the app can start')"
+          if ($LASTEXITCODE -ne 0) { throw "The installed app cannot start." }
+
           # The update writes its record whatever happens.
           $updateLog = Join-Path $installRoot "update.log"
           if (-not (Test-Path -LiteralPath $updateLog)) {

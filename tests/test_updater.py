@@ -69,14 +69,19 @@ def test_pip_fetches_the_tag_with_no_clone_of_its_own():
     """The old script cloned the release, then ran that clone's
     installer, which resolved and downloaded the release again.
 
-    The bare VCS URL is deliberate. PEP 508's "name @ git+url" reads
-    to pip 24 as a file path — "It looks like a path" — and a real
-    update against a real environment failed on it.
+    The extra is named too (FR-V19). Qt is optional in pyproject, and
+    an update that asked for the bare package left whatever the
+    environment happened to have — fine until it is rebuilt, and then
+    the window never opens and says nothing.
     """
     value = updater.requirement("refs/tags/v1.2.3")
     assert value == (
+        "sw-maintainer-agent[ui] @ "
         "git+https://github.com/tim-a-wood/sw-maintainer-agent.git@v1.2.3")
-    assert not value.startswith(updater.PACKAGE_NAME)
+    # pip 24 refuses that form for a local path, so a second form
+    # follows for the smoke test, which updates from a checkout.
+    fallback = updater.requirements("refs/tags/v1.2.3")[1]
+    assert fallback.endswith("#egg=sw-maintainer-agent[ui]")
 
 
 def test_waiting_for_the_app_gives_up_rather_than_hanging():

@@ -132,6 +132,11 @@ NOTES: dict[str, tuple[str, ...]] = {
         "Before this, it kept the old environment, so installing again changed nothing.",
         "An environment that already makes videos is left alone.",
     ),
+    "0.9.20": (
+        "The app opens again after an install. Version 0.9.19 could not start it.",
+        "The install did not get the window software, so nothing happened and nothing said why.",
+        "If 0.9.19 left you with no app, install 0.9.20 and it works again.",
+    ),
 }
 
 

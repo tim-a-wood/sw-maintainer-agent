@@ -126,10 +126,12 @@ def test_a_python_too_old_is_passed_over():
     assert found == ["/bin/python3"]
 
 
-def test_pip_takes_the_bare_vcs_url():
-    """PEP 508's "name @ git+url" reads to pip 24 as a file path."""
+def test_pip_is_asked_for_the_release_and_the_extra():
+    """This asserted the bare URL, which was the fault: the bare
+    package has no Qt, so the app could not start (FR-V19)."""
     value = installer.requirement("refs/tags/v1.2.3")
     assert value == (
+        "sw-maintainer-agent[ui] @ "
         "git+https://github.com/tim-a-wood/sw-maintainer-agent.git@v1.2.3")
 
 
@@ -455,3 +457,129 @@ def test_an_environment_that_can_make_videos_is_left_alone(
 
     assert report.ok, report.reason
     assert (root / "venv" / "marker").read_text(encoding="utf-8") == "keep"
+
+
+def test_the_install_asks_for_what_the_app_needs_to_start():
+    """FR-V19: the worst report yet — "the UI doesn't open at all
+    after running the latest installer. No error messages at all".
+
+    PySide6 is an optional extra in pyproject, and the installer asked
+    pip for the bare package. Nothing noticed while the environment
+    was one the old PowerShell installer had built, because Qt was
+    already in it. The moment 0.9.19 rebuilt the environment, Qt was
+    gone — and maintain-ui is a windowed script, so it died with no
+    console and no message.
+    """
+    import tomllib
+
+    declared = tomllib.loads(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    extras = declared["project"]["optional-dependencies"]
+    assert any("PySide6" in item for item in extras["ui"]), (
+        "the ui extra no longer carries Qt; this test needs rewriting")
+
+    # Every way the installer asks pip must name the ui extra.
+    for candidate in installer.requirements("refs/tags/v1.2.3"):
+        assert "[ui" in candidate, candidate
+    # And the same for the updater, which installs into the same place.
+    from maintain import updater
+    for candidate in updater.requirements("refs/tags/v1.2.3"):
+        assert "[ui" in candidate, candidate
+
+
+def test_the_install_offers_pip_a_form_it_will_accept():
+    """PEP 508 is the form pip keeps; the egg fragment is the fallback
+    for pip 24, which refuses PEP 508 for a local path — the way CI
+    and these tests install."""
+    candidates = installer.requirements("refs/tags/v1.2.3")
+
+    assert len(candidates) == 2
+    assert candidates[0].startswith("sw-maintainer-agent[ui] @ git+")
+    assert candidates[1].endswith("#egg=sw-maintainer-agent[ui]")
+
+
+def test_a_pip_that_refuses_the_first_form_gets_the_second(tmp_path,
+                                                           monkeypatch):
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    root = tmp_path / "Maintain"
+    runtime = installer.runtime_path(root)
+    asked: list[str] = []
+
+    def run(command, **kwargs):
+        if "venv" in command and "-m" in command:
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+            return FakeCompleted(0, "")
+        if "pip" in command:
+            asked.append(command[-1])
+            if " @ " in command[-1]:
+                return FakeCompleted(
+                    1, "", "ERROR: Invalid requirement. It looks like a path.")
+            return FakeCompleted(0, "Successfully installed")
+        if any("sys.version_info" in part for part in command):
+            return FakeCompleted(0, "3.13\n")
+        return FakeCompleted(0, "0.9.20\n")
+
+    report = installer.install("refs/tags/v0.9.20", root=root, run=run,
+                               which=lambda name: f"/bin/{name}")
+
+    assert report.ok, report.reason
+    assert len(asked) == 2, asked
+    assert "#egg=" in asked[1]
+
+
+def test_a_real_pip_failure_is_not_retried_forever(tmp_path, monkeypatch):
+    """Only a parse refusal earns the second form. A network fault or a
+    missing tag must be reported, not asked twice."""
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    root = tmp_path / "Maintain"
+    runtime = installer.runtime_path(root)
+    asked: list[str] = []
+
+    def run(command, **kwargs):
+        if "venv" in command and "-m" in command:
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+            return FakeCompleted(0, "")
+        if "pip" in command:
+            asked.append(command[-1])
+            return FakeCompleted(1, "", "ERROR: could not reach the remote")
+        if any("sys.version_info" in part for part in command):
+            return FakeCompleted(0, "3.13\n")
+        return FakeCompleted(0, "0.9.20\n")
+
+    report = installer.install("refs/tags/v0.9.20", root=root, run=run,
+                               which=lambda name: f"/bin/{name}")
+
+    assert not report.ok
+    assert len(asked) == 1, asked
+    assert "could not reach the remote" in report.reason
+
+
+def test_the_video_extra_goes_only_where_it_can_work(tmp_path, monkeypatch):
+    """Manim has no wheels above 3.13. Asking for it on 3.14 would fail
+    the whole install, and the app would not be there at all."""
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    root = tmp_path / "Maintain"
+    runtime = installer.runtime_path(root)
+    asked: list[str] = []
+
+    def run(command, **kwargs):
+        if "venv" in command and "-m" in command:
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+            return FakeCompleted(0, "")
+        if "pip" in command:
+            asked.append(command[-1])
+            return FakeCompleted(0, "Successfully installed")
+        if any("sys.version_info" in part for part in command):
+            return FakeCompleted(0, "3.14\n")
+        return FakeCompleted(0, "0.9.20\n")
+
+    report = installer.install("refs/tags/v0.9.20", root=root, run=run,
+                               which=lambda name: f"/bin/{name}")
+
+    assert report.ok, report.reason
+    assert "[ui]" in asked[0], asked
+    assert "explain" not in asked[0], asked
