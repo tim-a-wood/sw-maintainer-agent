@@ -94,6 +94,18 @@ def runtime_path(install_root: Path) -> Path:
     return windows if os.name == "nt" else root / "venv" / "bin" / "python"
 
 
+def no_window() -> dict:
+    """The flag that keeps a console from flashing on Windows.
+
+    `maintain.proc.hidden` does this for the app, but this file must
+    not import from the package it replaces, so the flag is named
+    here.
+    """
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+
+
 def process_alive(pid: int) -> bool:
     """True while the process is still there."""
     if pid <= 0:
@@ -101,7 +113,7 @@ def process_alive(pid: int) -> bool:
     if os.name == "nt":
         result = subprocess.run(
             ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-            capture_output=True, text=True, check=False)
+            capture_output=True, text=True, check=False, **no_window())
         return str(pid) in result.stdout
     try:
         os.kill(pid, 0)

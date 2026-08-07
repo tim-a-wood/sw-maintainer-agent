@@ -27,6 +27,9 @@ ALLOWED = {
         "The updater shows its progress on purpose: the app is "
         "closing, and a silent reinstall would look like nothing "
         "happened.",
+    ("updater.py", "process_alive"):
+        "The updater must not import from the package it replaces, so "
+        "it names the no-window flag itself, through no_window().",
 }
 
 

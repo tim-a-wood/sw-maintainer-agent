@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -584,7 +585,13 @@ def test_update_prompt_applies_or_skips(qt_app, tmp_path, monkeypatch):
     window.home.update_clicked.emit()
     assert len(spawned) == 1
     assert "refs/tags/v9.9.9" in spawned[0]
-    assert spawned[0][spawned[0].index("-AppProcessId") + 1].isdigit()
+    # FR-V12: the helper is Python now, run by this interpreter, from a
+    # copy outside the environment it is about to replace.
+    assert spawned[0][0] == sys.executable
+    assert spawned[0][1].endswith(".py")
+    assert Path(spawned[0][1]).parent != Path(app_module.updater.__file__).parent
+    assert spawned[0][spawned[0].index("--app-process-id") + 1].isdigit()
+    assert "--install-root" in spawned[0]
 
     # The attempt is remembered. The same offer on the same version
     # means the install did not take, and the card says so instead of
