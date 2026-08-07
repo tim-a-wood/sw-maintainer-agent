@@ -2100,3 +2100,61 @@ changes.
   log was written.
 - `scripts/install-windows.ps1` stays PowerShell. It is the first
   install, where no Python exists yet to run anything else.
+
+### 14.64 Install without PowerShell (FR-V14)
+
+"The install and uninstall cmd script still fail due to an unsigned
+powershell script (I asked you to replace these with python)."
+
+The `.cmd` files were shims that called PowerShell with
+`-ExecutionPolicy Bypass`. Bypass does not override a policy the
+organisation set, so on a managed machine both the install and the
+uninstall were unreachable — and there was nothing the person could
+do from their side.
+
+- FR-V14. `scripts/install_maintain.py` does the install and the
+  removal. `scripts/install.cmd` and `scripts/uninstall.cmd` are
+  batch files that find Python and start it. A batch file has no
+  signing gate, so this route works where the old one was refused.
+- The shortcut is written byte by byte, in
+  `scripts/shortcut.py`. Every other way to make a `.lnk` runs
+  something a managed machine can also close: Windows Script Host,
+  or PowerShell with COM. The shell link format is documented, and
+  the part a shortcut needs is a header, a block naming the target,
+  and a few strings. A test reads the file back on any platform.
+- Two desktop icons, and the same two in the Start Menu. **Maintain**
+  opens the app window through `maintain-ui`; **Maintain Console**
+  opens the terminal tool. Both carry the robot icon. The app comes
+  first and takes the plain name: a person who wants Maintain wants
+  the window.
+- The window launcher uses `start` and does not pause, so no command
+  window is left behind it. The console launcher still pauses on a
+  fault, where the person needs to read what happened.
+- An install is verified the same way an update is: the installed
+  runtime is asked for its version.
+- `scripts/install-windows.ps1` and `scripts/uninstall-windows.ps1`
+  are gone, with the PowerShell tests that read them. The Windows
+  smoke job runs the Python installer, the Python uninstaller, and
+  the resolver against GitHub.
+
+### 14.65 A dead button and a silent git (FR-V13)
+
+Two more from the same report.
+
+"The button to select a previous input don't work (pressing them
+doesn't do anything)." `QPushButton.clicked` carries a `checked`
+bool. Wired to the capture idiom — `lambda value=x: ...` — Qt fills
+that one parameter with `False`, so `setPlainText(False)` ran and
+the request was lost. Three places had it: the recent-request chips,
+the issue filter tabs, and the settings task tabs.
+
+- FR-V13. `button()` drops the signal's arguments, so the whole class
+  of fault is closed rather than the three call sites that showed it.
+
+The crash dialog showed a Python traceback ending in "returned
+non-zero exit status 1" — what failed, and nothing about why.
+
+- The diff snapshot ran git with `check=True`, and
+  `CalledProcessError` carries only the command and the status. git
+  writes the cause to stderr, so the snapshot reads it and raises it
+  in words the person can act on.

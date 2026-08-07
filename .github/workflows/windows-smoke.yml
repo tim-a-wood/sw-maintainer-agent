@@ -53,11 +53,14 @@ jobs:
 
       - name: Exercise installer, update, launcher, and diagnostics
         shell: pwsh
-        env:
-          MAINTAIN_PACKAGE_SOURCE: ".[browser]"
         run: |
-          & .\scripts\install-windows.ps1
-          if (-not $?) { throw "The installer failed." }
+          # FR-V14: the install needs only Python. The reference is this
+          # checkout's own branch, so the smoke test installs what is
+          # being tested rather than the newest published release.
+          $branch = & git rev-parse --abbrev-ref HEAD
+          & python .\scripts\install_maintain.py `
+            --reference "refs/heads/$branch" --repository (Get-Location).Path
+          if ($LASTEXITCODE -ne 0) { throw "The installer failed." }
 
           $installedLauncher = Join-Path $env:LOCALAPPDATA "Programs\Maintain\Maintain.cmd"
           & $installedLauncher --version
@@ -76,8 +79,9 @@ jobs:
             "Programs\Maintain\venv\Scripts\python.exe"
           [IO.File]::WriteAllBytes($privatePython, [byte[]]@())
 
-          & .\scripts\install-windows.ps1
-          if (-not $?) { throw "Repairing the private environment failed." }
+          & python .\scripts\install_maintain.py `
+            --reference "refs/heads/$branch" --repository (Get-Location).Path
+          if ($LASTEXITCODE -ne 0) { throw "Repairing the private environment failed." }
 
           & $installedLauncher --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -107,35 +111,12 @@ jobs:
       - name: Resolve the newest release the way a fresh install does
         shell: pwsh
         run: |
-          # FR-U7. The smoke install above pins MAINTAIN_PACKAGE_SOURCE,
-          # so it never runs the default path a person actually takes.
-          # This runs that path's resolver for real, against GitHub.
-          $script = ".\scripts\install-windows.ps1"
-          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
-            $script, [ref]$null, [ref]$null)
-          foreach ($name in @("Assert-NativeCommand", "Resolve-LatestReleaseTag",
-                              "Resolve-RemoteCommit")) {
-            $fn = $ast.Find({
-              param($node)
-              $node -is [System.Management.Automation.Language.FunctionDefinitionAst] `
-                -and $node.Name -eq $name
-            }, $true)
-            if ($null -eq $fn) { throw "install-windows.ps1 has no $name." }
-            Invoke-Expression $fn.Extent.Text
-          }
-
-          $url = "https://github.com/tim-a-wood/sw-maintainer-agent.git"
-          $git = (Get-Command git.exe).Source
-          $tag = Resolve-LatestReleaseTag -GitPath $git -Repository $url
-          Write-Host "Resolved release: $tag"
-          if ($tag -notmatch "^refs/tags/v\d+(\.\d+)*$") {
-            throw "The resolver returned '$tag', which is not a release tag."
-          }
-          $commit = Resolve-RemoteCommit -GitPath $git -Repository $url -Reference $tag
-          Write-Host "Resolved commit: $commit"
-          if ($commit -notmatch "^[0-9a-f]{40}$") {
-            throw "The resolver returned '$commit', which is not a commit."
-          }
+          # FR-U7 + FR-V14. The installer is Python now, so its resolver
+          # is unit-tested everywhere. What only a real run shows is the
+          # resolver against GitHub itself, on the default path a person
+          # takes when no reference is pinned.
+          python .\scripts\check_release_resolver.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Exercise the self-updater
         shell: pwsh
@@ -195,5 +176,5 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          & .\scripts\uninstall-windows.ps1
-          if (-not $?) { throw "Uninstall failed." }
+          & python .\scripts\install_maintain.py --uninstall
+          if ($LASTEXITCODE -ne 0) { throw "Uninstall failed." }

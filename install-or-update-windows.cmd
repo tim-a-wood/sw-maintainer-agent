@@ -1,13 +1,6 @@
 @echo off
-setlocal
-title Maintain installer
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install-windows.ps1"
-set "INSTALL_EXIT=%ERRORLEVEL%"
-echo.
-if not "%INSTALL_EXIT%"=="0" (
-  echo Maintain was not installed. Review the error above.
-) else (
-  echo Maintain is ready.
-)
-pause
-exit /b %INSTALL_EXIT%
+rem Install or update Maintain. This calls scripts\install.cmd, which
+rem needs only Python: no script-signing gate, so it works on a
+rem machine that refuses unsigned scripts.
+call "%~dp0scripts\install.cmd" %*
+exit /b %ERRORLEVEL%

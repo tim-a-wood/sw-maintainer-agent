@@ -57,7 +57,7 @@ browser profile.
 
 Install [Python 3.11 or later](https://www.python.org/downloads/windows/) and
 [Git for Windows](https://git-scm.com/download/win) first. The installer checks
-both prerequisites before changing the private Maintain runtime.
+both before it changes anything.
 
 Download and extract this repository, then double-click:
 
@@ -65,45 +65,23 @@ Download and extract this repository, then double-click:
 install-or-update-windows.cmd
 ```
 
-The script finds the newest published release, resolves its tag to one
-immutable Git commit, checks out that exact commit, and verifies that the
-installed private runtime reports the version declared by that source. It will
-stop with an error instead of silently reinstalling an older extracted copy when
-the online update is unavailable. The installer also installs Chromium, adds `maintain` to the user
-PATH, and creates desktop and Start Menu shortcuts with the Maintain robot icon.
-It asks Windows to pin the shortcut to the taskbar. Some company policies block
-automatic taskbar pinning; if that happens, the installer gives the single
-manual step required.
+That calls `scripts\install.cmd`, a batch file that finds Python and runs
+`scripts/install_maintain.py`. Nothing in the install needs PowerShell, so it
+works on a managed machine whose policy refuses unsigned scripts.
 
-Run the same script whenever you want to update. To remove the CLI and its
-shortcuts, double-click:
+The installer finds the newest published release, builds a private Python
+environment under `%LOCALAPPDATA%\Programs\Maintain`, installs that release
+into it, and confirms the installed runtime reports the version it meant to
+install. It then writes two launchers and four shortcuts with the Maintain
+robot icon:
 
-```text
-uninstall-windows.cmd
-```
+| Shortcut | Opens |
+| --- | --- |
+| **Maintain** (desktop and Start Menu) | the app window, `maintain-ui` |
+| **Maintain Console** (desktop and Start Menu) | `maintain` in a terminal |
 
-Uninstall keeps run history, settings, browser sign-in data, and runtime logs under
-`%USERPROFILE%\.maintain`.
-
-If installation or startup fails, the shortcut keeps the error visible. The
-installer and runtime also keep logs at:
-
-```text
-%LOCALAPPDATA%\Programs\Maintain\install.log
-%USERPROFILE%\.maintain\logs\maintain-runtime.log
-```
-
-Running the installer again repairs an unusable private Python environment. It
-does not remove run history, settings, or browser profiles.
-
-For a shareable support bundle, double-click `collect-maintain-diagnostics.cmd`.
-It creates `maintain-diagnostics.zip` in the current folder with Windows and
-PowerShell versions, command resolution, private-runtime versions, installed-file
-metadata, the install log, and up to 20 control-only browser failure or transport
-JSON files. It does not collect process command lines, prompts, responses,
-screenshots, `run.json`, or `audit.jsonl`. The bundle can still contain local
-paths, browser control labels, attachment filenames, and model names, so review
-it before sharing.
+To remove it, double-click `uninstall-windows.cmd`. That takes the private
+environment and every shortcut.
 
 ### Manual installation
 

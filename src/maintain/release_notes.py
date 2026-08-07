@@ -101,6 +101,14 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The update is written in Python now, and the tests cover it.",
         "Before this, no test could run the update, and it had a fault nobody could see.",
     ),
+    "0.9.15": (
+        "The install and the uninstall do not use PowerShell. They need only Python.",
+        "Before this, they stopped on a company machine that refuses unsigned scripts.",
+        "The install makes a Maintain icon on your desktop that opens the app window.",
+        "A second icon, Maintain Console, opens the tool in a terminal.",
+        "The button for a previous request works again. It did nothing before.",
+        "If git cannot read your files, the app tells you what git said.",
+    ),
 }
 
 
