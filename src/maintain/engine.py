@@ -19,6 +19,7 @@ from .context import ContextSelector
 from .errors import (
     ConfigurationError,
     DeliveryError,
+    MaintainError,
     PolicyError,
     ProviderError,
     RecoveryError,
@@ -107,6 +108,17 @@ IMPLEMENT_INSTRUCTIONS = (
     "assistants return complete final files inline as specified in TASK.md. For an "
     "issue, also return content.root_cause with statement and evidence_paths. Do not "
     "use internet tools, claim local verification, or run MATLAB."
+)
+
+# FR-V23: a repair whose cause is lost content cannot be done from the
+# damaged file alone. Copilot said so itself: "the repair packet only
+# provides the already-reduced 1716-byte version, not the full UI
+# source needed to create a compliant repair."
+REPAIR_ORIGINAL_INSTRUCTIONS = (
+    " The payload also holds original_files: each named file as it was before this "
+    "run changed it. The attempt under repair may have removed content that must "
+    "come back. Compare the current file with its original, keep everything the "
+    "task does not change, and return the complete file."
 )
 
 REVIEW_INSTRUCTIONS = (
@@ -1047,6 +1059,13 @@ class WorkflowEngine:
                    "task_number": record.task_index + 1,
                    "task_count": len(record.tasks),
                    **self._step_reason(record)}
+        # FR-V23: a repair must be able to put back what the attempt
+        # removed. The current file cannot show what is missing from it.
+        original_files = self._files_before_this_task(record, paths, files) if repair else {}
+        instructions = IMPLEMENT_INSTRUCTIONS
+        if original_files:
+            payload["original_files"] = original_files
+            instructions += REPAIR_ORIGINAL_INSTRUCTIONS
         patch_path = store.artifacts / f"{attempt_dir}/patch.diff"
         workspace_edited = False
         if patch_path.is_file():
@@ -1057,7 +1076,7 @@ class WorkflowEngine:
                               "media_type": "text/x-diff"}
         else:
             content = self._exchange(record, store, "implement", str(task["id"]),
-                IMPLEMENT_INSTRUCTIONS, payload,
+                instructions, payload,
                 conversation_suffix=(f"{task['id']}-attempt-{record.attempt}"
                                      f"{self._epoch_suffix(record)}"),
                 implementation_worktree=Path(record.worktree))
@@ -1132,6 +1151,47 @@ class WorkflowEngine:
             sub="isolated workspace", resume_state=RunState.REVIEWING,
             tree_hash=diff.tree_hash)
         self.presenter.complete("CHANGE", f"Changed {len(diff.paths)} {noun}")
+
+    def _files_before_this_task(self, record: RunRecord, paths: list,
+                                current: dict[str, str]) -> dict[str, str]:
+        """Each allowed file as it was before this task changed it.
+
+        FR-V23. Copilot refused a repair in plain words: the packet
+        held "the already-reduced version, not the full source needed
+        to create a compliant repair". It was right — the packet sent
+        the damaged file and nothing else, so the content the attempt
+        removed was not in it anywhere.
+
+        The anchor is the tree the last completed task left, or the
+        commit the run started from. An earlier task's work is kept,
+        never offered back as something to restore.
+
+        History earns a quarter of the package budget, no more. The
+        repair is what must go; an earlier version that cannot fit is
+        left out rather than allowed to stop the run.
+        """
+        completed = record.evidence.get("completed_tasks")
+        anchor = ""
+        if isinstance(completed, list) and completed:
+            anchor = str(completed[-1].get("tree_hash", ""))
+        anchor = anchor or record.base_commit
+        if not anchor:
+            return {}
+        budget = self.config.max_prompt_bytes // 4
+        before: dict[str, str] = {}
+        for path in paths:
+            try:
+                earlier = self.workspaces.file_at(Path(record.worktree), anchor, str(path))
+            except MaintainError:
+                continue
+            if not earlier or earlier == current.get(str(path)):
+                continue
+            cost = len(earlier.encode())
+            if cost > budget:
+                continue
+            budget -= cost
+            before[str(path)] = earlier
+        return before
 
     def _step_reason(self, record: RunRecord) -> dict[str, str]:
         """Why the build step is on screen, in a form the UI can word.

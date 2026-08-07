@@ -46,7 +46,8 @@ def build_exchange_package(
     code_name = "CODEBASE.md"
     manifest_name = "MANIFEST.json"
 
-    codebase = _codebase_markdown(source_files, request.payload.get("diff"))
+    codebase = _codebase_markdown(source_files, request.payload.get("diff"),
+                                  _original_files(request.payload))
     task = _task_markdown(
         request,
         code_name,
@@ -351,7 +352,8 @@ def _task_markdown(
     )
 
 
-def _codebase_markdown(source_files: list[tuple[str, str]], diff: object) -> str:
+def _codebase_markdown(source_files: list[tuple[str, str]], diff: object,
+                       original_files: list[tuple[str, str]] = ()) -> str:
     lines = [
         "# Focused codebase",
         "",
@@ -390,6 +392,30 @@ def _codebase_markdown(source_files: list[tuple[str, str]], diff: object) -> str
             fence,
             "",
         ])
+    # FR-V23: a repair sees the file it must fix and the file as it was
+    # before this run touched it. Without the second one, content the
+    # attempt removed is in the package nowhere, and the repair cannot
+    # be done at all.
+    if original_files:
+        lines.extend([
+            "## The same files before this run changed them",
+            "",
+            "Use these to put back anything the attempt under repair removed "
+            "in error. Keep every part the task does not change. These are "
+            "history, not the files to return.",
+            "",
+        ])
+        for path, content in original_files:
+            language = _language(path)
+            fence = "`" * max(4, _longest_backtick_run(content) + 1)
+            lines.extend([
+                f"### `{path}` — before this run",
+                "",
+                f"{fence}{language}",
+                content.rstrip("\n"),
+                fence,
+                "",
+            ])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -409,6 +435,15 @@ def _source_files(payload: dict[str, Any]) -> list[tuple[str, str]]:
     return list(found.items())
 
 
+def _original_files(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    """FR-V23: the earlier version of each file a repair must restore."""
+    value = payload.get("original_files")
+    if not isinstance(value, dict):
+        return []
+    return [(path, content) for path, content in value.items()
+            if isinstance(path, str) and isinstance(content, str)]
+
+
 def _manifest_payload(payload: dict[str, Any]) -> dict[str, Any]:
     value = copy.deepcopy(payload)
     candidates = value.get("candidate_files")
@@ -425,6 +460,16 @@ def _manifest_payload(payload: dict[str, Any]) -> dict[str, Any]:
             path: {"content_location": "CODEBASE.md", "bytes": len(content.encode()),
                    "sha256": hashlib.sha256(content.encode()).hexdigest()}
             for path, content in files.items() if isinstance(path, str) and isinstance(content, str)
+        }
+    earlier = value.get("original_files")
+    if isinstance(earlier, dict):
+        value["original_files"] = {
+            path: {"content_location":
+                   "CODEBASE.md#the-same-files-before-this-run-changed-them",
+                   "bytes": len(content.encode()),
+                   "sha256": hashlib.sha256(content.encode()).hexdigest()}
+            for path, content in earlier.items()
+            if isinstance(path, str) and isinstance(content, str)
         }
     diff = value.get("diff")
     if isinstance(diff, str):

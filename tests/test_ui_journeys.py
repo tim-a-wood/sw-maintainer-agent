@@ -1893,3 +1893,132 @@ def test_the_reason_line_words_every_cause():
                         "task_count": 1}) == ""
     assert step_reason({"step_reason": "next_task",
                         "task_number": "x", "task_count": None}) == ""
+
+
+def test_a_repair_packet_carries_the_file_as_it_was(qt_app, tmp_path, monkeypatch):
+    """Copilot refused a repair, in its own words: "the repair packet
+    only provides the already-reduced 1716-byte version, not the full
+    UI source needed to create a compliant repair."
+
+    It was right. The build had cut most of the file out, the review
+    caught it, and the repair packet then held the damaged file and
+    nothing else. What the attempt removed was in the package nowhere,
+    so no reply could put it back. FR-V23 sends the earlier version
+    with the repair.
+    """
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    repository = Path(window.store.config.repository)
+    whole = "VALUE = \"before\"\n" + "".join(
+        f"def helper_{n}():\n    return {n}\n" for n in range(40))
+    (repository / "app.py").write_text(whole, encoding="utf-8")
+    _git(repository, "add", "app.py")
+    _git(repository, "commit", "-m", "the whole file")
+
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="plan packet")
+    window.exchange.check(clipboard_text=_scope_reply(window.current_handoff))
+    wait_until(qt_app, lambda: _screen(window) == "plan", message="plan gate")
+    window.plan_check.accept.emit()
+
+    # The build changes the value and throws the rest of the file away.
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "build",
+               message="build packet")
+    window.exchange.check(
+        path=_zip_reply(window.current_handoff, tmp_path, 'VALUE = "after"\n'))
+
+    # The review catches it, exactly as it did in the field.
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "review",
+               message="review packet")
+    finding = {"severity": "high", "file": "app.py", "line": 1,
+               "title": "The change removed most of the file",
+               "evidence": "app.py lost every helper function.",
+               "remediation": "Keep the helpers and change the value only."}
+    window.exchange.check(
+        clipboard_text=_review_json(window.current_handoff, [finding]))
+    wait_until(qt_app, lambda: _screen(window) == "findings", message="findings gate")
+    window.findings.repair.emit()
+
+    # The repair packet holds both versions.
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "repair",
+               message="repair packet", timeout=60.0)
+    payload = window.current_handoff.request.payload
+    assert payload["files"]["app.py"] == 'VALUE = "after"\n'
+    assert payload["original_files"]["app.py"] == whole
+    assert "helper_39" in payload["original_files"]["app.py"]
+
+    # And Copilot reads the package, not the payload. The earlier
+    # version has to be in the words it is given.
+    package = Path(window.current_handoff.packet.zip_path)
+    if package.suffix == ".zip":
+        with zipfile.ZipFile(package) as archive:
+            codebase = archive.read("CODEBASE.md").decode("utf-8")
+    else:
+        codebase = package.read_text(encoding="utf-8")
+    assert "before this run" in codebase
+    assert "helper_39" in codebase
+    # The instructions say what it is for.
+    assert "original_files" in window.current_handoff.request.instructions
+    assert not errors, errors
+
+
+def test_the_earlier_version_never_undoes_a_finished_task(tmp_path):
+    """A repair on the second task must not offer the first task's
+    work back as something to restore. The anchor is what the last
+    finished task left, not the start of the run."""
+    from maintain.engine import WorkflowEngine
+
+    record = type("R", (), {})()
+    record.worktree = str(tmp_path)
+    record.base_commit = "the-start"
+    record.evidence = {"completed_tasks": [{"tree_hash": "after-task-one"}]}
+    asked: list[str] = []
+
+    class Spy:
+        @staticmethod
+        def file_at(worktree, reference, path):
+            asked.append(reference)
+            return "the earlier text"
+
+    engine = WorkflowEngine.__new__(WorkflowEngine)
+    engine.config = type("C", (), {"max_prompt_bytes": 2_000_000})()
+    engine.workspaces = Spy()
+    before = WorkflowEngine._files_before_this_task(
+        engine, record, ["app.py"], {"app.py": "the damaged text"})
+
+    assert before == {"app.py": "the earlier text"}
+    assert asked == ["after-task-one"], asked
+
+    # With no finished task, the run's starting commit is the anchor.
+    record.evidence = {}
+    asked.clear()
+    WorkflowEngine._files_before_this_task(
+        engine, record, ["app.py"], {"app.py": "x"})
+    assert asked == ["the-start"]
+
+    # A file that did not change is not sent twice.
+    class Same:
+        @staticmethod
+        def file_at(worktree, reference, path):
+            return "the same text"
+
+    engine.workspaces = Same()
+    assert WorkflowEngine._files_before_this_task(
+        engine, record, ["app.py"], {"app.py": "the same text"}) == {}
+
+    # History is worth a quarter of the package, no more. A file too
+    # big for that is left out; it never stops the repair going out.
+    class Huge:
+        @staticmethod
+        def file_at(worktree, reference, path):
+            return "x" * 4000 if path == "big.py" else "the earlier text"
+
+    engine.config = type("C", (), {"max_prompt_bytes": 8_000})()
+    engine.workspaces = Huge()
+    kept = WorkflowEngine._files_before_this_task(
+        engine, record, ["big.py", "app.py"], {"big.py": "x", "app.py": "y"})
+    assert kept == {"app.py": "the earlier text"}

@@ -2370,3 +2370,41 @@ The `os.replace` fault of §14.71 had a second home: the file that
 remembers your projects. A test now holds the rule for the whole
 package — the only bare `os.replace` allowed is the one inside the
 retry itself.
+
+### 14.73 A repair needs the file as it was (FR-V23)
+
+Copilot refused a repair and said exactly why:
+
+> I can't correctly produce a valid implementation for this
+> maintenance packet because the packet does not contain the complete
+> original `src/App.jsx` that must be preserved. The review
+> specifically identified that the prior implementation removed large
+> portions of the UI, but the repair packet only provides the
+> already-reduced 1716-byte version, not the full UI source needed to
+> create a compliant repair.
+
+It was right. The build step reads each authorized file from the
+worktree, and on a repair round the worktree holds the damaged file.
+The review had found that the attempt cut most of a file out — and
+the packet sent to repair it contained only the cut-down version. The
+content that had to come back was in the package nowhere, so no reply
+could be correct. The loop could not leave that state.
+
+- FR-V23. A repair packet carries `original_files`: each authorized
+  file as it was before this task changed it.
+- The anchor is the tree the last completed task left, or the commit
+  the run started from. A finished task's work is kept, never offered
+  back as something to undo.
+- A file that did not change is not sent twice.
+- `CODEBASE.md` gets its own section for these, because Copilot reads
+  the package, not the payload. A version that only reached the
+  manifest would not be read.
+- The instructions say what they are for: compare, keep everything the
+  task does not change, return the complete file.
+- History is worth a quarter of the package budget, no more. A file
+  too big for that is left out. The repair is what must go out; an
+  earlier version never stops it.
+
+`git()` grew one option for this. Every git answer in the tool is a
+value to compare, so it is stripped — but file content is the
+exception, where the first and last bytes are part of the file.

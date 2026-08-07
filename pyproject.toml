@@ -7,7 +7,7 @@ name = "sw-maintainer-agent"
 # The release ritual: a pushed change to this file, on a release
 # branch, makes the Release workflow tag and publish this version
 # when its tag does not exist yet.
-version = "0.9.22"
+version = "0.9.23"
 description = "Auditable, provider-neutral software maintenance workflows"
 readme = "README.md"
 requires-python = ">=3.11"

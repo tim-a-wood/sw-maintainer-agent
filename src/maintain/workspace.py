@@ -15,7 +15,7 @@ from .errors import PolicyError, RecoveryError
 from .proc import hidden
 
 
-def git(repository: Path, *args: str, check: bool = True) -> str:
+def git(repository: Path, *args: str, check: bool = True, raw: bool = False) -> str:
     """Every git call the person can be shown the result of.
 
     FR-V16 lives here rather than at each caller. The first report was
@@ -37,7 +37,9 @@ def git(repository: Path, *args: str, check: bool = True) -> str:
             raise RecoveryError(cause)
         # git only grumbled: warnings, hints, an ignored path. Nothing
         # the person can do, and nothing that stopped the command.
-    return result.stdout.strip()
+    # Every git answer is a value to compare, so it is stripped. File
+    # content is the exception: its first and last bytes are the file.
+    return result.stdout if raw else result.stdout.strip()
 
 
 def _err(completed) -> str:
@@ -192,6 +194,20 @@ class WorkspaceManager:
             target = worktree / name
             if name and target.is_file():
                 target.unlink()
+
+    @staticmethod
+    def file_at(worktree: Path, reference: str, path: str) -> str:
+        """The file as it was at a commit or a recorded tree.
+
+        FR-V23. A repair packet held only the damaged file, so Copilot
+        could not put back what the attempt removed. The tree hashes
+        come from the diff snapshots and stay in the object database
+        for the life of the run, so both a commit and a tree work here.
+        An empty answer means the file was not there.
+        """
+        if not reference or not path:
+            return ""
+        return git(worktree, "show", f"{reference}:{path}", check=False, raw=True)
 
     def clean(self, worktree: Path) -> None:
         """Remove untracked files, but never Maintain's own settings.

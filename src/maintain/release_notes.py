@@ -152,6 +152,13 @@ NOTES: dict[str, tuple[str, ...]] = {
         "A check that stops with no message shows the code it stopped with.",
         "The test screen starts each round of checks clean.",
     ),
+    "0.9.23": (
+        "A repair package now holds the file as it was before the run changed it.",
+        "Before this, it held only the changed file.",
+        "If the review found that a change removed too much, Copilot could not put it back.",
+        "Copilot said it could not do the repair, and the run could not continue.",
+        "Copilot can now compare the two versions and give you the complete file.",
+    ),
 }
 
 
