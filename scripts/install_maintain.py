@@ -29,6 +29,12 @@ from shortcut import write_shortcut  # noqa: E402
 
 REPOSITORY_URL = "https://github.com/tim-a-wood/sw-maintainer-agent.git"
 PACKAGE_NAME = "sw-maintainer-agent"
+# FR-V17: the same identity the app sets on itself. Windows matches the
+# running window to a shortcut carrying this id, and takes the taskbar
+# icon and name from that shortcut. With no match it falls back to the
+# process image — the Python launcher stub — which is the Python icon
+# the taskbar kept showing. A test holds the two literals equal.
+APP_USER_MODEL_ID = "Maintain.SimpleUI"
 # Manim's native dependencies publish no wheels for 3.14, so a Python
 # that can run the video feature is preferred over merely the newest.
 PYTHON_PREFERENCE = ("3.13", "3.12", "3.11")
@@ -58,6 +64,11 @@ def runtime_path(root: Path) -> Path:
 
 def scripts_dir(root: Path) -> Path:
     return runtime_path(root).parent
+
+
+def ui_executable() -> str:
+    """The window application inside the private environment."""
+    return "maintain-ui.exe" if os.name == "nt" else "maintain-ui"
 
 
 def no_window() -> dict:
@@ -208,8 +219,12 @@ def make_shortcuts(root: Path, icon: Path) -> list[Path]:
     root = Path(root)
     made: list[Path] = []
     home = os.environ.get("USERPROFILE") or str(Path.home())
+    # FR-V17: the window shortcut points straight at the executable, not
+    # at the .cmd. A batch file puts cmd.exe between the shortcut and
+    # the app: a console flashes, and Windows cannot tie the shortcut to
+    # the window it eventually produces.
     entries = [
-        ("Maintain.lnk", root / "Maintain-UI.cmd",
+        ("Maintain.lnk", scripts_dir(root) / ui_executable(),
          "Maintain - guided software changes with Copilot"),
         ("Maintain Console.lnk", root / "Maintain.cmd",
          "Maintain in a terminal"),
@@ -219,7 +234,8 @@ def make_shortcuts(root: Path, icon: Path) -> list[Path]:
             try:
                 made.append(write_shortcut(
                     folder / name, str(target), working_dir=home,
-                    icon=f"{icon},0", description=description))
+                    icon=f"{icon},0", description=description,
+                    app_id=APP_USER_MODEL_ID))
             except OSError:
                 continue
     return made

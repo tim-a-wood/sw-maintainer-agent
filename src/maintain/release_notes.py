@@ -116,6 +116,11 @@ NOTES: dict[str, tuple[str, ...]] = {
         "Git messages about line endings do not stop a change now.",
         "Those messages filled a box with warnings when nothing was wrong.",
     ),
+    "0.9.17": (
+        "The taskbar shows the Maintain icon, not the Python icon.",
+        "The desktop icon starts the app directly, with no command window first.",
+        "Install again from the GitHub releases page to get this.",
+    ),
 }
 
 

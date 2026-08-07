@@ -166,8 +166,13 @@ def test_an_install_makes_the_launchers_the_icon_and_the_shortcuts(
     desktop = tmp_path / "home" / "Desktop" / "Maintain.lnk"
     assert desktop.is_file()
     read = shortcut.read_shortcut(desktop)
-    assert read["target"].endswith("Maintain-UI.cmd")
+    # FR-V17: straight at the executable, so no cmd.exe sits between
+    # the shortcut and the window.
+    assert read["target"].endswith(installer.ui_executable())
     assert "maintain.ico,0" in " ".join(read["strings"])
+    # And stamped with the identity the app sets on itself, or Windows
+    # falls back to the Python launcher's icon.
+    assert shortcut.read_app_id(desktop) == installer.APP_USER_MODEL_ID
     # And a Start Menu entry beside it.
     assert (tmp_path / "appdata" / "Microsoft" / "Windows" / "Start Menu"
             / "Programs" / "Maintain" / "Maintain.lnk").is_file()
@@ -287,3 +292,41 @@ def test_the_installer_needs_only_the_standard_library():
             assert "maintain" not in stripped or "install_maintain" in stripped, (
                 stripped)
     assert "shell=True" not in source
+
+
+def test_the_shortcut_and_the_app_claim_the_same_identity():
+    """FR-V17: the field fault — "the task bar icon still appears as the
+    python window icon", after the artwork was already right.
+
+    An app that calls SetCurrentProcessExplicitAppUserModelID gets its
+    own taskbar button, and Windows then looks for a shortcut carrying
+    that id to take the icon and the name from. With no match it uses
+    the process image instead, which for a console script is the Python
+    launcher stub. The two literals have to agree, and nothing but a
+    test can hold them together: the installer runs before Maintain
+    exists, so it cannot import the app's constant.
+    """
+    app_source = (ROOT / "src" / "maintain" / "ui" / "main.py").read_text(
+        encoding="utf-8")
+    assert f'"{installer.APP_USER_MODEL_ID}"' in app_source, (
+        "the app sets a different id from the one the installer stamps")
+    assert "SetCurrentProcessExplicitAppUserModelID" in app_source
+
+
+def test_the_identity_survives_a_round_trip(tmp_path):
+    path = shortcut.write_shortcut(
+        tmp_path / "Maintain.lnk", r"C:\a\maintain-ui.exe",
+        icon=r"C:\a\maintain.ico,0", description="Maintain",
+        app_id="Maintain.SimpleUI")
+
+    assert shortcut.read_app_id(path) == "Maintain.SimpleUI"
+    # The rest of the link still reads, so the new block did not
+    # displace the target or the icon.
+    read = shortcut.read_shortcut(path)
+    assert read["target"] == r"C:\a\maintain-ui.exe"
+    assert r"C:\a\maintain.ico,0" in read["strings"]
+
+
+def test_a_shortcut_without_an_identity_says_so(tmp_path):
+    path = shortcut.write_shortcut(tmp_path / "plain.lnk", r"C:\a\b.exe")
+    assert shortcut.read_app_id(path) == ""

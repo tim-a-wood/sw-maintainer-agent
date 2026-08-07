@@ -2211,3 +2211,34 @@ of it and treated the exit code as fatal.
   print the three hints it knows the person cannot act on.
 - The snapshot is correct either way: git staged everything it could,
   and `write-tree` and `diff` are the real test of that.
+
+### 14.68 The taskbar still showed Python (FR-V17)
+
+FR-V15 gave the window and the shortcuts one mark, and the taskbar
+kept the Python icon anyway. The reason is that the app already called
+`SetCurrentProcessExplicitAppUserModelID`, and that call is only half
+of the mechanism.
+
+An application with an explicit id gets its own taskbar button, and
+Windows then looks for a **shortcut carrying the same id** to take the
+icon and the display name from. With no such shortcut it falls back to
+the icon of the process image — for a console script, the Python
+launcher stub. Setting the id in the app alone does not fix the icon;
+it can only be fixed on both sides at once.
+
+- FR-V17. The installer stamps `System.AppUserModel.ID` into each
+  shortcut, as a PropertyStore extra-data block written by hand in
+  `scripts/shortcut.py`. `read_app_id` reads it back, so a test holds
+  it.
+- The literal is `Maintain.SimpleUI` in two places: the app sets it on
+  itself, the installer stamps it. The installer runs before Maintain
+  exists and cannot import the app's constant, so a test reads both
+  files and asserts they agree.
+- The window shortcut points straight at `maintain-ui.exe`, not at
+  `Maintain-UI.cmd`. A batch file puts `cmd.exe` between the shortcut
+  and the app: a console flashes, and Windows cannot tie the shortcut
+  to the window it eventually produces.
+- Reading a shortcut back had to change with this. The string blocks
+  were read until a zero count, which now runs on into the extra data
+  and decodes it as text; the reader takes exactly the blocks the
+  flags declare.

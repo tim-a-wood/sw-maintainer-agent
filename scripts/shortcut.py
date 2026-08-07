@@ -24,6 +24,7 @@ LINK_CLSID = bytes.fromhex("01140200000000000000000000000046")
 # LinkFlags
 HAS_LINK_INFO = 0x00000002
 HAS_NAME = 0x00000004
+HAS_RELATIVE_PATH = 0x00000008
 HAS_WORKING_DIR = 0x00000010
 HAS_ARGUMENTS = 0x00000020
 HAS_ICON_LOCATION = 0x00000040
@@ -57,8 +58,44 @@ def _link_info(target: str) -> bytes:
             + volume_id + local_base + b"\x00" + b"\x00")
 
 
+# FR-V17: the identity that ties the running window to this shortcut.
+#
+# An app that calls SetCurrentProcessExplicitAppUserModelID gets its own
+# taskbar button, and Windows then looks for a shortcut carrying the
+# same id to take the icon and the name from. With no such shortcut it
+# falls back to the icon of the process image — which for a console
+# script is the Python launcher stub. Setting the id in the app alone
+# therefore does not fix the Python icon; it has to be on both sides.
+PROPERTY_STORE_SIGNATURE = 0xA0000009
+PROPERTY_STORAGE_VERSION = 0x53505331
+# System.AppUserModel.ID: {9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}, PID 5.
+APP_USER_MODEL_FORMAT_ID = (
+    struct.pack("<IHH", 0x9F4C2855, 0x9F79, 0x4B39)
+    + bytes.fromhex("A8D0E1D42DE1D5F3"))
+APP_USER_MODEL_PID = 5
+VT_LPWSTR = 0x001F
+
+
+def _property_store(app_id: str) -> bytes:
+    """The extra-data block that names the application on a shortcut."""
+    text = app_id.encode("utf-16-le") + b"\x00\x00"
+    # TypedPropertyValue: type, padding, character count with the null.
+    typed = struct.pack("<HHI", VT_LPWSTR, 0, len(text) // 2) + text
+    value = struct.pack("<IIB", 0, APP_USER_MODEL_PID, 0) + typed
+    value = struct.pack("<I", len(value)) + value[4:]
+
+    storage = (struct.pack("<I", PROPERTY_STORAGE_VERSION)
+               + APP_USER_MODEL_FORMAT_ID + value + struct.pack("<I", 0))
+    storage = struct.pack("<I", len(storage) + 4) + storage
+
+    payload = storage + struct.pack("<I", 0)
+    block = struct.pack("<II", len(payload) + 8, PROPERTY_STORE_SIGNATURE)
+    return block + payload
+
+
 def shortcut_bytes(target: str, *, working_dir: str = "", arguments: str = "",
-                   icon: str = "", description: str = "") -> bytes:
+                   icon: str = "", description: str = "",
+                   app_id: str = "") -> bytes:
     """The complete .lnk file for one target."""
     flags = HAS_LINK_INFO | IS_UNICODE
     if description:
@@ -89,19 +126,42 @@ def shortcut_bytes(target: str, *, working_dir: str = "", arguments: str = "",
         body += _string_data(arguments)
     if icon:
         body += _string_data(icon)
+    if app_id:
+        body += _property_store(app_id)
     # A terminal block of zero size closes the file.
     return header + body + struct.pack("<I", 0)
 
 
 def write_shortcut(path: Path, target: str, *, working_dir: str = "",
                    arguments: str = "", icon: str = "",
-                   description: str = "") -> Path:
+                   description: str = "", app_id: str = "") -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(shortcut_bytes(
         target, working_dir=working_dir, arguments=arguments, icon=icon,
-        description=description))
+        description=description, app_id=app_id))
     return path
+
+
+def read_app_id(path: Path) -> str:
+    """The application id stamped on a shortcut, or empty."""
+    raw = Path(path).read_bytes()
+    marker = struct.pack("<I", PROPERTY_STORE_SIGNATURE)
+    at = raw.find(marker)
+    if at < 0:
+        return ""
+    at = raw.find(APP_USER_MODEL_FORMAT_ID, at)
+    if at < 0:
+        return ""
+    cursor = at + len(APP_USER_MODEL_FORMAT_ID)
+    size, pid, _reserved = struct.unpack("<IIB", raw[cursor:cursor + 9])
+    if pid != APP_USER_MODEL_PID:
+        return ""
+    kind, _pad, count = struct.unpack("<HHI", raw[cursor + 9:cursor + 17])
+    if kind != VT_LPWSTR:
+        return ""
+    start = cursor + 17
+    return raw[start:start + count * 2].decode("utf-16-le").rstrip("\x00")
 
 
 def read_shortcut(path: Path) -> dict:
@@ -120,10 +180,14 @@ def read_shortcut(path: Path) -> dict:
         end = raw.index(b"\x00", start)
         result["target"] = raw[start:end].decode("utf-8", "replace")
         offset += size
-    while offset + 2 <= len(raw):
+    # Read exactly the string blocks the flags declare, in the order the
+    # format fixes. Reading until a zero count would run on into the
+    # extra-data blocks that follow and try to decode them as text.
+    for flag in (HAS_NAME, HAS_RELATIVE_PATH, HAS_WORKING_DIR,
+                 HAS_ARGUMENTS, HAS_ICON_LOCATION):
+        if not flags & flag or offset + 2 > len(raw):
+            continue
         (count,) = struct.unpack("<H", raw[offset:offset + 2])
-        if count == 0:
-            break
         start = offset + 2
         result["strings"].append(
             raw[start:start + count * 2].decode("utf-16-le"))
