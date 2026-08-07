@@ -6,6 +6,7 @@ import contextlib
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -48,7 +49,9 @@ from maintain.providers.manual_ui import PacketHandoff
 from maintain import __version__
 from maintain.release_notes import notes_since
 from maintain.repository_memory import load_ui_settings, save_ui_settings
+from maintain import updater
 from maintain.update_check import update_available, update_log_path
+from maintain.updater import install_root
 from maintain.zip_package import PacketBuild
 
 from . import theme as theme_module
@@ -676,18 +679,25 @@ class MainWindow(QMainWindow):
         self.toast(text("update.skipped", version=tag.lstrip("v")))
 
     def _apply_update(self, tag: str) -> None:
-        """FR-U4: a detached helper waits for this process to end,
-        runs the release's own installer, and starts the app again.
-        The app cannot rebuild the environment it runs from."""
-        import importlib.resources
-        source = Path(str(importlib.resources.files("maintain") / "data"
-                          / "windows" / "update-maintain.ps1"))
+        """FR-U4 + FR-V12: a detached helper waits for this process to
+        end, installs the release, and starts the app again. The app
+        cannot rebuild the environment it runs from.
+
+        The helper is maintain/updater.py, copied out to a temporary
+        folder. It imports only the standard library, so the copy runs
+        on its own and holds no file in the environment it changes.
+        """
+        source = Path(updater.__file__)
         if not source.is_file():
             self.show_error(text("update.missing"))
             return
         staged = Path(tempfile.gettempdir()) / (
-            f"maintain-update-{os.getpid()}.ps1")
-        shutil.copyfile(source, staged)
+            f"maintain-update-{os.getpid()}.py")
+        try:
+            shutil.copyfile(source, staged)
+        except OSError as exc:
+            self.show_error(str(exc))
+            return
         # Remember the attempt. If the next start still runs this
         # version and still sees this tag, the install did not take,
         # and the card will say so instead of repeating itself.
@@ -699,9 +709,10 @@ class MainWindow(QMainWindow):
                     if os.name == "nt" else 0)
         try:
             subprocess.Popen(
-                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                 "-File", str(staged), "-AppProcessId", str(os.getpid()),
-                 "-Reference", f"refs/tags/{tag}"],
+                [sys.executable, str(staged),
+                 "--reference", f"refs/tags/{tag}",
+                 "--install-root", str(install_root()),
+                 "--app-process-id", str(os.getpid())],
                 creationflags=creation, close_fds=True)
         except OSError as exc:
             self.show_error(str(exc))

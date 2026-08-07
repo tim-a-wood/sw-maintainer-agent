@@ -2056,3 +2056,47 @@ screen to read.
 - The home screen's stuck card names the update log. The person
   reading the card cannot see the window that closed; they can open
   a file.
+
+### 14.63 The updater is Python, so it can be tested (FR-V12)
+
+FR-V11 made a failed update visible. The instruction that followed
+went further: "just redo the update script in python instead so you
+can test properly."
+
+That is the right call, and the reason is FR-V11 itself. The
+PowerShell updater's one check — `$?` after calling the installer —
+was wrong, and no test caught it, because nothing below the Windows
+smoke job could run the script at all. A whole file sat outside the
+suite, and the one bug it had was the one that reached the person.
+
+Python also makes the work smaller. The old script cloned the
+release, then ran that clone's installer, which resolved and
+downloaded the same release again and rebuilt the environment from
+nothing. An update is not a fresh install: the environment, the
+launcher, and the shortcuts are already there. Only the package
+changes.
+
+- FR-V12. `maintain/updater.py` replaces `update-maintain.ps1`. It
+  waits for the app to close, installs the release into the existing
+  environment with pip, asks the runtime its version, and starts the
+  app again.
+- It imports nothing from `maintain` and nothing outside the standard
+  library. The app copies the file to a temporary folder and runs it
+  there, so the copy must stand alone, and it must hold no file in
+  the environment it is about to change. A test reads the source and
+  enforces both.
+- Every step that touches the machine takes its callable as an
+  argument — `run`, `popen`, `alive`, `sleep`, `clock` — resolved at
+  call time, not bound in the signature. Twenty-six tests cover the
+  updater on any platform.
+- Two faults were found by running it for real against a real
+  environment, not by reading it. pip 24 reads PEP 508's
+  `name @ git+url` as a file path and refuses it, so the requirement
+  is the bare VCS URL. And a reference that is not a version — a
+  branch, which is what the smoke job updates from — has no version
+  to compare against, so the check is skipped rather than failed.
+- The Windows smoke job still runs the real thing: a detached copy
+  upgrading the installed environment in place, and a check that the
+  log was written.
+- `scripts/install-windows.ps1` stays PowerShell. It is the first
+  install, where no Python exists yet to run anything else.

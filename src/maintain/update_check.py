@@ -71,11 +71,7 @@ def update_log_path() -> str:
 
     The update runs in a console window that closes with it, so a
     person who looks away sees only that the version did not change.
-    The transcript is the evidence, and the home screen names it.
+    The log is the evidence, and the home screen names it.
     """
-    import os
-    from pathlib import Path
-    root = os.environ.get("LOCALAPPDATA")
-    if not root:
-        return ""
-    return str(Path(root) / "Programs" / "Maintain" / "update.log")
+    from .updater import install_root, log_path
+    return str(log_path(install_root()))

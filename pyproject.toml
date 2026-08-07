@@ -7,7 +7,7 @@ name = "sw-maintainer-agent"
 # The release ritual: a pushed change to this file, on a release
 # branch, makes the Release workflow tag and publish this version
 # when its tag does not exist yet.
-version = "0.9.13"
+version = "0.9.14"
 description = "Auditable, provider-neutral software maintenance workflows"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -48,7 +48,7 @@ Repository = "https://github.com/tim-a-wood/sw-maintainer-agent"
 where = ["src"]
 
 [tool.setuptools.package-data]
-maintain = ["data/explain/*.md", "data/windows/*.ps1"]
+maintain = ["data/explain/*.md"]
 
 # Static analysis: pyflakes, import and syntax errors, and bugbear on
 # everything; the compact one-statement-per-line style in the parser and

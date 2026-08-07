@@ -96,6 +96,11 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The update writes a log file. The home screen tells you where it is.",
         "The update now asks the installed tool for its version to know if it worked.",
     ),
+    "0.9.14": (
+        "The update is quicker. It changes the tool only, not the whole environment.",
+        "The update is written in Python now, and the tests cover it.",
+        "Before this, no test could run the update, and it had a fault nobody could see.",
+    ),
 }
 
 

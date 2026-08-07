@@ -140,20 +140,33 @@ jobs:
       - name: Exercise the self-updater
         shell: pwsh
         run: |
-          # The updater downloads a reference and runs that source's
-          # installer. Here both come from this checkout: the local
-          # path is the repository and the branch is the release.
-          $env:MAINTAIN_PACKAGE_SOURCE = "$((Get-Location).Path)[browser]"
+          # FR-V12: the updater is Python now, so the unit tests cover
+          # its logic on every platform. What only Windows can show is
+          # the real thing: a detached copy upgrading the installed
+          # environment in place. The release here is this checkout's
+          # own branch.
           $branch = & git rev-parse --abbrev-ref HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          & .\src\maintain\data\windows\update-maintain.ps1 `
-            -AppProcessId 0 -NoRelaunch `
-            -Repository (Get-Location).Path `
-            -Reference "refs/heads/$branch"
+          $installRoot = Join-Path $env:LOCALAPPDATA "Programs\Maintain"
+          $staged = Join-Path $env:RUNNER_TEMP "update_maintain.py"
+          Copy-Item .\src\maintain\updater.py $staged
+
+          & python $staged `
+            --reference "refs/heads/$branch" `
+            --install-root $installRoot `
+            --repository (Get-Location).Path `
+            --app-process-id 0 --no-relaunch
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          $installedLauncher = Join-Path $env:LOCALAPPDATA "Programs\Maintain\Maintain.cmd"
+          # The update writes its record whatever happens.
+          $updateLog = Join-Path $installRoot "update.log"
+          if (-not (Test-Path -LiteralPath $updateLog)) {
+            throw "The updater left no log at $updateLog."
+          }
+          Get-Content -LiteralPath $updateLog -Tail 20
+
+          $installedLauncher = Join-Path $installRoot "Maintain.cmd"
           & $installedLauncher --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
