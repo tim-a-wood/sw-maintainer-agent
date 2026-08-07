@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -30,6 +31,34 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# FR-V20: Windows refuses a replace while anything holds the target.
+# A virus scanner, the search indexer, or a sync client opening the
+# file for a moment is enough, and the run died with WinError 5 and a
+# traceback. These holds clear in milliseconds, so the replace waits
+# and tries again before it gives up.
+REPLACE_ATTEMPTS = 12
+REPLACE_PAUSE = 0.08
+
+
+def _replace(temporary: str, path: Path, *, sleep=None) -> None:
+    sleep = sleep or time.sleep
+    last: OSError | None = None
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError as exc:      # WinError 5 and WinError 32
+            last = exc
+            sleep(REPLACE_PAUSE * (attempt + 1))
+        except OSError as exc:
+            raise RecoveryError(
+                f"The tool could not write {path.name}. {exc}") from exc
+    raise RecoveryError(
+        f"Another program is holding {path.name}, so the tool could not "
+        f"write it. This is usually a virus scanner or a file sync. "
+        f"Try the step again. The file is {path}. ({last})")
+
+
 def atomic_write(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -38,7 +67,7 @@ def atomic_write(path: Path, data: bytes) -> None:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        _replace(temporary, path)
     finally:
         try:
             os.unlink(temporary)

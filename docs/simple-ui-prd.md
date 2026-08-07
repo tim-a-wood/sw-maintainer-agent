@@ -2304,3 +2304,28 @@ installer ran. The environment is now rebuilt when it is on a Python
 that cannot make videos and a Python that can has since appeared, and
 left alone when it is already able. Both are held by tests, because
 the fault was advice given without reading the path it depended on.
+
+### 14.71 Another program held the file (FR-V20)
+
+A run stopped at the review step with a Python traceback ending:
+
+    PermissionError: [WinError 5] Access is denied:
+    '...\runs\f-...\run.json.w36hmsdi' -> '...\runs\f-...\run.json'
+
+That is `atomic_write` renaming its temporary file over `run.json`.
+Windows refuses a replace while anything holds the target open
+without share-delete, and a virus scanner, the search indexer, or a
+sync client opening the file for a moment is enough. The run record
+is written after every step, so the window for this is wide.
+
+Nothing was wrong with the data, and the hold clears in milliseconds.
+
+- FR-V20. The replace waits and tries again — twelve attempts with a
+  growing pause — before it gives up. A hold that clears, which is
+  nearly all of them, is invisible.
+- A hold that does not clear ends in words, not a traceback: it names
+  the file and the likely cause, and says to try the step again.
+- Only a `PermissionError` earns a retry. A fault that will not fix
+  itself — a bad path, a missing folder — is reported at once.
+- The temporary file is removed either way, so a failure leaves no
+  rubbish beside the run.

@@ -137,6 +137,12 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The install did not get the window software, so nothing happened and nothing said why.",
         "If 0.9.19 left you with no app, install 0.9.20 and it works again.",
     ),
+    "0.9.21": (
+        "A run does not stop when another program holds one of its files.",
+        "A virus scanner or a file sync can hold a file for a moment on Windows.",
+        "The tool now waits and writes again, instead of stopping the run.",
+        "If the hold does not clear, the tool names the file and the likely cause.",
+    ),
 }
 
 
