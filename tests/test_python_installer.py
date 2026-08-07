@@ -382,3 +382,76 @@ def test_no_message_sends_the_person_to_powershell():
     for line in render_source.splitlines():
         if ".ps1" in line:
             assert line.strip().startswith("#"), line
+
+
+def test_an_environment_that_cannot_make_videos_is_rebuilt(
+        tmp_path, monkeypatch):
+    """FR-V18: the second half of the fault.
+
+    An environment already here is kept, which is right for an update
+    and wrong for the one case that matters: it was built on a Python
+    that cannot make videos, and a Python that can has since been
+    installed. Re-running the installer did nothing there, however
+    many times it was run — so the advice "install 3.13 and run the
+    installer again" was not true.
+    """
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    root = tmp_path / "Maintain"
+    runtime = installer.runtime_path(root)
+    # An environment already built on 3.14.
+    runtime.parent.mkdir(parents=True, exist_ok=True)
+    runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+    (root / "venv" / "marker").write_text("old", encoding="utf-8")
+
+    made_again: list[bool] = []
+
+    def run(command, **kwargs):
+        if "venv" in command and "-m" in command:
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+            made_again.append(True)
+            return FakeCompleted(0, "")
+        if "pip" in command:
+            return FakeCompleted(0, "Successfully installed")
+        if any("sys.version_info" in part for part in command):
+            # The environment answers 3.14; the machine now has 3.13.
+            if str(runtime) in command:
+                return FakeCompleted(0, "3.14\n")
+            return FakeCompleted(0, "3.13\n")
+        return FakeCompleted(0, "0.9.18\n")
+
+    report = installer.install("refs/tags/v0.9.18", root=root, run=run,
+                               which=lambda name: f"/bin/{name}")
+
+    assert report.ok, report.reason
+    assert made_again, "the environment was kept on the Python that cannot"
+    # The old environment is gone, not layered over.
+    assert not (root / "venv" / "marker").exists()
+    said = " ".join(report.lines)
+    assert "3.14" in said and "3.13" in said
+
+
+def test_an_environment_that_can_make_videos_is_left_alone(
+        tmp_path, monkeypatch):
+    """An update must not throw the environment away every time."""
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    root = tmp_path / "Maintain"
+    runtime = installer.runtime_path(root)
+    runtime.parent.mkdir(parents=True, exist_ok=True)
+    runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+    (root / "venv" / "marker").write_text("keep", encoding="utf-8")
+
+    def run(command, **kwargs):
+        if "pip" in command:
+            return FakeCompleted(0, "Successfully installed")
+        if any("sys.version_info" in part for part in command):
+            return FakeCompleted(0, "3.13\n")
+        return FakeCompleted(0, "0.9.18\n")
+
+    report = installer.install("refs/tags/v0.9.18", root=root, run=run,
+                               which=lambda name: f"/bin/{name}")
+
+    assert report.ok, report.reason
+    assert (root / "venv" / "marker").read_text(encoding="utf-8") == "keep"

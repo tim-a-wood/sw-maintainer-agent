@@ -126,6 +126,12 @@ NOTES: dict[str, tuple[str, ...]] = {
         "Before this, the Save step showed the same box of warnings as the plan step.",
         "Each step that uses git had to remember to hide them. Now one place does it.",
     ),
+    "0.9.19": (
+        "Install Python 3.13, then install Maintain again, to get the video feature.",
+        "The installer now builds its environment again on the better Python.",
+        "Before this, it kept the old environment, so installing again changed nothing.",
+        "An environment that already makes videos is left alone.",
+    ),
 }
 
 

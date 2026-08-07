@@ -2295,3 +2295,12 @@ says nothing.
 - A test asserts no user-visible string names a `.ps1` file. The git
   noise came back at a second step because the rule lived at the
   callers; this one is held on the whole catalog at once.
+
+The advice FR-V18 first gave — install Python 3.13 and run the
+installer again — was not true when it was written. The installer
+builds an environment only when none is there, so a machine whose
+environment was already on 3.14 kept it however many times the
+installer ran. The environment is now rebuilt when it is on a Python
+that cannot make videos and a Python that can has since appeared, and
+left alone when it is already able. Both are held by tests, because
+the fault was advice given without reading the path it depended on.

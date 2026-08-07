@@ -279,6 +279,18 @@ def install(reference: str = "", *, root: Path | None = None,
     lines.append(f"Release: {reference}")
 
     runtime = runtime_path(root)
+    # FR-V18: an environment already here is kept, which is right for
+    # an update and wrong for the one case that matters — an
+    # environment built on a Python that cannot make videos, when a
+    # Python that can has since been installed. Re-running the
+    # installer had no effect there, however many times it was run.
+    existing = python_version([str(runtime)], run=run) if runtime.is_file() else ()
+    if existing and chosen and existing > (3, 13) and chosen <= (3, 13):
+        lines.append(
+            f"The environment is on Python {existing[0]}.{existing[1]}, which "
+            f"cannot make videos. Building it again on "
+            f"{chosen[0]}.{chosen[1]}.")
+        shutil.rmtree(root / "venv", ignore_errors=True)
     if not runtime.is_file():
         lines.append("Making the private Python environment...")
         code, output = _text(python + ["-m", "venv", str(root / "venv")], run=run)
