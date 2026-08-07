@@ -90,6 +90,12 @@ NOTES: dict[str, tuple[str, ...]] = {
         "A save now makes the commit and stops. It does not send your branch to the remote.",
         "Push when you want to. The home screen counts the commits that wait.",
     ),
+    "0.9.13": (
+        "An update that does not work now tells you the cause.",
+        "Before this, the update said it was good, then started the old version again.",
+        "The update writes a log file. The home screen tells you where it is.",
+        "The update now asks the installed tool for its version to know if it worked.",
+    ),
 }
 
 

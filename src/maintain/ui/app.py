@@ -48,7 +48,7 @@ from maintain.providers.manual_ui import PacketHandoff
 from maintain import __version__
 from maintain.release_notes import notes_since
 from maintain.repository_memory import load_ui_settings, save_ui_settings
-from maintain.update_check import update_available
+from maintain.update_check import update_available, update_log_path
 from maintain.zip_package import PacketBuild
 
 from . import theme as theme_module
@@ -624,7 +624,8 @@ class MainWindow(QMainWindow):
         # card must say it instead.
         stuck = (tag == str(values.get("update_attempted_tag", ""))
                  and __version__ == str(values.get("update_attempted_from", "")))
-        self.home.set_update(tag.lstrip("v"), stuck=stuck)
+        self.home.set_update(tag.lstrip("v"), stuck=stuck,
+                             log=update_log_path() if stuck else "")
 
     def _update_clicked(self) -> None:
         tag = self._update_tag

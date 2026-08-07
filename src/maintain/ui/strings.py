@@ -60,6 +60,7 @@ STR: dict[str, str] = {
     "drop.yes": "Delete it",
     "drop.done": "The change is deleted.",
     "update.stuck": "The last update did not take. Try again. If this repeats, install again from the GitHub page.",
+    "update.stuck.log": "The last update did not take. The cause is in {path}. Try again, or install again from the GitHub page.",
     "notes.title": "What is new in version {version}",
     "notes.version": "Version {version}:",
     "notes.continue": "Continue",

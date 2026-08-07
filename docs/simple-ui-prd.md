@@ -2017,3 +2017,42 @@ to take back.
 - The home screen already counts the commits that are not on the
   remote. That count now means something: it is the person's own
   queue, not a number that empties itself.
+
+### 14.62 An update that fails must say so (FR-V11)
+
+A photograph of the home screen, running an old build: "Version
+0.9.12 is ready. The last update did not take. Try again." The
+person had taken the update. Nothing told them why it did not work,
+and nothing was left to look at.
+
+The updater ran the release's installer and then asked the wrong
+question:
+
+    & $installer
+    if (-not $?) { throw "The installer failed." }
+
+`$?` reports whether the installer's own last statement succeeded,
+not whether the install worked. An installer that failed part way
+and recovered its last line reports true. So the updater declared
+success, started the old version again, and the app — correctly —
+noticed the version had not moved. The one fault the person could
+see was the only one nobody could explain.
+
+The console window is no help either: it closes with the process, so
+by the time the home screen shows the card there is nothing on
+screen to read.
+
+- FR-V11. The updater checks the outcome, not the exit status. After
+  the installer runs, the installed runtime is asked for its version.
+  An answer that is missing, or that is not the wanted version, is a
+  failed update and says which.
+- Exit codes are not trusted for this. A PowerShell script called
+  with `&` that ends without an explicit `exit` leaves
+  `$LASTEXITCODE` from whatever native command ran last, so the
+  status is ambiguous where the version is not.
+- The updater writes a transcript to
+  `%LOCALAPPDATA%\Programs\Maintain\update.log`. A failure names both
+  that file and the installer's own `install.log`, and asks for them.
+- The home screen's stuck card names the update log. The person
+  reading the card cannot see the window that closed; they can open
+  a file.

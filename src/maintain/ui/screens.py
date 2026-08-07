@@ -289,15 +289,20 @@ class HomeScreen(Screen):
         self.momentum.setText(value)
         self.momentum.setVisible(bool(value))
 
-    def set_update(self, version: str, stuck: bool = False) -> None:
+    def set_update(self, version: str, stuck: bool = False,
+                   log: str = "") -> None:
         """FR-U2: a ready release shows as one card; empty hides it.
 
         With stuck, the card says the last update did not take —
-        repeating the plain offer would hide a real fault."""
+        repeating the plain offer would hide a real fault. FR-V11: it
+        also names the log, because the update window has closed by
+        the time the person reads this."""
         if version:
             self._update_card.set_texts(
                 text("update.ready", version=version),
-                text("update.stuck") if stuck else text("update.ready.sub"))
+                (text("update.stuck.log", path=log) if log
+                 else text("update.stuck")) if stuck
+                else text("update.ready.sub"))
         self._update_card.setVisible(bool(version))
         self._update_skip.setVisible(bool(version))
         self._update_skip.parentWidget().setVisible(bool(version))

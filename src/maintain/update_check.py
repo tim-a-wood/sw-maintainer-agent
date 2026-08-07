@@ -64,3 +64,18 @@ def update_available(installed: str = "", *,
     if tag and version_tuple(tag) > version_tuple(current):
         return tag
     return ""
+
+
+def update_log_path() -> str:
+    """Where the detached updater writes what it did (FR-V11).
+
+    The update runs in a console window that closes with it, so a
+    person who looks away sees only that the version did not change.
+    The transcript is the evidence, and the home screen names it.
+    """
+    import os
+    from pathlib import Path
+    root = os.environ.get("LOCALAPPDATA")
+    if not root:
+        return ""
+    return str(Path(root) / "Programs" / "Maintain" / "update.log")
