@@ -40,7 +40,7 @@ REPLACE_ATTEMPTS = 12
 REPLACE_PAUSE = 0.08
 
 
-def _replace(temporary: str, path: Path, *, sleep=None) -> None:
+def replace_when_free(temporary: str, path: Path, *, sleep=None) -> None:
     sleep = sleep or time.sleep
     last: OSError | None = None
     for attempt in range(REPLACE_ATTEMPTS):
@@ -67,7 +67,7 @@ def atomic_write(path: Path, data: bytes) -> None:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        _replace(temporary, path)
+        replace_when_free(temporary, path)
     finally:
         try:
             os.unlink(temporary)

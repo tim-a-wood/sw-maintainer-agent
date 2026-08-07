@@ -1747,3 +1747,149 @@ def test_the_plan_page_is_left_after_one_reply(qt_app, tmp_path, monkeypatch):
     plan_packets = [item for item in window.controller.timeline(
         window.current_record.run_id) if "scope" in str(item.kind)]
     assert len(plan_packets) <= 1, [item.kind for item in plan_packets]
+
+
+def _two_task_scope(handoff) -> str:
+    """A plan of two tasks, which is what makes the build step repeat."""
+    request = handoff.request
+    return json.dumps({
+        "schema_version": 1, "run_id": request.run_id,
+        "task_id": request.task_id, "role": "scope",
+        "conversation_id": "chat-plan",
+        "content": {"tasks": [
+            {"id": "change-value", "objective": "Change the value",
+             "allowed_files": ["app.py"],
+             "done_when": ["VALUE is set to after."],
+             "verification": ["Read app.py."], "depends_on": []},
+            {"id": "add-a-note", "objective": "Add the note",
+             "allowed_files": ["app.py"],
+             "done_when": ["app.py has the note."],
+             "verification": ["Read app.py."], "depends_on": ["change-value"]},
+        ]}})
+
+
+def test_a_step_that_comes_again_says_why(qt_app, tmp_path, monkeypatch):
+    """The field fault: "it transitioned back to the build step
+    (presumably due to a failed test? No reason was given)".
+
+    Three different things send a run back to the build step: a check
+    failed, the review asked for changes, or the task before it is
+    complete. All three painted the same screen — STEP 2 OF 5 — BUILD,
+    with nothing about the cause — so a task that finished well read
+    as a fault. FR-V22 gives every one of them its own words.
+    """
+    from maintain.ui.strings import text as ui_text
+
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    flag = tmp_path / "checks-flag"
+    window._open_settings_page("checks")
+    window.page_checks._add_row(
+        "flag", f'{sys.executable} -c "import sys, pathlib; '
+                f"sys.exit(0 if pathlib.Path('{flag.as_posix()}').exists() else 1)\"")
+    window.page_checks._save()
+
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: _screen(window) == "exchange", message="plan packet")
+    window.exchange.check(clipboard_text=_two_task_scope(window.current_handoff))
+    wait_until(qt_app, lambda: _screen(window) == "plan", message="plan gate")
+    window.plan_check.accept.emit()
+
+    # The first build step of the first task owes no explanation. It
+    # does say which task of the plan it builds.
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "build",
+               message="first build packet")
+    assert "TASK 1 OF 2" in window.exchange.eyebrow.text()
+    assert not window.exchange.reason_line.isVisibleTo(window.exchange)
+    window.exchange.check(
+        path=_zip_reply(window.current_handoff, tmp_path, 'VALUE = "after"\n'))
+
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "review",
+               message="first review packet")
+    window.exchange.check(clipboard_text=_review_json(window.current_handoff))
+
+    # Cause one: a check failed. The repair package names the check.
+    wait_until(qt_app, lambda: _screen(window) == "test"
+               and window.test.repair_button.isVisibleTo(window.test),
+               message="failed checks", timeout=60.0)
+    flag.write_text("ready\n", encoding="utf-8")
+    window.test.repair.emit()
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "repair",
+               message="repair packet after the failed check", timeout=60.0)
+    assert window.exchange.reason_line.isVisibleTo(window.exchange)
+    assert "flag" in window.exchange.reason_line.text()
+    assert window.current_handoff.request.payload["step_reason"] == "checks_failed"
+    window.exchange.check(
+        path=_zip_reply(window.current_handoff, tmp_path, 'VALUE = "after"\n'))
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "review",
+               message="second review packet")
+    window.exchange.check(clipboard_text=_review_json(window.current_handoff))
+
+    # Cause two: the task is complete and the next one starts. This is
+    # the one the person read as a failure.
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "build",
+               message="the second task's build packet", timeout=60.0)
+    assert "TASK 2 OF 2" in window.exchange.eyebrow.text()
+    assert window.exchange.reason_line.text() == ui_text(
+        "exchange.why.next_task", index=1, count=2)
+    assert window.exchange.reason_line.isVisibleTo(window.exchange)
+    window.exchange.check(
+        path=_zip_reply(window.current_handoff, tmp_path,
+                        'VALUE = "after"\n# the note\n'))
+
+    # Cause three: the review asked for changes.
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "review",
+               message="third review packet")
+    finding = {"severity": "medium", "file": "app.py", "line": 2,
+               "title": "The note is not clear",
+               "evidence": "app.py line 2 has no words.",
+               "remediation": "Write the note in full."}
+    window.exchange.check(
+        clipboard_text=_review_json(window.current_handoff, [finding]))
+    wait_until(qt_app, lambda: _screen(window) == "findings",
+               message="findings gate")
+    window.findings.repair.emit()
+    wait_until(qt_app, lambda: _screen(window) == "exchange"
+               and window.current_handoff.task_key == "repair",
+               message="repair packet after the review", timeout=60.0)
+    assert window.exchange.reason_line.text() == ui_text(
+        "exchange.why.review_changes.one")
+    assert not errors, errors
+
+
+def test_the_reason_line_words_every_cause():
+    """FR-V22 in one place: the engine names a cause, the catalog owns
+    the words, and an unknown cause says nothing rather than guess."""
+    from maintain.ui.screens import step_reason
+    from maintain.ui.strings import text as ui_text
+
+    assert step_reason({"step_reason": "next_task", "task_number": 3,
+                        "task_count": 4}) == ui_text(
+        "exchange.why.next_task", index=2, count=4)
+    assert step_reason({"step_reason": "checks_failed",
+                        "step_reason_detail": "pytest"}) == ui_text(
+        "exchange.why.checks_failed", why="pytest")
+    # A check with no name still gives the reason.
+    assert step_reason({"step_reason": "checks_failed"}) == ui_text(
+        "exchange.why.checks_failed.plain")
+    assert step_reason({"step_reason": "review_changes",
+                        "step_reason_detail": "1"}) == ui_text(
+        "exchange.why.review_changes.one")
+    assert step_reason({"step_reason": "review_changes",
+                        "step_reason_detail": "3"}) == ui_text(
+        "exchange.why.review_changes", count="3")
+    # A run saved by an older version has no cause at all.
+    assert step_reason({}) == ""
+    assert step_reason({"step_reason": "something-new"}) == ""
+    # A one-task plan never claims a task finished.
+    assert step_reason({"step_reason": "next_task", "task_number": 1,
+                        "task_count": 1}) == ""
+    assert step_reason({"step_reason": "next_task",
+                        "task_number": "x", "task_count": None}) == ""

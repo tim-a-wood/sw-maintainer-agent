@@ -89,3 +89,39 @@ def test_no_leftover_temporary_file(tmp_path, monkeypatch):
         audit.atomic_write(target, b"new")
 
     assert sorted(p.name for p in tmp_path.iterdir()) == ["run.json"]
+
+
+def test_every_replace_in_the_tool_waits_for_the_hold_to_clear():
+    """The instruction from the field, after the same fault appeared at
+    a second point in the workflow: fix it where it lives, not only
+    where it was reported.
+
+    A bare os.replace anywhere in the package is this fault waiting for
+    a different file. The only one allowed is the retry itself.
+    """
+    import ast
+    from pathlib import Path
+
+    allowed = {("audit.py", "replace_when_free")}
+    found: set[tuple[str, str]] = set()
+    total = 0
+
+    def is_replace(node) -> bool:
+        return (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "replace"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "os")
+
+    for path in sorted(Path(audit.__file__).parent.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        total += sum(1 for node in ast.walk(tree) if is_replace(node))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for inner in ast.walk(node):
+                    if is_replace(inner):
+                        found.add((path.name, node.name))
+
+    assert found == allowed, sorted(found)
+    # A replace outside any function would not appear above.
+    assert total == 1, f"{total} calls to os.replace in the package"

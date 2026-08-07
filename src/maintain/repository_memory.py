@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .audit import replace_when_free
 from .errors import ConfigurationError
 from .proc import hidden
 
@@ -395,7 +396,9 @@ def _write_settings_data(data: dict[str, Any]) -> None:
             temporary.flush()
             os.fsync(temporary.fileno())
             temporary_path = Path(temporary.name)
-        os.replace(temporary_path, path)
+        # FR-V20: the same Windows hold that stopped a run on run.json
+        # can stop this one. Every replace in the tool waits it out.
+        replace_when_free(str(temporary_path), path)
         temporary_path = None
     finally:
         if temporary_path is not None:

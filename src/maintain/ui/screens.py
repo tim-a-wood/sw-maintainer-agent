@@ -37,6 +37,37 @@ TASK_STEPS = {"plan": "STEP 1 OF 5 — PLAN", "build": "STEP 2 OF 5 — BUILD",
               "scan": "ISSUE SCAN", "discuss": "ISSUE DISCUSSION",
               "talk": "PROJECT DISCUSSION", "explain": "CODE EXPLANATION"}
 
+def _number(payload: dict, key: str) -> int:
+    try:
+        return int(payload.get(key, 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def step_reason(payload: dict) -> str:
+    """FR-V22: the plain words for why this step is on screen.
+
+    The engine names the cause; the catalog owns the wording. An
+    unknown cause gives no line at all, which is what an older run
+    record produces.
+    """
+    cause = str(payload.get("step_reason", "") or "")
+    detail = str(payload.get("step_reason_detail", "") or "")
+    if cause == "next_task":
+        index, count = _number(payload, "task_number"), _number(payload, "task_count")
+        if index < 2 or count < 2:
+            return ""
+        return text("exchange.why.next_task", index=index - 1, count=count)
+    if cause == "checks_failed":
+        return (text("exchange.why.checks_failed", why=detail) if detail
+                else text("exchange.why.checks_failed.plain"))
+    if cause == "review_changes":
+        return (text("exchange.why.review_changes.one") if detail == "1"
+                else text("exchange.why.review_changes",
+                          count=detail or "several"))
+    return ""
+
+
 def word(key: str, fallback: str) -> str:
     """A catalog word, or the raw value when the catalog has no entry.
 
@@ -609,6 +640,13 @@ class ExchangeScreen(Screen):
         self.add(self.eyebrow)
         self.title = label("", "Title")
         self.add(self.title)
+        # FR-V22: why this step is on screen. A run returns to the build
+        # step for three different reasons, and all three used to look
+        # the same: the screen simply said BUILD again.
+        self.reason_line = label("", "Hint")
+        self.reason_line.setWordWrap(True)
+        self.reason_line.setVisible(False)
+        self.add(self.reason_line)
         self.add_gap(4)
         # FR-P10: the exchange is two actions, so the screen is two
         # action cards. The accent moves from Send to Receive.
@@ -713,6 +751,14 @@ class ExchangeScreen(Screen):
         menu.popup(QPoint(corner.x(),
                           corner.y() - menu.sizeHint().height() - 4))
 
+    @staticmethod
+    def _task_of(payload: dict) -> str:
+        """FR-V22: a plan of many tasks says which one this step builds."""
+        index, count = _number(payload, "task_number"), _number(payload, "task_count")
+        if count < 2 or index < 1:
+            return ""
+        return " · " + text("exchange.task.of", index=index, count=count)
+
     def show_handoff(self, handoff: PacketHandoff, attachment_names: list[str],
                      document_count: int, scan: bool = False,
                      coverage: str = "") -> None:
@@ -724,21 +770,21 @@ class ExchangeScreen(Screen):
         # A project talk shares the discuss packet policy; its own labels
         # come from the role.
         key = "talk" if request.role == "talk" else handoff.task_key
-        self.eyebrow.setText(TASK_STEPS[key] + again)
+        payload = getattr(request, "payload", None)
+        payload = payload if isinstance(payload, dict) else {}
+        self.eyebrow.setText(TASK_STEPS[key] + self._task_of(payload) + again)
         self.title.setText(text(TASK_TITLES[key]))
+        reason = step_reason(payload)
+        self.reason_line.setText(reason)
+        self.reason_line.setVisible(bool(reason))
         # A repeat of the same step is never silent. The payload counts
         # the attempt; a second package means the last reply was not
         # usable, and the person must be told, not left guessing.
-        attempt = 1
-        payload = getattr(request, "payload", None)
-        if isinstance(payload, dict):
-            try:
-                attempt = max(1, int(payload.get("exchange_attempt", 1)))
-            except (TypeError, ValueError):
-                attempt = 1
-        fault = ""
-        if isinstance(payload, dict):
-            fault = str(payload.get("content_fault", "") or "")
+        try:
+            attempt = max(1, int(payload.get("exchange_attempt", 1)))
+        except (TypeError, ValueError):
+            attempt = 1
+        fault = str(payload.get("content_fault", "") or "")
         self.retry_line.setText(
             text("exchange.again.why", count=attempt, why=fault) if fault
             else text("exchange.again", count=attempt))
@@ -1109,17 +1155,23 @@ class TestScreen(Screen):
             passed = int(result.get("exit_code", 1) or 0) == 0
             self._set_check(name, "PASS" if passed else "FAIL",
                             "pass" if passed else "fail")
-            if not passed:
+            if not passed and name in self._row_frames:
                 output = "\n".join(part for part in (
                     str(result.get("stdout", "")).strip(),
                     str(result.get("stderr", "")).strip()) if part)
-                if output and name in self._row_frames:
+                if output:
                     view = QPlainTextEdit()
                     view.setObjectName("Code")
                     view.setReadOnly(True)
                     view.setPlainText(output[-4000:])
                     view.setFixedHeight(110)
                     self._row_frames[name].addWidget(view)
+                else:
+                    # FR-V22: a check that prints nothing still owes the
+                    # person a reason. The code it ended with is one.
+                    self._row_frames[name].addWidget(label(
+                        text("test.exit", code=int(result.get("exit_code", 1) or 0)),
+                        "Hint"))
         self.outcome.set_state("bad", text("test.failed"))
         self._set_failed_controls(True)
 

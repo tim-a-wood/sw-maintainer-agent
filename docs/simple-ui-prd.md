@@ -2329,3 +2329,44 @@ Nothing was wrong with the data, and the hold clears in milliseconds.
   itself — a bad path, a missing folder — is reported at once.
 - The temporary file is removed either way, so a failure leaves no
   rubbish beside the run.
+
+### 14.72 A step that comes again says why (FR-V22)
+
+The report, in the person's words: *"This occurred after the test
+step, it transitioned back to the build step (presumably due to a
+failed test? No reason was given)."*
+
+Three different things send a run back to the build step:
+
+1. A check failed and the person asked for a repair.
+2. The review asked for changes and the person asked for a repair.
+3. The task before this one is complete, and the next one starts.
+
+All three painted the same screen: `STEP 2 OF 5 — BUILD`, with the
+same title and nothing about the cause. The third is the worst of
+them, because it is the run going well — a task finished, its checks
+passed — and it reads as a fault. The person is left to guess, and
+the guess in the report was a failed test.
+
+- FR-V22. The engine keeps the cause of the step in the run record
+  and sends it with the package. Only the engine knows why the run
+  moved; nothing downstream can work it out.
+- The build screen says which task of the plan it builds, when the
+  plan has more than one: `STEP 2 OF 5 — BUILD · TASK 2 OF 4`.
+- Under the title, one line gives the cause in plain words: the check
+  that failed, the number of changes the review asked for, or the
+  task that is complete.
+- The words are in the string catalog, so they follow the same style
+  rules as every other line in the app. A cause the catalog does not
+  know gives no line, which is what a run saved by an older version
+  produces.
+- A check that fails and prints nothing still owes a reason. The test
+  screen shows the code it stopped with.
+- The test screen starts each check round clean. Its rows lived for
+  the whole run, so a second round opened on the first round's red
+  output.
+
+The `os.replace` fault of §14.71 had a second home: the file that
+remembers your projects. A test now holds the rule for the whole
+package — the only bare `os.replace` allowed is the one inside the
+retry itself.

@@ -1040,7 +1040,13 @@ class WorkflowEngine:
                    "prior_evidence": record.evidence,
                    "allow_new_files": self.config.allow_new_files,
                    "allow_deletes": self.config.allow_deletes,
-                   "approved_path_aliases": approved_path_aliases}
+                   "approved_path_aliases": approved_path_aliases,
+                   # FR-V22: a step that appears again must say why. The
+                   # engine knows the cause; nothing downstream can work
+                   # it out, so it travels with the package.
+                   "task_number": record.task_index + 1,
+                   "task_count": len(record.tasks),
+                   **self._step_reason(record)}
         patch_path = store.artifacts / f"{attempt_dir}/patch.diff"
         workspace_edited = False
         if patch_path.is_file():
@@ -1126,6 +1132,31 @@ class WorkflowEngine:
             sub="isolated workspace", resume_state=RunState.REVIEWING,
             tree_hash=diff.tree_hash)
         self.presenter.complete("CHANGE", f"Changed {len(diff.paths)} {noun}")
+
+    def _step_reason(self, record: RunRecord) -> dict[str, str]:
+        """Why the build step is on screen, in a form the UI can word.
+
+        FR-V22. Three things send a run back to the build step: a check
+        failed, the review asked for changes, or the task before this
+        one is complete. All three looked the same from the outside —
+        the screen simply changed to BUILD again — so the person read
+        every one of them as a fault with no cause given.
+        """
+        cause = str(record.evidence.get("step_cause", ""))
+        if not cause and record.task_index > 0:
+            cause = "next_task"
+        if not cause:
+            return {"step_reason": "", "step_reason_detail": ""}
+        detail = ""
+        if cause == "checks_failed":
+            commands = record.evidence.get("tests", {}).get("commands", [])
+            detail = ", ".join(
+                str(item.get("name", "check")) for item in commands
+                if isinstance(item, dict) and int(item.get("exit_code", 1) or 0))
+        elif cause == "review_changes":
+            findings = record.evidence.get("review", {}).get("findings", [])
+            detail = str(len(findings))
+        return {"step_reason": cause, "step_reason_detail": detail}
 
     def _review(self, record: RunRecord, store: AuditStore) -> None:
         if RunState(record.state) is RunState.IMPLEMENTED:
@@ -1400,6 +1431,9 @@ class WorkflowEngine:
             record.attempt = 0
             record.evidence.pop("review", None)
             record.evidence.pop("tests", None)
+            # FR-V22: this task is done. The next build step says so
+            # rather than carrying the last repair cause into it.
+            record.evidence.pop("step_cause", None)
             self._move(record, store, RunState.TASKS_READY, tree_hash=diff.tree_hash)
             completed_number = record.task_index
             self.presenter.complete(
@@ -1428,6 +1462,10 @@ class WorkflowEngine:
             record.error = "The repair limit was reached. Continue the run to allow another repair cycle."
             self._move(record, store, RunState.NEEDS_HUMAN)
         else:
+            # FR-V22: keep the cause, so the build step can name it.
+            record.evidence["step_cause"] = (
+                "checks_failed" if RunState(record.state) is RunState.TEST_FAILED
+                else "review_changes")
             self._move(record, store, RunState.REPAIRING)
 
     def _deliver(self, record: RunRecord, store: AuditStore) -> None:
@@ -1720,7 +1758,8 @@ class WorkflowEngine:
             record.evidence.get("timeline_epoch", 0)) + 1
         for key in ("plan_approved", "review", "tests", "active_attempt",
                     "_active_exchange", "completed_tasks", "changed_files",
-                    "root_cause", "pre_fix_reproduction", "verified_tree_hash"):
+                    "root_cause", "pre_fix_reproduction", "verified_tree_hash",
+                    "step_cause"):
             record.evidence.pop(key, None)
         record.tasks = []
         record.task_index = 0
@@ -1778,7 +1817,7 @@ class WorkflowEngine:
             tree_hash = str(payload.get("tree_hash", ""))
             self.workspaces.restore_tree(worktree, tree_hash)
             for key in ("plan_approved", "review", "tests", "active_attempt",
-                        "_active_exchange", "verified_tree_hash"):
+                        "_active_exchange", "verified_tree_hash", "step_cause"):
                 record.evidence.pop(key, None)
             for key, value in dict(payload.get("evidence_flags", {})).items():
                 record.evidence[key] = value

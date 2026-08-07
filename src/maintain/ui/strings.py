@@ -175,6 +175,18 @@ STR: dict[str, str] = {
     "exchange.reply.hint": "You can also paste the reply, or drop the file on this window.",
     "exchange.again": "The last reply was not usable. This is attempt {count}.",
     "exchange.again.why": "Attempt {count}. The last reply was not usable: {why}",
+    # FR-V22: why this step is on screen again.
+    "exchange.task.of": "TASK {index} OF {count}",
+    "exchange.why.next_task": "Task {index} of {count} is complete. "
+                              "This is the next task.",
+    "exchange.why.checks_failed": "The {why} check failed. Copilot gets the "
+                                  "result and repairs the code.",
+    "exchange.why.checks_failed.plain": "A check failed. Copilot gets the "
+                                        "result and repairs the code.",
+    "exchange.why.review_changes": "The review asked for {count} changes. "
+                                   "Copilot repairs the code.",
+    "exchange.why.review_changes.one": "The review asked for one change. "
+                                       "Copilot repairs the code.",
     "exchange.note.hint": "Change the request or the plan for this step…",
     "exchange.note.add": "Add note",
     "exchange.note.added": "The note goes with the next package.",
@@ -222,6 +234,7 @@ STR: dict[str, str] = {
     "test.passed": "All checks passed.",
     "test.failed": "A check failed.",
     "test.run_again": "Run the checks again",
+    "test.exit": "The check stopped with code {code}. It wrote no message.",
     "test.repair": "Repair with Copilot",
     "test.rescope": "Scope again",
     "test.continue": "Continue",

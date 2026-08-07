@@ -143,6 +143,15 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The tool now waits and writes again, instead of stopping the run.",
         "If the hold does not clear, the tool names the file and the likely cause.",
     ),
+    "0.9.22": (
+        "A step that comes again now tells you why.",
+        "Before this, the run went back to the build step with no word about the cause.",
+        "The build step names the task it does, for example TASK 2 OF 4.",
+        "A line under the title gives the cause in plain words.",
+        "The causes are: a check failed, the review asked for changes, or a task is complete.",
+        "A check that stops with no message shows the code it stopped with.",
+        "The test screen starts each round of checks clean.",
+    ),
 }
 
 

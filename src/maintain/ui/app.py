@@ -1899,6 +1899,10 @@ class MainWindow(QMainWindow):
     def _packet_ready(self, handoff: PacketHandoff) -> None:
         self.current_handoff = handoff
         self._wait_screen = "exchange"
+        # FR-V22: a new package means the last check round is over. Its
+        # rows stayed on the test screen for the whole run, so a second
+        # round opened on the first round's red output.
+        self._in_test = False
         for issue_id in self._pending_issue_links:
             self.controller.issues.link_run(issue_id,
                                             handoff.request.run_id)
