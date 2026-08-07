@@ -448,3 +448,37 @@ def test_a_project_over_the_budget_still_selects_and_expands(tmp_path):
     assert payload["repository_map"]
     assert record.evidence["context"]["whole_project"] is False
     assert RunState(record.state) is RunState.AWAITING_ACCEPTANCE
+
+
+def test_saving_commits_and_does_not_push(tmp_path):
+    """FR-V10: sending work to the remote is the person's decision.
+    A save writes the commit on their branch and stops there."""
+    repository = _repository(tmp_path)
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(remote))
+    _git(repository, "remote", "add", "origin", str(remote))
+    config = _config(tmp_path, repository)
+
+    engine = _engine(config, ScriptedProvider())
+    record = engine.start("feature", "Change the value")
+    record = engine.accept(record.run_id)
+    record = engine.deliver(record.run_id)
+
+    assert RunState(record.state) is RunState.DELIVERED
+    delivery = record.evidence["delivery"]
+    # The commit exists, on the person's own branch.
+    assert delivery["commit"]
+    assert delivery["integrated_commit"] == delivery["commit"]
+    # Nothing was sent, and nothing claims it was.
+    assert "push" not in delivery
+    branches = subprocess.run(["git", "-C", str(remote), "branch", "--list"],
+                              capture_output=True, text=True, check=True)
+    assert not branches.stdout.strip(), branches.stdout
+
+    # The timeline does not report a push either.
+    kinds = [item.kind for item in run_timeline(config.runtime_root, record.run_id)]
+    assert "branch_pushed" not in kinds
+
+    # The mechanism is kept, for a person who asks for it by hand.
+    assert engine.workspaces.push(record.branch) == {"pushed": True,
+                                                     "remote": "origin"}

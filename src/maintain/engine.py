@@ -1440,11 +1440,10 @@ class WorkflowEngine:
         if self.workspaces.in_place(Path(record.worktree)):
             # The commit is on the person's own branch: their files
             # have it already. No merge step, and none to forget.
+            # FR-V10: and no push. Sending work to the remote is the
+            # person's decision, not a side effect of saving.
             record.evidence["delivery"]["integrated_branch"] = record.branch
             record.evidence["delivery"]["integrated_commit"] = commit
-            outcome = self.workspaces.push(record.branch)
-            record.evidence["delivery"]["push"] = outcome
-            store.append("branch_pushed", outcome)
         self._move(record, store, RunState.DELIVERED)
         self._close_issues_for_delivery(record)
         self._iteration(record, store, "Saved", kind="saved",

@@ -1992,3 +1992,28 @@ once per change.
 - A correction package after a whole-project ask sets
   `whole_project` false. The files went with the package it corrects,
   and saying they are present again would be a lie.
+
+### 14.61 A save commits, and stops there (FR-V10)
+
+Since 0.9.8 a save pushed the branch to the remote as part of
+delivering. The instruction was plain: "take out the automatic push.
+It should be commit only."
+
+The push was a side effect of saving, not a thing the person asked
+for. It decided, on their behalf, that work good enough to commit is
+work good enough to publish. Those are not the same judgement. A
+commit is private and easy to amend; a push is visible and awkward
+to take back.
+
+- FR-V10. Delivery makes the commit on the person's own branch and
+  stops. No remote is contacted, and `delivery.push` is not written.
+- The last screen says nothing about a push for a new run. Runs
+  saved before this version keep their push line, because their
+  record carries the outcome and the screen should not lie about
+  history.
+- `WorkspaceManager.push` stays. The mechanism is sound; only the
+  automatic call is gone. It remains the way a push happens when one
+  is asked for.
+- The home screen already counts the commits that are not on the
+  remote. That count now means something: it is the person's own
+  queue, not a number that empties itself.

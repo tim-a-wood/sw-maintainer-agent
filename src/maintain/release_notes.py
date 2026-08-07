@@ -87,6 +87,8 @@ NOTES: dict[str, tuple[str, ...]] = {
         "This makes the plan step one trip to Copilot, not three or four.",
         "The steps after the plan stay small. They send only the files the plan names.",
         "A very large project keeps the old behaviour, which adds files as they are asked for.",
+        "A save now makes the commit and stops. It does not send your branch to the remote.",
+        "Push when you want to. The home screen counts the commits that wait.",
     ),
 }
 

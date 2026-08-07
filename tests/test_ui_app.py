@@ -267,12 +267,14 @@ def test_full_run_through_the_ui(qt_app, tmp_path, monkeypatch):
     assert not window.done._apply_holder.isVisibleTo(window.done)
     assert not window.done.merge_button.isVisibleTo(window.done)
     assert "in your files" in window.done.apply_hint.text()
-    # The commit reached the remote, and the screen names it.
-    assert window.done.push_line.isVisibleTo(window.done)
-    assert "on the remote origin" in window.done.push_line.text()
-    assert subprocess.run(["git", "-C", str(remote), "log", "-1", "--pretty=%s",
-                           "main"], check=True, capture_output=True,
-                          text=True).stdout.startswith("maintain:")
+    # FR-V10: saving commits and stops. Sending the work to the remote
+    # is the person's decision, so the remote is untouched and the
+    # screen says nothing about a push.
+    assert not window.done.push_line.isVisibleTo(window.done)
+    remote_log = subprocess.run(["git", "-C", str(remote), "log", "-1",
+                                 "--pretty=%s", "main"],
+                                capture_output=True, text=True)
+    assert remote_log.returncode != 0, remote_log.stdout
     assert window.done.first_note.isVisibleTo(window.done)
     window.done._copy_note()
     note = QApplication.clipboard().text()
