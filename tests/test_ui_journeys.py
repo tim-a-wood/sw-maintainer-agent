@@ -1681,3 +1681,69 @@ def test_a_bad_reply_stays_on_the_step_with_a_small_correction(
                message="done screen", timeout=60.0)
     assert not errors, errors
     assert (repository / "app.py").read_text() == 'VALUE = "after"\n'
+
+
+def test_the_plan_page_is_left_after_one_reply(qt_app, tmp_path, monkeypatch):
+    """The field fault, in the person's words: "It says the plan is in
+    but then stays on the plan page."
+
+    The toast fires because the reply is a valid envelope. The screen
+    does not move because the engine built another plan package: the
+    plan named a file the keyword-ranked guess had not sent. FR-V9
+    sends the whole project first, so there is nothing left to ask
+    for and the plan gate opens on the first reply.
+    """
+    window, errors, toasts = _wired_window(tmp_path, monkeypatch)
+    repository = Path(window.store.config.repository)
+    # Files a search for "Change the value to after" would not rank:
+    # no shared words with the request.
+    helpers = repository / "helpers"
+    helpers.mkdir()
+    (helpers / "units.py").write_text("SCALE = 3\n", encoding="utf-8")
+    (helpers / "format.py").write_text("WIDTH = 8\n", encoding="utf-8")
+    _git(repository, "add", "-A")
+    _git(repository, "commit", "-m", "helpers")
+
+    def plan_touching_a_quiet_file(handoff) -> str:
+        """Copilot plans a change in a file the ranked guess missed."""
+        request = handoff.request
+        return json.dumps({
+            "schema_version": 1, "run_id": request.run_id,
+            "task_id": request.task_id, "role": "scope",
+            "conversation_id": "chat-plan",
+            "content": {"tasks": [{
+                "id": "change-value", "objective": "Change the value",
+                "allowed_files": ["app.py", "helpers/units.py"],
+                "done_when": ["VALUE is set to after."],
+                "verification": ["Read app.py."], "depends_on": [],
+            }]}})
+
+    window.home.new_change.emit("feature")
+    window.describe.request_edit.setPlainText("Change the value to after.")
+    window.describe._start()
+    wait_until(qt_app, lambda: errors or _screen(window) == "exchange",
+               message="the plan package")
+    assert not errors, errors
+
+    handoff = window.current_handoff
+    assert handoff.task_key == "plan"
+    payload = handoff.request.payload
+    # The whole project went, so the quiet files are already there.
+    sent = {item["path"] for item in payload["candidate_files"]}
+    assert {"app.py", "helpers/units.py", "helpers/format.py"} <= sent
+    assert payload["whole_project"] is True
+    # This is the first ask, and it does not claim to be a retry.
+    assert payload["exchange_attempt"] == 1
+    assert not window.exchange.retry_line.isVisibleTo(window.exchange)
+
+    # One reply, and the plan gate opens. No second plan package.
+    window.exchange.check(clipboard_text=plan_touching_a_quiet_file(handoff))
+    wait_until(qt_app, lambda: errors or _screen(window) == "plan",
+               timeout=60.0, message="the plan gate")
+    assert not errors, errors
+    assert "The plan is in." in toasts
+
+    # The proof the person cares about: they saw the plan page once.
+    plan_packets = [item for item in window.controller.timeline(
+        window.current_record.run_id) if "scope" in str(item.kind)]
+    assert len(plan_packets) <= 1, [item.kind for item in plan_packets]
