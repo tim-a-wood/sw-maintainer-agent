@@ -137,6 +137,13 @@ class ProjectConfig:
     max_prompt_bytes: int = 2_000_000
     max_response_bytes: int = 2_000_000
     max_file_bytes: int = 120_000
+    # The plan step sends the whole project in one package while the
+    # package fits this budget. Above it, the step falls back to a
+    # ranked selection that grows only when the plan names a file.
+    # The plan package is measured against this instead of
+    # max_prompt_bytes: it is the one step that needs the wide view,
+    # and it is paid for once per change.
+    max_plan_context_bytes: int = 4_000_000
     max_command_log_bytes: int = 5_000_000
     minimum_free_disk_bytes: int = 100_000_000
     allow_new_files: bool = True
@@ -380,7 +387,8 @@ class ProjectConfig:
         _reject_unknown(execution, {"workspace_strategy", "dirty_repository",
                                     "max_attempts_per_task", "max_changed_files", "max_diff_bytes",
                                     "command_timeout_seconds", "max_prompt_bytes", "max_response_bytes",
-                                    "max_file_bytes", "max_command_log_bytes", "max_run_storage_bytes",
+                                    "max_file_bytes", "max_plan_context_bytes",
+                                    "max_command_log_bytes", "max_run_storage_bytes",
                                     "minimum_free_disk_bytes"}, "execution")
         _reject_unknown(audit, {"runtime_root", "runtime_dir", "retain_days", "hash_chain"}, "audit")
         _reject_unknown(policy, {"allow_new_files", "allow_deletes", "allow_dependency_changes",
@@ -421,6 +429,8 @@ class ProjectConfig:
             "max_prompt_bytes": int(execution.get("max_prompt_bytes", 2_000_000)),
             "max_response_bytes": int(execution.get("max_response_bytes", 2_000_000)),
             "max_file_bytes": int(execution.get("max_file_bytes", 120_000)),
+            "max_plan_context_bytes": int(
+                execution.get("max_plan_context_bytes", 4_000_000)),
             "max_command_log_bytes": int(execution.get("max_command_log_bytes", 5_000_000)),
             "minimum_free_disk_bytes": int(execution.get("minimum_free_disk_bytes", 100_000_000)),
         }
@@ -444,6 +454,7 @@ class ProjectConfig:
             max_prompt_bytes=limits["max_prompt_bytes"],
             max_response_bytes=limits["max_response_bytes"],
             max_file_bytes=limits["max_file_bytes"],
+            max_plan_context_bytes=limits["max_plan_context_bytes"],
             max_command_log_bytes=limits["max_command_log_bytes"],
             minimum_free_disk_bytes=limits["minimum_free_disk_bytes"],
             allow_new_files=_boolean(policy.get("allow_new_files"),

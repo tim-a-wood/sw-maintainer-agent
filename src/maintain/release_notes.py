@@ -81,6 +81,13 @@ NOTES: dict[str, tuple[str, ...]] = {
         "The plan step now tells you the attempt and the cause of a bad reply.",
         "If Copilot names no task, the app stops and asks you to reword the change.",
     ),
+    "0.9.12": (
+        "The plan step sends all your project code and tests in one package.",
+        "Copilot sees the whole project, so it does not ask for more files.",
+        "This makes the plan step one trip to Copilot, not three or four.",
+        "The steps after the plan stay small. They send only the files the plan names.",
+        "A very large project keeps the old behaviour, which adds files as they are asked for.",
+    ),
 }
 
 

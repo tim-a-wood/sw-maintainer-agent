@@ -809,8 +809,11 @@ class ExchangeScreen(Screen):
         """Name the package and its size; the person never drags it."""
         self.packet_path = shown
         size = shown.stat().st_size if shown.is_file() else 0
-        self.packet_line.setText(
-            f"{shown.name} · {max(1, round(size / 1024))} KB")
+        # A whole-project plan package (FR-V9) runs to megabytes, and
+        # "1806 KB" is a number the eye cannot read.
+        measure = (f"{size / 1024 / 1024:.1f} MB" if size >= 1_000_000
+                   else f"{max(1, round(size / 1024))} KB")
+        self.packet_line.setText(f"{shown.name} · {measure}")
 
     def _emit_focus(self) -> None:
         self.scan_focus.emit(self.focus_edit.text().strip())

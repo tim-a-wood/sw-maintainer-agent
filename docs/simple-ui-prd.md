@@ -1949,3 +1949,46 @@ working through its attempts.
 - When no task can be found at all, the run stops with words that
   say what to do: reword the change and continue, or go back and
   start the plan again.
+
+### 14.60 The plan step sees the whole project at once (FR-V9)
+
+FR-V8 made the plan step's repeated asks visible. The person's answer
+was to remove the cause instead of describing it better: "just update
+it so that each plan step passes all repo code and tests at once so
+there's less back and forth needed. Subsequent calls after the plan
+step can be more targeted as the plan would detail exactly which
+files are needed."
+
+That is right. The back and forth exists because the first package
+holds a keyword-ranked guess at the relevant files. When the plan
+names a file the guess missed, or asks a question about code it
+cannot see, the step expands the package and asks again. Every one
+of those rounds costs the person a walk to Copilot and back. The
+plan is the one step that needs the wide view, and it is paid for
+once per change.
+
+- FR-V9. While the whole project fits the plan budget, every source
+  and test file goes in the first package with its complete content.
+  The instructions say so, and tell Copilot not to ask for files:
+  nothing is withheld and nothing more can be supplied.
+- The discovery rounds are not run at all in that case. The plan
+  step asks once.
+- The path index is dropped when the whole project is present. Every
+  path is already in `candidate_files`; a second copy of the list
+  only makes the package bigger.
+- The steps after the plan stay narrow. The build step sends only
+  the files the plan named, as it always did. The wide view is
+  bought once, not on every step.
+- The budget is `execution.max_plan_context_bytes`, 4 MB by default,
+  and the plan package is measured against it rather than against
+  `max_prompt_bytes`. The measurement is exact: the candidate list is
+  serialised as it will be sent, because a guess from raw file sizes
+  misses the encoding cost, and being wrong means the package is
+  built and then refused.
+- A project over the budget keeps the older behaviour: a ranked
+  selection that grows only when the plan names a file. The run
+  record carries `context.whole_project` either way, so the audit
+  trail says which route a change took.
+- A correction package after a whole-project ask sets
+  `whole_project` false. The files went with the package it corrects,
+  and saying they are present again would be a lie.

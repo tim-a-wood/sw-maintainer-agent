@@ -351,3 +351,100 @@ def test_a_scope_retry_names_its_attempt_and_its_cause(tmp_path):
     from maintain.engine import WorkflowEngine
     scope_source = inspect.getsource(WorkflowEngine._scope)
     assert "Reword the change below" in scope_source
+
+
+def _wide_repository(tmp_path: Path) -> Path:
+    """A project whose files no keyword search would all find."""
+    repository = _repository(tmp_path)
+    (repository / "lib").mkdir()
+    (repository / "tests").mkdir()
+    for name in ("alpha", "beta", "gamma"):
+        (repository / "lib" / f"{name}.py").write_text(
+            f"def {name}():\n    return 1\n", encoding="utf-8", newline="\n")
+        (repository / "tests" / f"test_{name}.py").write_text(
+            f"from lib.{name} import {name}\n\n\n"
+            f"def test_{name}():\n    assert {name}() == 1\n",
+            encoding="utf-8", newline="\n")
+    _git(repository, "add", "-A")
+    _git(repository, "commit", "-m", "more files")
+    return repository
+
+
+def test_the_plan_step_sends_the_whole_project_in_one_package(tmp_path):
+    """FR-V9: the plan is the step that needs the wide view, and each
+    round trip costs the person a walk to Copilot. While the project
+    fits the budget, every source and test file goes in the first
+    package, so the plan step asks once."""
+    repository = _wide_repository(tmp_path)
+    config = _config(tmp_path, repository)
+    provider = ScriptedProvider()
+    record = _engine(config, provider).start("feature", "Change the value")
+
+    # One ask, not a discovery loop.
+    assert provider.scope_calls == 1, provider.scope_calls
+
+    payload = provider.scope_payloads[0]
+    assert payload["whole_project"] is True
+    sent = {item["path"] for item in payload["candidate_files"]}
+    on_disk = {
+        path.relative_to(repository).as_posix()
+        for path in repository.rglob("*")
+        if path.is_file() and ".git/" not in path.as_posix()
+        and path.name != ".maintain.json"
+    }
+    assert sent == on_disk, sorted(on_disk - sent)
+    # Every file carries its content, not only its name.
+    assert all(item["content"] for item in payload["candidate_files"])
+    # The tests go too: the plan must see what already checks the code.
+    assert "tests/test_alpha.py" in sent
+    # The path index is redundant when every path is already here.
+    assert "repository_map" not in payload
+
+    # The audit record says the whole project went out.
+    assert record.evidence["context"]["whole_project"] is True
+    assert RunState(record.state) is RunState.AWAITING_ACCEPTANCE
+
+
+def test_the_steps_after_the_plan_stay_narrow(tmp_path):
+    """The wide view is bought once. The build step sends only the
+    files the plan named, not the project again."""
+    repository = _wide_repository(tmp_path)
+    config = _config(tmp_path, repository)
+
+    sent: list[tuple[str, dict]] = []
+
+    class Watcher(ScriptedProvider):
+        def exchange(self, request):
+            sent.append((request.role, dict(request.payload)))
+            return super().exchange(request)
+
+    _engine(config, Watcher()).start("feature", "Change the value")
+
+    build = [payload for role, payload in sent if role == "implement"]
+    assert build, [role for role, _ in sent]
+    # The plan named app.py alone, so that is all the build step sees.
+    assert set(build[0]["files"]) == {"app.py"}
+    assert "candidate_files" not in build[0]
+    assert "whole_project" not in build[0]
+
+
+def test_a_project_over_the_budget_still_selects_and_expands(tmp_path):
+    """A project too big for one package keeps the older behaviour:
+    a ranked selection that grows only when the plan names a file."""
+    repository = _wide_repository(tmp_path)
+    _config(tmp_path, repository)
+    path = repository / ".maintain.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.setdefault("execution", {})["max_plan_context_bytes"] = 1
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    config = ProjectConfig.load(path)
+    assert config.max_plan_context_bytes == 1
+
+    provider = ScriptedProvider()
+    record = _engine(config, provider).start("feature", "Change the value")
+
+    payload = provider.scope_payloads[0]
+    assert "whole_project" not in payload
+    assert payload["repository_map"]
+    assert record.evidence["context"]["whole_project"] is False
+    assert RunState(record.state) is RunState.AWAITING_ACCEPTANCE

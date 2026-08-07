@@ -124,6 +124,23 @@ SCOPE_INSTRUCTIONS = (
     "essential existing code is absent, return context_queries instead of guessing."
 )
 
+# FR-V9: the same plan step, when the package already holds every source
+# and test file. Nothing can be absent, so an ask for more context only
+# costs the person another trip to Copilot.
+WHOLE_PROJECT_SCOPE_INSTRUCTIONS = (
+    "candidate_files holds every source and test file in this project, with its "
+    "complete content. Nothing is withheld and nothing more can be supplied, so do "
+    "not return context_queries and do not ask for files: read what is here and "
+    "decide. Define the smallest complete tasks in dependency order, in this one "
+    "reply. Use exact supplied paths for existing files. When "
+    "project_policy.allow_new_files is true and the request requires a new file, "
+    "choose the conventional minimal repository-relative path that directly matches "
+    "the request (for example, main.c for a standalone C program); do not request "
+    "that path from the user. Every path in a task's allowed_files must be an exact "
+    "supplied path or such a new path. Return content.tasks. Each task needs id, "
+    "objective, allowed_files, done_when, verification, and depends_on."
+)
+
 TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -688,6 +705,20 @@ class WorkflowEngine:
                        artifacts=[snapshot, *preflight_artifacts])
         self.presenter.complete("PREPARE", "The project and assistant are ready")
 
+    def _fits_one_package(self, files: list) -> bool:
+        """FR-V9: can every project file travel in one plan package?
+
+        The answer is measured, not estimated: the candidate list is
+        serialised exactly as it will be sent. A guess from the raw
+        file sizes misses the encoding cost, and being wrong here
+        means the package is built and then refused.
+        """
+        candidates = [{"path": item.path, "sha256": item.sha256,
+                       "bytes": item.bytes, "content": item.content}
+                      for item in files]
+        size = len(json.dumps(candidates, ensure_ascii=False).encode())
+        return size <= self.config.max_plan_context_bytes
+
     def _scope(self, record: RunRecord, store: AuditStore) -> None:
         if RunState(record.state) is RunState.WORKSPACE_READY:
             self._move(record, store, RunState.SCOPING)
@@ -698,8 +729,19 @@ class WorkflowEngine:
                                        self.config.source_roots + self.config.test_roots,
                                        self.config.exclude_paths,
                                        self.config.max_file_bytes)
-            context = selector.select(record.request)
-        self.presenter.complete("FILES", "Selected the project files for this change")
+            # FR-V9: the plan is the one step that needs the wide view,
+            # and every round trip to get it costs the person a walk to
+            # Copilot and back. While the whole project fits the budget
+            # it all goes in the first package, so the plan step asks
+            # once. The steps after it stay narrow: they send only the
+            # files the plan named.
+            whole = selector.all_files()
+            full_context = bool(whole) and self._fits_one_package(whole)
+            context = whole if full_context else selector.select(record.request)
+        self.presenter.complete(
+            "FILES",
+            f"Put all {len(context)} project files in the package" if full_context
+            else "Selected the project files for this change")
         disclosed = {item.path: item for item in context}
         expansions: list[dict] = []
         response: dict = {}
@@ -713,20 +755,30 @@ class WorkflowEngine:
         round_prefix = f"round-{rounds + 1}-" if rounds else ""
         scope_fault = ""
         asks_made = 0
-        for scope_attempt in range(1, 4):
+        # With the whole project in the package there is nothing to
+        # expand into, so the discovery rounds are not run at all.
+        for scope_attempt in range(1, 2 if full_context else 4):
             asks_made = scope_attempt
+            payload = {"mode": record.mode, "request": record.request,
+                       "exchange_attempt": scope_attempt,
+                       "content_fault": scope_fault,
+                       "project_policy": scope_policy,
+                       "human_notes": list(record.evidence.get("rescope_notes", [])),
+                       "context_expansions": expansions,
+                       "candidate_files": [
+                           {"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
+                            "content": x.content} for x in disclosed.values()]}
+            if full_context:
+                # Every path is already in candidate_files with its
+                # content; a second copy of the path list only makes the
+                # package bigger.
+                payload["whole_project"] = True
+            else:
+                payload["repository_map"] = selector.repository_map()
             response = self._exchange(
                 record, store, "scope", f"{round_prefix}scope-{scope_attempt}",
-                SCOPE_INSTRUCTIONS,
-                {"mode": record.mode, "request": record.request,
-                 "exchange_attempt": scope_attempt,
-                 "content_fault": scope_fault,
-                 "project_policy": scope_policy,
-                 "human_notes": list(record.evidence.get("rescope_notes", [])),
-                 "context_expansions": expansions,
-                 "repository_map": selector.repository_map(),
-                 "candidate_files": [{"path": x.path, "sha256": x.sha256, "bytes": x.bytes,
-                                      "content": x.content} for x in disclosed.values()]},
+                WHOLE_PROJECT_SCOPE_INSTRUCTIONS if full_context else SCOPE_INSTRUCTIONS,
+                payload,
                 conversation_suffix=f"{round_prefix}scope-{scope_attempt}")
             tasks = response.get("tasks")
             referenced = {
@@ -744,13 +796,16 @@ class WorkflowEngine:
             has_queries = isinstance(queries, list) and bool(queries)
             # FR-V8: the person must know why the same step asks again.
             scope_fault = (
+                "The reply asked for more of the project, but the package "
+                "already holds every file." if full_context and has_queries else
                 "The plan named project files that were not in the package. "
                 f"The package now has them: {', '.join(missing_context[:6])}."
                 if missing_context else
                 "The reply asked for more of the project. The package now "
                 "holds more files." if has_queries else
                 "The reply defined no task for this change.")
-            if scope_attempt == 3 or (not missing_context and not has_queries):
+            if full_context or scope_attempt == 3 or (
+                    not missing_context and not has_queries):
                 break
 
             self._finish_exchange(record, store)
@@ -796,7 +851,7 @@ class WorkflowEngine:
                 record, store, "scope", "scope-final",
                 "Context discovery is complete. Do not return context_queries. Define the "
                 "smallest complete tasks that can satisfy the request from the supplied context. "
-                "Use exact repository-relative paths from the repository map. New files are "
+                "Use exact repository-relative paths from disclosed_files. New files are "
                 "allowed when project_policy.allow_new_files is true; when no existing path "
                 "applies, choose a conventional minimal path that directly matches the request "
                 "(for example, main.c for a standalone C program). Return content.tasks with id, "
@@ -809,10 +864,13 @@ class WorkflowEngine:
                  "human_notes": list(record.evidence.get("rescope_notes", [])),
                  "context_expansions": expansions,
                  "disclosed_files": sorted(disclosed),
-                 "scope_retry_reason": "context_expansion_exhausted"},
+                 "whole_project": full_context,
+                 "scope_retry_reason": ("whole_project_no_tasks" if full_context
+                                        else "context_expansion_exhausted")},
                 conversation_suffix="scope-final")
             store.append("scope_task_synthesis_retry", {
-                "reason": "context_expansion_exhausted",
+                "reason": ("whole_project_no_tasks" if full_context
+                           else "context_expansion_exhausted"),
                 "disclosed_files": sorted(disclosed),
                 "defined_tasks": len(response.get("tasks", []))
                 if isinstance(response.get("tasks"), list) else 0,
@@ -859,6 +917,7 @@ class WorkflowEngine:
         disclosed_bytes = sum(item.bytes for item in context)
         record.evidence["context"] = {
             "repository_text_bytes": repository_bytes, "disclosed_bytes": disclosed_bytes,
+            "whole_project": full_context,
             "disclosed_files": [item.path for item in context], "expansions": expansions,
             "reduction_percent": (round((1 - disclosed_bytes / repository_bytes) * 100, 2)
                                   if repository_bytes else 0.0),
@@ -1410,7 +1469,8 @@ class WorkflowEngine:
     # The keys a correction never repeats: the project context that
     # went with the first package of this step.
     _BULK_PAYLOAD_KEYS = ("candidate_files", "repository_map", "context_expansions",
-                          "read_only_files", "diff", "files", "tasks")
+                          "read_only_files", "diff", "files", "tasks",
+                          "disclosed_files")
 
     def _correction_payload(self, record: RunRecord, role: str, task_id: str,
                             retry: int, payload: dict,
@@ -1437,6 +1497,10 @@ class WorkflowEngine:
         })
         if notes:
             kept["human_notes"] = list(kept.get("human_notes", [])) + notes
+        if "whole_project" in payload:
+            # The project files went with the package this one corrects.
+            # Saying they are here again would be a lie.
+            kept["whole_project"] = False
         return kept
 
     def _exchange(self, record: RunRecord, store: AuditStore, role: str, task_id: str,
@@ -1501,7 +1565,13 @@ class WorkflowEngine:
         )
         assert_no_secrets(request.__dict__, f"{role} request")
         request_bytes = len(json.dumps(request.__dict__, ensure_ascii=False).encode())
-        if request_bytes > self.config.max_prompt_bytes:
+        # FR-V9: a whole-project plan package is deliberately large and
+        # is governed by its own declared budget. Every other package
+        # keeps the general prompt limit.
+        limit = self.config.max_prompt_bytes
+        if effective_payload.get("whole_project") is True:
+            limit = max(limit, self.config.max_plan_context_bytes)
+        if request_bytes > limit:
             raise PolicyError("The provider package exceeds the configured prompt limit.")
         exchange_name = f"{exchange_base}-retry-{retry}" if retry else exchange_base
         response_name = f"provider/{exchange_name}-response.json"
