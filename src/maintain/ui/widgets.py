@@ -168,7 +168,13 @@ def button(label_text: str, kind: str = "Secondary",
     control.setObjectName(kind)
     control.setCursor(Qt.CursorShape.PointingHandCursor)
     if on_click is not None:
-        control.clicked.connect(on_click)
+        # FR-V13: QPushButton.clicked carries a "checked" bool. Wired
+        # straight to the capture idiom — lambda value=x: ... — Qt
+        # fills that first parameter with False and the captured value
+        # is lost. The button then looks alive and does nothing, which
+        # is what the recent-request chips did. Dropping the signal's
+        # arguments here closes the whole class of fault.
+        control.clicked.connect(lambda *_arguments: on_click())
     return control
 
 

@@ -1996,3 +1996,62 @@ def test_home_notices_can_be_closed(qt_app, tmp_path, monkeypatch):
     assert gone.display_state == "Discarded"
     assert window.controller.resumable_run() is None
     assert not window.home._continue.isVisibleTo(window.home)
+
+
+def test_a_button_keeps_the_value_it_captured(qt_app):
+    """FR-V13: the field fault — "the button to select a previous
+    input doesn't work (pressing them does nothing)".
+
+    QPushButton.clicked carries a "checked" bool. The capture idiom,
+    lambda value=x: ..., takes one parameter, so Qt filled it with
+    False and the captured value was lost. The button looked alive
+    and did nothing.
+    """
+    from maintain.ui.widgets import button
+
+    seen: list = []
+    control = button("chip", "Ghost", lambda value="the captured text":
+                     seen.append(value))
+    control.click()
+    assert seen == ["the captured text"], seen
+
+
+def test_the_recent_request_chips_fill_the_box(qt_app, tmp_path, monkeypatch):
+    """The same fault, on the screen it was reported from."""
+    monkeypatch.setenv("MAINTAIN_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    config = _project(tmp_path)
+    window = MainWindow(config)
+    wanted = "When configuring the lifecycle data displayed in the chart"
+    window.describe.set_recent([wanted, "Another change"])
+
+    row = window.describe._recent_row
+    chips = [row.itemAt(index).widget() for index in range(row.count())
+             if row.itemAt(index).widget() is not None]
+    assert chips, "the recent row shows nothing"
+    # The chip is elided, so its own text is not the request.
+    assert chips[0].text() != wanted
+    chips[0].click()
+    assert window.describe.request_edit.toPlainText() == wanted
+
+
+def test_a_git_failure_says_what_git_said(tmp_path):
+    """FR-V13: the field fault — a wall of Python and no cause.
+
+    _snapshot ran git with check=True, so a failure raised
+    CalledProcessError, whose message is the command and the exit
+    status alone. git writes the cause to stderr, and the person
+    needs that.
+    """
+    from maintain.errors import RecoveryError
+    from maintain.workspace import WorkspaceManager
+
+    # Not a git repository, so git fails with a real message.
+    with pytest.raises(RecoveryError) as caught:
+        WorkspaceManager._snapshot(tmp_path)
+
+    said = str(caught.value)
+    assert "Traceback" not in said
+    assert "non-zero exit status" not in said
+    assert "your project files" in said
+    # git's own words travel with it.
+    assert "repository" in said.lower() or "git" in said.lower()

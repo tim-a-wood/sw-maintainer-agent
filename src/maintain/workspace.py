@@ -165,26 +165,35 @@ class WorkspaceManager:
     def _snapshot(worktree: Path, stage: list[str] | None = None
                   ) -> tuple[str, tuple[str, ...], str, tuple[tuple[str, str], ...]]:
         env = os.environ.copy()
+
+        def run(*arguments: str) -> str:
+            """FR-V13: git's own words, not a traceback.
+
+            These calls used check=True, so a failure raised
+            CalledProcessError, whose message is only the command and
+            the exit status. The person saw a wall of Python and no
+            cause. git writes the cause to stderr; it belongs in the
+            error.
+            """
+            result = subprocess.run(
+                ["git", "-C", str(worktree), *arguments], env=env,
+                text=True, encoding="utf-8", errors="replace",
+                check=False, capture_output=True, **hidden())
+            if result.returncode:
+                cause = (result.stderr or result.stdout).strip()
+                raise RecoveryError(
+                    f"git {arguments[0]} could not read your project files. "
+                    f"{cause}" if cause else
+                    f"git {arguments[0]} could not read your project files.")
+            return result.stdout
+
         with tempfile.TemporaryDirectory(prefix="maintain-index-") as directory:
             env["GIT_INDEX_FILE"] = str(Path(directory) / "index")
-            subprocess.run(["git", "-C", str(worktree), "read-tree", "HEAD"], env=env,
-                           check=True, capture_output=True, **hidden())
-            subprocess.run(["git", "-C", str(worktree), "add", "-A", "--",
-                            *(stage or ["."])], env=env,
-                           check=True, capture_output=True, **hidden())
-            tree = subprocess.run(["git", "-C", str(worktree), "write-tree"], env=env,
-                                  text=True, encoding="utf-8",
-                                  errors="replace", check=True,
-                                  capture_output=True,
-                                  **hidden()).stdout.strip()
-            text = subprocess.run(["git", "-C", str(worktree), "diff", "--cached", "--binary", "HEAD"],
-                                  env=env, text=True, encoding="utf-8",
-                                  errors="replace", check=True,
-                                  capture_output=True, **hidden()).stdout
-            raw_status = subprocess.run(
-                ["git", "-C", str(worktree), "diff", "--cached", "--name-status", "HEAD"],
-                env=env, text=True, encoding="utf-8", errors="replace",
-                check=True, capture_output=True, **hidden()).stdout
+            run("read-tree", "HEAD")
+            run("add", "-A", "--", *(stage or ["."]))
+            tree = run("write-tree").strip()
+            text = run("diff", "--cached", "--binary", "HEAD")
+            raw_status = run("diff", "--cached", "--name-status", "HEAD")
             statuses = []
             names = []
             for line in raw_status.splitlines():
